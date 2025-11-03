@@ -53,6 +53,8 @@ struct CalendarView: View {
                         .padding(.vertical, 8)
 
                         // Events list based on selected tab
+                        let eventsToShow = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
+
                         VStack(alignment: .leading, spacing: 10) {
                             Text(selectedTab == 0 ? "Upcoming Plans" : "Past Memories 💕")
                                 .font(.title2)
@@ -60,51 +62,50 @@ struct CalendarView: View {
                                 .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
                                 .padding(.horizontal)
 
-                        let eventsToShow = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
+                            if eventsToShow.isEmpty {
+                                VStack(spacing: 10) {
+                                    Image(systemName: selectedTab == 0 ? "calendar.badge.plus" : "heart.text.square")
+                                        .font(.system(size: 50))
+                                        .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
 
-                        if eventsToShow.isEmpty {
-                            VStack(spacing: 10) {
-                                Image(systemName: selectedTab == 0 ? "calendar.badge.plus" : "heart.text.square")
-                                    .font(.system(size: 50))
-                                    .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
+                                    Text(selectedTab == 0 ? "No plans yet" : "No memories yet")
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
 
-                                Text(selectedTab == 0 ? "No plans yet" : "No memories yet")
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                                    Text(selectedTab == 0 ? "Add your first date! 💕" : "Past events will appear here 💜")
+                                        .font(.caption)
+                                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
 
-                                Text(selectedTab == 0 ? "Add your first date! 💕" : "Past events will appear here 💜")
-                                    .font(.caption)
-                                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
-
-                                if selectedTab == 0 {
-                                    Text("Every moment together is special")
-                                        .font(.caption2)
-                                        .italic()
-                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                                        .padding(.top, 4)
+                                    if selectedTab == 0 {
+                                        Text("Every moment together is special")
+                                            .font(.caption2)
+                                            .italic()
+                                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                            .padding(.top, 4)
+                                    }
                                 }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .padding(.bottom, 100)
-                        } else {
-                            LazyVStack(spacing: 12) {
-                                ForEach(eventsToShow) { event in
-                                    EventCard(
-                                        event: event,
-                                        onTap: {
-                                            selectedEventForDetail = event
-                                        },
-                                        onDelete: {
-                                            Task {
-                                                await viewModel.deleteEvent(event)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .padding(.bottom, 100)
+                            } else {
+                                LazyVStack(spacing: 12) {
+                                    ForEach(eventsToShow) { event in
+                                        EventCard(
+                                            event: event,
+                                            onTap: {
+                                                selectedEventForDetail = event
+                                            },
+                                            onDelete: {
+                                                Task {
+                                                    await viewModel.deleteEvent(event)
+                                                }
                                             }
-                                        }
-                                    )
+                                        )
+                                    }
                                 }
+                                .padding(.horizontal)
+                                .padding(.bottom, 20)
                             }
-                            .padding(.horizontal)
-                            .padding(.bottom, 20)
                         }
                     }
                 }
