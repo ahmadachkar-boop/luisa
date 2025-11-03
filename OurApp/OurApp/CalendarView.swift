@@ -4,6 +4,7 @@ struct CalendarView: View {
     @StateObject private var viewModel = CalendarViewModel()
     @State private var showingAddEvent = false
     @State private var selectedDate = Date()
+    @State private var selectedEventForDetail: CalendarEvent?
 
     var body: some View {
         NavigationView {
@@ -19,8 +20,8 @@ struct CalendarView: View {
                 )
                 .ignoresSafeArea()
 
-                VStack {
-                    // Month view
+                VStack(spacing: 0) {
+                    // Month view - fixed height to prevent expansion
                     DatePicker("", selection: $selectedDate, displayedComponents: .date)
                         .datePickerStyle(.graphical)
                         .tint(Color(red: 0.5, green: 0.3, blue: 0.8))
@@ -29,6 +30,8 @@ struct CalendarView: View {
                         .background(Color.white)
                         .cornerRadius(15)
                         .padding()
+                        .frame(height: 400)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     // Upcoming events
                     VStack(alignment: .leading, spacing: 10) {
@@ -66,6 +69,9 @@ struct CalendarView: View {
                                     ForEach(viewModel.upcomingEvents) { event in
                                         EventCard(
                                             event: event,
+                                            onTap: {
+                                                selectedEventForDetail = event
+                                            },
                                             onDelete: {
                                                 Task {
                                                     await viewModel.deleteEvent(event)
@@ -95,9 +101,17 @@ struct CalendarView: View {
                 }
             }
             .sheet(isPresented: $showingAddEvent) {
-                AddEventView { event in
+                AddEventView(initialDate: selectedDate) { event in
                     await viewModel.addEvent(event)
                 }
+            }
+            .sheet(item: $selectedEventForDetail) { event in
+                EventDetailView(event: event, onDelete: {
+                    Task {
+                        await viewModel.deleteEvent(event)
+                        selectedEventForDetail = nil
+                    }
+                })
             }
         }
     }
@@ -105,11 +119,13 @@ struct CalendarView: View {
 
 struct EventCard: View {
     let event: CalendarEvent
+    let onTap: () -> Void
     let onDelete: () -> Void
     @State private var showingDeleteAlert = false
     @State private var isPressed = false
 
     var body: some View {
+        Button(action: onTap) {
         HStack(alignment: .top, spacing: 15) {
             // Cute date bubble
             VStack(spacing: 2) {
@@ -190,8 +206,11 @@ struct EventCard: View {
                     .font(.title3)
                     .foregroundColor(.red.opacity(0.7))
             }
+            .buttonStyle(PlainButtonStyle())
         }
         .padding(16)
+        }
+        .buttonStyle(PlainButtonStyle())
         .background(
             ZStack {
                 // Gradient background
@@ -238,10 +257,15 @@ struct AddEventView: View {
     @State private var title = ""
     @State private var description = ""
     @State private var location = ""
-    @State private var date = Date()
+    @State private var date: Date
     @State private var isSpecial = false
 
     let onSave: (CalendarEvent) async -> Void
+
+    init(initialDate: Date, onSave: @escaping (CalendarEvent) async -> Void) {
+        _date = State(initialValue: initialDate)
+        self.onSave = onSave
+    }
 
     var body: some View {
         NavigationView {
@@ -281,10 +305,6 @@ struct AddEventView: View {
                     .tint(Color(red: 0.7, green: 0.4, blue: 0.9))
                 } header: {
                     Text("Make it memorable")
-                } footer: {
-                    Text("Special events get a beautiful glow effect!")
-                        .font(.caption)
-                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
                 }
             }
             .navigationTitle("Plan Something Special")
@@ -321,6 +341,168 @@ struct AddEventView: View {
                     }
                     .disabled(title.isEmpty)
                 }
+            }
+        }
+    }
+}
+
+struct EventDetailView: View {
+    let event: CalendarEvent
+    let onDelete: () -> Void
+    @Environment(\.dismiss) var dismiss
+    @State private var showingDeleteAlert = false
+
+    var body: some View {
+        NavigationView {
+            ZStack {
+                // Background gradient
+                LinearGradient(
+                    colors: event.isSpecial ?
+                        [Color(red: 0.98, green: 0.9, blue: 1.0), Color.white] :
+                        [Color(red: 0.95, green: 0.9, blue: 1.0), Color.white],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 24) {
+                        // Date display
+                        VStack(spacing: 8) {
+                            Text(event.date, format: .dateTime.day())
+                                .font(.system(size: 60, weight: .bold))
+                                .foregroundColor(.white)
+
+                            Text(event.date, format: .dateTime.month(.wide).year())
+                                .font(.title3)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white.opacity(0.95))
+
+                            Text(event.date, format: .dateTime.weekday(.wide))
+                                .font(.subheadline)
+                                .foregroundColor(.white.opacity(0.9))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 30)
+                        .background(
+                            LinearGradient(
+                                colors: event.isSpecial ?
+                                    [Color(red: 0.8, green: 0.3, blue: 0.7), Color(red: 0.6, green: 0.2, blue: 0.9)] :
+                                    [Color(red: 0.5, green: 0.3, blue: 0.8), Color(red: 0.4, green: 0.2, blue: 0.7)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .cornerRadius(20)
+                        .shadow(color: event.isSpecial ? Color.purple.opacity(0.4) : Color.black.opacity(0.2),
+                                radius: 15, x: 0, y: 5)
+                        .padding(.horizontal)
+
+                        // Event details
+                        VStack(alignment: .leading, spacing: 20) {
+                            // Title
+                            HStack {
+                                Text(event.title)
+                                    .font(.title)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
+
+                                if event.isSpecial {
+                                    HStack(spacing: 4) {
+                                        Text("✨")
+                                        Text("💜")
+                                        Text("✨")
+                                    }
+                                }
+                            }
+
+                            Divider()
+
+                            // Description
+                            if !event.description.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Label("Details", systemImage: "text.alignleft")
+                                        .font(.headline)
+                                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+
+                                    Text(event.description)
+                                        .font(.body)
+                                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                                }
+                            }
+
+                            // Location
+                            if !event.location.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Label("Location", systemImage: "mappin.circle.fill")
+                                        .font(.headline)
+                                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+
+                                    Text(event.location)
+                                        .font(.body)
+                                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                                }
+                            }
+
+                            // Time
+                            VStack(alignment: .leading, spacing: 8) {
+                                Label("Time", systemImage: "clock.fill")
+                                    .font(.headline)
+                                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+
+                                Text(event.date, format: .dateTime.hour().minute())
+                                    .font(.body)
+                                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                            }
+
+                            Divider()
+
+                            // Creator
+                            HStack(spacing: 8) {
+                                Image(systemName: "heart.fill")
+                                    .foregroundColor(Color(red: 0.7, green: 0.4, blue: 0.9))
+                                Text("Added by \(event.createdBy)")
+                                    .font(.subheadline)
+                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                            }
+                        }
+                        .padding()
+                        .background(Color.white)
+                        .cornerRadius(20)
+                        .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 4)
+                        .padding(.horizontal)
+
+                        Spacer()
+                    }
+                    .padding(.top)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundColor(Color(red: 0.6, green: 0.3, blue: 0.8))
+                }
+
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(role: .destructive) {
+                        showingDeleteAlert = true
+                    } label: {
+                        Image(systemName: "trash")
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+            .alert("Delete Event?", isPresented: $showingDeleteAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    onDelete()
+                    dismiss()
+                }
+            } message: {
+                Text("This will remove '\(event.title)' from your plans")
             }
         }
     }
