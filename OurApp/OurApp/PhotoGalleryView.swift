@@ -30,15 +30,16 @@ struct PhotoGalleryView: View {
                     VStack(spacing: 20) {
                         Image(systemName: "heart.text.square.fill")
                             .font(.system(size: 80))
-                            .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
+                            .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
 
                         Text("No photos yet")
                             .font(.title2)
-                            .foregroundColor(.gray)
+                            .fontWeight(.semibold)
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
 
                         Text("Add your first memory together 📸")
                             .font(.subheadline)
-                            .foregroundColor(.gray)
+                            .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
                     }
                 } else {
                     ScrollView {
@@ -112,16 +113,19 @@ struct PhotoDetailView: View {
                 if !photo.caption.isEmpty {
                     Text(photo.caption)
                         .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
                         .padding()
                 }
 
                 Text("Added by \(photo.uploadedBy)")
                     .font(.caption)
-                    .foregroundColor(.gray)
+                    .foregroundColor(.white.opacity(0.9))
+                    .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
 
                 Text(photo.createdAt, style: .date)
                     .font(.caption)
-                    .foregroundColor(.gray)
+                    .foregroundColor(.white.opacity(0.9))
+                    .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
             }
         }
         .navigationBarTitleDisplayMode(.inline)

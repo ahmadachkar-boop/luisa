@@ -34,20 +34,22 @@ struct CalendarView: View {
                         Text("Upcoming Plans")
                             .font(.title2)
                             .fontWeight(.bold)
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
                             .padding(.horizontal)
 
                         if viewModel.upcomingEvents.isEmpty {
                             VStack(spacing: 10) {
                                 Image(systemName: "calendar.badge.plus")
                                     .font(.system(size: 50))
-                                    .foregroundColor(.gray)
+                                    .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
 
                                 Text("No plans yet")
-                                    .foregroundColor(.gray)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
 
                                 Text("Add your first date! 💕")
                                     .font(.caption)
-                                    .foregroundColor(.gray)
+                                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
                             }
                             .frame(maxWidth: .infinity)
                             .padding()
@@ -108,7 +110,7 @@ struct EventCard: View {
 
                 Text(event.date, format: .dateTime.month(.abbreviated))
                     .font(.caption)
-                    .foregroundColor(.gray)
+                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
             }
             .frame(width: 60)
 
@@ -116,6 +118,8 @@ struct EventCard: View {
                 HStack {
                     Text(event.title)
                         .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
 
                     if event.isSpecial {
                         Text("💜")
@@ -125,7 +129,7 @@ struct EventCard: View {
                 if !event.description.isEmpty {
                     Text(event.description)
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
                 }
 
                 if !event.location.isEmpty {
@@ -135,12 +139,12 @@ struct EventCard: View {
                         Text(event.location)
                             .font(.caption)
                     }
-                    .foregroundColor(.gray)
+                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
                 }
 
                 Text("Added by \(event.createdBy)")
                     .font(.caption2)
-                    .foregroundColor(.gray)
+                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
             }
 
             Spacer()
