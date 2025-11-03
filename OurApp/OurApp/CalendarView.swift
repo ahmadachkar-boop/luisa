@@ -790,6 +790,10 @@ struct EventDetailView: View {
 
             do {
                 try await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
+                // Dismiss view to refresh - photos will show when reopened
+                await MainActor.run {
+                    dismiss()
+                }
             } catch {
                 print("Error updating event: \(error)")
             }
