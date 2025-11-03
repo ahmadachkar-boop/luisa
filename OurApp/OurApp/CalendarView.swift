@@ -23,7 +23,8 @@ struct CalendarView: View {
                     // Month view
                     DatePicker("", selection: $selectedDate, displayedComponents: .date)
                         .datePickerStyle(.graphical)
-                        .tint(Color(red: 0.8, green: 0.7, blue: 1.0))
+                        .tint(Color(red: 0.5, green: 0.3, blue: 0.8))
+                        .colorScheme(.light)
                         .padding()
                         .background(Color.white)
                         .cornerRadius(15)
@@ -106,11 +107,11 @@ struct EventCard: View {
             VStack {
                 Text(event.date, format: .dateTime.day())
                     .font(.system(size: 30, weight: .bold))
-                    .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
+                    .foregroundColor(Color(red: 0.4, green: 0.2, blue: 0.7))
 
                 Text(event.date, format: .dateTime.month(.abbreviated))
                     .font(.caption)
-                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
             }
             .frame(width: 60)
 
@@ -139,12 +140,12 @@ struct EventCard: View {
                         Text(event.location)
                             .font(.caption)
                     }
-                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                    .foregroundColor(Color(red: 0.35, green: 0.25, blue: 0.55))
                 }
 
                 Text("Added by \(event.createdBy)")
                     .font(.caption2)
-                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                    .foregroundColor(Color(red: 0.35, green: 0.25, blue: 0.55))
             }
 
             Spacer()
