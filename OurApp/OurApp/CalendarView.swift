@@ -23,42 +23,42 @@ struct CalendarView: View {
                 )
                 .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    // Countdown Timer (if there's an upcoming event)
-                    if let nextEvent = viewModel.upcomingEvents.first {
-                        CountdownBanner(event: nextEvent)
+                ScrollView {
+                    VStack(spacing: 12) {
+                        // Countdown Timer (if there's an upcoming event)
+                        if let nextEvent = viewModel.upcomingEvents.first {
+                            CountdownBanner(event: nextEvent)
+                                .padding(.horizontal)
+                                .padding(.top, 8)
+                        }
+
+                        // Month view - compact size
+                        DatePicker("", selection: $selectedDate, displayedComponents: .date)
+                            .datePickerStyle(.graphical)
+                            .tint(Color(red: 0.5, green: 0.3, blue: 0.8))
+                            .colorScheme(.light)
+                            .padding()
+                            .background(Color.white)
+                            .cornerRadius(15)
                             .padding(.horizontal)
-                            .padding(.top, 8)
-                    }
+                            .padding(.vertical, 8)
 
-                    // Month view - fixed height to prevent expansion
-                    DatePicker("", selection: $selectedDate, displayedComponents: .date)
-                        .datePickerStyle(.graphical)
-                        .tint(Color(red: 0.5, green: 0.3, blue: 0.8))
-                        .colorScheme(.light)
-                        .padding()
-                        .background(Color.white)
-                        .cornerRadius(15)
-                        .padding()
-                        .frame(height: 400)
-                        .fixedSize(horizontal: false, vertical: true)
+                        // Tab Selector
+                        Picker("View", selection: $selectedTab) {
+                            Text("Upcoming").tag(0)
+                            Text("Memories").tag(1)
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
 
-                    // Tab Selector
-                    Picker("View", selection: $selectedTab) {
-                        Text("Upcoming").tag(0)
-                        Text("Memories").tag(1)
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
-
-                    // Events list based on selected tab
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(selectedTab == 0 ? "Upcoming Plans" : "Past Memories 💕")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-                            .padding(.horizontal)
+                        // Events list based on selected tab
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(selectedTab == 0 ? "Upcoming Plans" : "Past Memories 💕")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                                .padding(.horizontal)
 
                         let eventsToShow = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
 
@@ -86,29 +86,27 @@ struct CalendarView: View {
                             }
                             .frame(maxWidth: .infinity)
                             .padding()
+                            .padding(.bottom, 100)
                         } else {
-                            ScrollView {
-                                LazyVStack(spacing: 12) {
-                                    ForEach(eventsToShow) { event in
-                                        EventCard(
-                                            event: event,
-                                            onTap: {
-                                                selectedEventForDetail = event
-                                            },
-                                            onDelete: {
-                                                Task {
-                                                    await viewModel.deleteEvent(event)
-                                                }
+                            LazyVStack(spacing: 12) {
+                                ForEach(eventsToShow) { event in
+                                    EventCard(
+                                        event: event,
+                                        onTap: {
+                                            selectedEventForDetail = event
+                                        },
+                                        onDelete: {
+                                            Task {
+                                                await viewModel.deleteEvent(event)
                                             }
-                                        )
-                                    }
+                                        }
+                                    )
                                 }
-                                .padding(.horizontal)
                             }
+                            .padding(.horizontal)
+                            .padding(.bottom, 20)
                         }
                     }
-
-                    Spacer()
                 }
             }
             .navigationTitle("Our Plans 💕")
@@ -147,7 +145,7 @@ struct CountdownBanner: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            Text("Next Date:")
+            Text("Next Plan:")
                 .font(.caption)
                 .fontWeight(.semibold)
                 .foregroundColor(.white.opacity(0.9))
