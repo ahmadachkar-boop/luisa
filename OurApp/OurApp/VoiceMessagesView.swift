@@ -24,15 +24,16 @@ struct VoiceMessagesView: View {
                         VStack(spacing: 20) {
                             Image(systemName: "mic.circle.fill")
                                 .font(.system(size: 80))
-                                .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
+                                .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
 
                             Text("No voice messages yet")
                                 .font(.title2)
-                                .foregroundColor(.gray)
+                                .fontWeight(.semibold)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
 
                             Text("Tap + to record a sweet message 💜")
                                 .font(.subheadline)
-                                .foregroundColor(.gray)
+                                .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
@@ -100,19 +101,20 @@ struct VoiceMessageCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(message.title)
                     .font(.headline)
-                    .foregroundColor(.primary)
+                    .fontWeight(.semibold)
+                    .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
 
                 HStack {
                     Text(formatDuration(message.duration))
                         .font(.caption)
-                        .foregroundColor(.gray)
+                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
 
                     Text("•")
-                        .foregroundColor(.gray)
+                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
 
                     Text(message.createdAt, style: .date)
                         .font(.caption)
-                        .foregroundColor(.gray)
+                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
                 }
             }
 
