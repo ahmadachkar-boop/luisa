@@ -145,16 +145,19 @@ struct CountdownBanner: View {
     @State private var timer: Timer?
 
     var body: some View {
-        VStack(spacing: 4) {
+        HStack(spacing: 8) {
             Text("Next Plan:")
                 .font(.caption)
                 .fontWeight(.semibold)
                 .foregroundColor(.white.opacity(0.9))
 
             Text(timeRemaining)
-                .font(.title3)
+                .font(.subheadline)
                 .fontWeight(.bold)
                 .foregroundColor(.white)
+
+            Text("•")
+                .foregroundColor(.white.opacity(0.7))
 
             Text(event.title)
                 .font(.subheadline)
@@ -162,7 +165,8 @@ struct CountdownBanner: View {
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
-        .padding()
+        .padding(.vertical, 12)
+        .padding(.horizontal)
         .background(
             LinearGradient(
                 colors: event.isSpecial ?
@@ -514,6 +518,12 @@ struct EventDetailView: View {
     let onDelete: () -> Void
     @Environment(\.dismiss) var dismiss
     @State private var showingDeleteAlert = false
+    @State private var photoPickerItems: [PhotosPickerItem] = []
+    @State private var isUploadingPhotos = false
+
+    var isPastEvent: Bool {
+        event.date < Date()
+    }
 
     var body: some View {
         NavigationView {
@@ -562,13 +572,39 @@ struct EventDetailView: View {
                         .padding(.horizontal)
 
                         // Photos
-                        if !event.photoURLs.isEmpty {
-                            VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
                                 Text("Photos 📸")
                                     .font(.headline)
                                     .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-                                    .padding(.horizontal)
 
+                                Spacer()
+
+                                // Add photos button for past events
+                                if isPastEvent {
+                                    PhotosPicker(selection: $photoPickerItems, maxSelectionCount: 5, matching: .images) {
+                                        HStack(spacing: 4) {
+                                            if isUploadingPhotos {
+                                                ProgressView()
+                                                    .scaleEffect(0.8)
+                                            } else {
+                                                Image(systemName: "plus.circle.fill")
+                                                Text("Add")
+                                                    .font(.caption)
+                                            }
+                                        }
+                                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.8))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
+                                        .background(Color(red: 0.95, green: 0.9, blue: 1.0))
+                                        .cornerRadius(15)
+                                    }
+                                    .disabled(isUploadingPhotos)
+                                }
+                            }
+                            .padding(.horizontal)
+
+                            if !event.photoURLs.isEmpty {
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack(spacing: 12) {
                                         ForEach(event.photoURLs, id: \.self) { photoURL in
@@ -576,18 +612,29 @@ struct EventDetailView: View {
                                                 image
                                                     .resizable()
                                                     .scaledToFill()
-                                                    .frame(width: 200, height: 200)
+                                                    .frame(width: 250, height: 250)
                                                     .clipShape(RoundedRectangle(cornerRadius: 15))
                                             } placeholder: {
                                                 RoundedRectangle(cornerRadius: 15)
                                                     .fill(Color.gray.opacity(0.2))
-                                                    .frame(width: 200, height: 200)
+                                                    .frame(width: 250, height: 250)
                                                     .overlay(ProgressView())
                                             }
                                         }
                                     }
                                     .padding(.horizontal)
                                 }
+                            } else if isPastEvent {
+                                Text("Add photos to remember this moment")
+                                    .font(.caption)
+                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                    .italic()
+                                    .padding(.horizontal)
+                            }
+                        }
+                        .onChange(of: photoPickerItems) { items in
+                            Task {
+                                await uploadPhotos(items)
                             }
                         }
 
@@ -719,6 +766,37 @@ struct EventDetailView: View {
                 UIApplication.shared.open(webURL)
             }
         }
+    }
+
+    func uploadPhotos(_ items: [PhotosPickerItem]) async {
+        isUploadingPhotos = true
+        var newPhotoURLs: [String] = []
+
+        for item in items {
+            if let data = try? await item.loadTransferable(type: Data.self) {
+                do {
+                    let url = try await FirebaseManager.shared.uploadEventPhoto(imageData: data)
+                    newPhotoURLs.append(url)
+                } catch {
+                    print("Error uploading photo: \(error)")
+                }
+            }
+        }
+
+        // Update event with new photos
+        if !newPhotoURLs.isEmpty {
+            var updatedEvent = event
+            updatedEvent.photoURLs.append(contentsOf: newPhotoURLs)
+
+            do {
+                try await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
+            } catch {
+                print("Error updating event: \(error)")
+            }
+        }
+
+        isUploadingPhotos = false
+        photoPickerItems = []
     }
 }
 
