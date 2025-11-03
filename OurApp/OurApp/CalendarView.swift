@@ -1,10 +1,13 @@
 import SwiftUI
+import PhotosUI
+import MapKit
 
 struct CalendarView: View {
     @StateObject private var viewModel = CalendarViewModel()
     @State private var showingAddEvent = false
     @State private var selectedDate = Date()
     @State private var selectedEventForDetail: CalendarEvent?
+    @State private var selectedTab = 0 // 0 = Upcoming, 1 = Memories
 
     var body: some View {
         NavigationView {
@@ -21,6 +24,13 @@ struct CalendarView: View {
                 .ignoresSafeArea()
 
                 VStack(spacing: 0) {
+                    // Countdown Timer (if there's an upcoming event)
+                    if let nextEvent = viewModel.upcomingEvents.first {
+                        CountdownBanner(event: nextEvent)
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                    }
+
                     // Month view - fixed height to prevent expansion
                     DatePicker("", selection: $selectedDate, displayedComponents: .date)
                         .datePickerStyle(.graphical)
@@ -33,40 +43,53 @@ struct CalendarView: View {
                         .frame(height: 400)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    // Upcoming events
+                    // Tab Selector
+                    Picker("View", selection: $selectedTab) {
+                        Text("Upcoming").tag(0)
+                        Text("Memories").tag(1)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+
+                    // Events list based on selected tab
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Upcoming Plans")
+                        Text(selectedTab == 0 ? "Upcoming Plans" : "Past Memories 💕")
                             .font(.title2)
                             .fontWeight(.bold)
                             .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
                             .padding(.horizontal)
 
-                        if viewModel.upcomingEvents.isEmpty {
+                        let eventsToShow = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
+
+                        if eventsToShow.isEmpty {
                             VStack(spacing: 10) {
-                                Image(systemName: "calendar.badge.plus")
+                                Image(systemName: selectedTab == 0 ? "calendar.badge.plus" : "heart.text.square")
                                     .font(.system(size: 50))
                                     .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
 
-                                Text("No plans yet")
+                                Text(selectedTab == 0 ? "No plans yet" : "No memories yet")
                                     .fontWeight(.semibold)
                                     .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
 
-                                Text("Add your first date! 💕")
+                                Text(selectedTab == 0 ? "Add your first date! 💕" : "Past events will appear here 💜")
                                     .font(.caption)
                                     .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
 
-                                Text("Every moment together is special")
-                                    .font(.caption2)
-                                    .italic()
-                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                                    .padding(.top, 4)
+                                if selectedTab == 0 {
+                                    Text("Every moment together is special")
+                                        .font(.caption2)
+                                        .italic()
+                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                        .padding(.top, 4)
+                                }
                             }
                             .frame(maxWidth: .infinity)
                             .padding()
                         } else {
                             ScrollView {
                                 LazyVStack(spacing: 12) {
-                                    ForEach(viewModel.upcomingEvents) { event in
+                                    ForEach(eventsToShow) { event in
                                         EventCard(
                                             event: event,
                                             onTap: {
@@ -112,6 +135,69 @@ struct CalendarView: View {
                         selectedEventForDetail = nil
                     }
                 })
+            }
+        }
+    }
+}
+
+struct CountdownBanner: View {
+    let event: CalendarEvent
+    @State private var timeRemaining: String = ""
+    @State private var timer: Timer?
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Text("Next Date:")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(.white.opacity(0.9))
+
+            Text(timeRemaining)
+                .font(.title3)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+
+            Text(event.title)
+                .font(.subheadline)
+                .foregroundColor(.white.opacity(0.95))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(
+            LinearGradient(
+                colors: event.isSpecial ?
+                    [Color(red: 0.8, green: 0.3, blue: 0.7), Color(red: 0.6, green: 0.2, blue: 0.9)] :
+                    [Color(red: 0.5, green: 0.3, blue: 0.8), Color(red: 0.4, green: 0.2, blue: 0.7)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .cornerRadius(15)
+        .shadow(color: event.isSpecial ? Color.purple.opacity(0.4) : Color.black.opacity(0.15),
+                radius: 8, x: 0, y: 3)
+        .onAppear {
+            updateCountdown()
+            timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+                updateCountdown()
+            }
+        }
+        .onDisappear {
+            timer?.invalidate()
+        }
+    }
+
+    func updateCountdown() {
+        let now = Date()
+        let components = Calendar.current.dateComponents([.day, .hour, .minute], from: now, to: event.date)
+
+        if let days = components.day, let hours = components.hour, let minutes = components.minute {
+            if days > 0 {
+                timeRemaining = "\(days) day\(days == 1 ? "" : "s") until"
+            } else if hours > 0 {
+                timeRemaining = "\(hours) hour\(hours == 1 ? "" : "s") \(minutes) min until"
+            } else {
+                timeRemaining = "\(minutes) minute\(minutes == 1 ? "" : "s") until"
             }
         }
     }
@@ -166,6 +252,12 @@ struct EventCard: View {
                             Text("✨")
                         }
                         .font(.caption)
+                    }
+
+                    if !event.photoURLs.isEmpty {
+                        Image(systemName: "photo.fill")
+                            .font(.caption)
+                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.8))
                     }
                 }
 
@@ -259,6 +351,9 @@ struct AddEventView: View {
     @State private var location = ""
     @State private var date: Date
     @State private var isSpecial = false
+    @State private var selectedPhotos: [Data] = []
+    @State private var photoPickerItems: [PhotosPickerItem] = []
+    @State private var isUploading = false
 
     let onSave: (CalendarEvent) async -> Void
 
@@ -306,6 +401,55 @@ struct AddEventView: View {
                 } header: {
                     Text("Make it memorable")
                 }
+
+                Section {
+                    PhotosPicker(selection: $photoPickerItems, maxSelectionCount: 5, matching: .images) {
+                        Label("Add Photos", systemImage: "photo.on.rectangle.angled")
+                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.8))
+                    }
+
+                    if !selectedPhotos.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 12) {
+                                ForEach(selectedPhotos.indices, id: \.self) { index in
+                                    if let uiImage = UIImage(data: selectedPhotos[index]) {
+                                        Image(uiImage: uiImage)
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(width: 80, height: 80)
+                                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                                            .overlay(alignment: .topTrailing) {
+                                                Button {
+                                                    selectedPhotos.remove(at: index)
+                                                } label: {
+                                                    Image(systemName: "xmark.circle.fill")
+                                                        .foregroundColor(.white)
+                                                        .background(Circle().fill(Color.black.opacity(0.6)))
+                                                }
+                                                .offset(x: 5, y: -5)
+                                            }
+                                    }
+                                }
+                            }
+                        }
+                        .frame(height: 80)
+                    }
+                } header: {
+                    Text("Memories 📸")
+                } footer: {
+                    Text("Add photos to remember this moment")
+                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                }
+                .onChange(of: photoPickerItems) { items in
+                    Task {
+                        selectedPhotos = []
+                        for item in items {
+                            if let data = try? await item.loadTransferable(type: Data.self) {
+                                selectedPhotos.append(data)
+                            }
+                        }
+                    }
+                }
             }
             .navigationTitle("Plan Something Special")
             .navigationBarTitleDisplayMode(.inline)
@@ -319,27 +463,47 @@ struct AddEventView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         Task {
+                            isUploading = true
+
+                            // Upload photos first
+                            var photoURLs: [String] = []
+                            for photoData in selectedPhotos {
+                                do {
+                                    let url = try await FirebaseManager.shared.uploadEventPhoto(imageData: photoData)
+                                    photoURLs.append(url)
+                                } catch {
+                                    print("Error uploading photo: \(error)")
+                                }
+                            }
+
                             let event = CalendarEvent(
                                 title: title,
                                 description: description,
                                 date: date,
                                 location: location,
                                 createdBy: "You",
-                                isSpecial: isSpecial
+                                isSpecial: isSpecial,
+                                photoURLs: photoURLs
                             )
                             await onSave(event)
+                            isUploading = false
                             dismiss()
                         }
                     } label: {
-                        HStack(spacing: 4) {
-                            Text("Save")
-                            Text("💕")
-                                .font(.caption)
+                        if isUploading {
+                            ProgressView()
+                                .tint(Color(red: 0.6, green: 0.3, blue: 0.8))
+                        } else {
+                            HStack(spacing: 4) {
+                                Text("Save")
+                                Text("💕")
+                                    .font(.caption)
+                            }
+                            .foregroundColor(title.isEmpty ? .gray : Color(red: 0.6, green: 0.3, blue: 0.8))
+                            .fontWeight(.semibold)
                         }
-                        .foregroundColor(title.isEmpty ? .gray : Color(red: 0.6, green: 0.3, blue: 0.8))
-                        .fontWeight(.semibold)
                     }
-                    .disabled(title.isEmpty)
+                    .disabled(title.isEmpty || isUploading)
                 }
             }
         }
@@ -398,6 +562,36 @@ struct EventDetailView: View {
                                 radius: 15, x: 0, y: 5)
                         .padding(.horizontal)
 
+                        // Photos
+                        if !event.photoURLs.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Photos 📸")
+                                    .font(.headline)
+                                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                                    .padding(.horizontal)
+
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 12) {
+                                        ForEach(event.photoURLs, id: \.self) { photoURL in
+                                            AsyncImage(url: URL(string: photoURL)) { image in
+                                                image
+                                                    .resizable()
+                                                    .scaledToFill()
+                                                    .frame(width: 200, height: 200)
+                                                    .clipShape(RoundedRectangle(cornerRadius: 15))
+                                            } placeholder: {
+                                                RoundedRectangle(cornerRadius: 15)
+                                                    .fill(Color.gray.opacity(0.2))
+                                                    .frame(width: 200, height: 200)
+                                                    .overlay(ProgressView())
+                                            }
+                                        }
+                                    }
+                                    .padding(.horizontal)
+                                }
+                            }
+                        }
+
                         // Event details
                         VStack(alignment: .leading, spacing: 20) {
                             // Title
@@ -438,9 +632,19 @@ struct EventDetailView: View {
                                         .font(.headline)
                                         .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
 
-                                    Text(event.location)
-                                        .font(.body)
-                                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                                    Button {
+                                        openInMaps()
+                                    } label: {
+                                        HStack {
+                                            Text(event.location)
+                                                .font(.body)
+                                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                                            Spacer()
+                                            Image(systemName: "arrow.up.right.square")
+                                                .font(.caption)
+                                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.8))
+                                        }
+                                    }
                                 }
                             }
 
@@ -506,6 +710,17 @@ struct EventDetailView: View {
             }
         }
     }
+
+    func openInMaps() {
+        let query = event.location.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        if let url = URL(string: "maps://?q=\(query)") {
+            if UIApplication.shared.canOpenURL(url) {
+                UIApplication.shared.open(url)
+            } else if let webURL = URL(string: "https://maps.apple.com/?q=\(query)") {
+                UIApplication.shared.open(webURL)
+            }
+        }
+    }
 }
 
 class CalendarViewModel: ObservableObject {
@@ -514,7 +729,11 @@ class CalendarViewModel: ObservableObject {
     private let firebaseManager = FirebaseManager.shared
 
     var upcomingEvents: [CalendarEvent] {
-        events.filter { $0.date >= Date() }
+        events.filter { $0.date >= Date() }.sorted { $0.date < $1.date }
+    }
+
+    var pastEvents: [CalendarEvent] {
+        events.filter { $0.date < Date() }.sorted { $0.date > $1.date }
     }
 
     init() {

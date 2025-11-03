@@ -167,6 +167,70 @@ class FirebaseManager: ObservableObject {
 
     func deleteCalendarEvent(_ event: CalendarEvent) async throws {
         guard let id = event.id else { return }
+
+        // Delete event photos from storage
+        for photoURL in event.photoURLs {
+            do {
+                let storageRef = storage.reference(forURL: photoURL)
+                try await storageRef.delete()
+            } catch {
+                print("Error deleting event photo: \(error)")
+            }
+        }
+
         try await db.collection("calendarEvents").document(id).delete()
+    }
+
+    func uploadEventPhoto(imageData: Data) async throws -> String {
+        let fileName = "\(UUID().uuidString).jpg"
+        let storageRef = storage.reference().child("event_photos/\(fileName)")
+
+        let _ = try await storageRef.putDataAsync(imageData)
+        let downloadURL = try await storageRef.downloadURL()
+
+        return downloadURL.absoluteString
+    }
+
+    // MARK: - Wish List
+    func addWishListItem(_ item: WishListItem) async throws {
+        try db.collection("wishList").addDocument(from: item)
+    }
+
+    func getWishListItems() -> AsyncThrowingStream<[WishListItem], Error> {
+        AsyncThrowingStream { continuation in
+            let listener = db.collection("wishList")
+                .order(by: "createdAt", descending: true)
+                .addSnapshotListener { snapshot, error in
+                    if let error = error {
+                        continuation.finish(throwing: error)
+                        return
+                    }
+
+                    guard let documents = snapshot?.documents else {
+                        continuation.yield([])
+                        return
+                    }
+
+                    let items = documents.compactMap { doc -> WishListItem? in
+                        try? doc.data(as: WishListItem.self)
+                    }
+
+                    continuation.yield(items)
+                }
+
+            continuation.onTermination = { _ in
+                listener.remove()
+            }
+        }
+    }
+
+    func updateWishListItem(_ item: WishListItem) async throws {
+        guard let id = item.id else { return }
+        try db.collection("wishList").document(id).setData(from: item)
+    }
+
+    func deleteWishListItem(_ item: WishListItem) async throws {
+        guard let id = item.id else { return }
+        try await db.collection("wishList").document(id).delete()
     }
 }

@@ -46,6 +46,7 @@ struct CalendarEvent: Identifiable, Codable {
     var location: String
     var createdBy: String
     var isSpecial: Bool // For marking special dates
+    var photoURLs: [String] // Photos attached to this event
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -55,5 +56,29 @@ struct CalendarEvent: Identifiable, Codable {
         case location
         case createdBy
         case isSpecial
+        case photoURLs
+    }
+}
+
+// MARK: - Wish List Item Model
+struct WishListItem: Identifiable, Codable {
+    @DocumentID var id: String?
+    var title: String
+    var description: String
+    var addedBy: String
+    var createdAt: Date
+    var isCompleted: Bool
+    var completedDate: Date?
+    var category: String // e.g., "Place to Visit", "Activity", "Restaurant", "Experience"
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case description
+        case addedBy
+        case createdAt
+        case isCompleted
+        case completedDate
+        case category
     }
 }
