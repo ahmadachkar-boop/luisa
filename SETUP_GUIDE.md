@@ -2,6 +2,16 @@
 
 This is a step-by-step guide to get your app running!
 
+## ⚠️ IMPORTANT: Create Xcode Project First!
+
+Before following this guide, you MUST create the Xcode project properly.
+
+👉 **See [XCODE_PROJECT_SETUP.md](XCODE_PROJECT_SETUP.md) for detailed instructions on creating the Xcode project.**
+
+Once you've created the Xcode project, come back here to set up Firebase and run the app!
+
+---
+
 ## Step 1: Install Xcode (if you haven't already)
 
 1. Open the App Store on your Mac

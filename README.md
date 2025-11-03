@@ -24,6 +24,10 @@ A beautiful iOS app designed to help couples stay connected through shared voice
 
 ## Setup Instructions
 
+⭐ **START HERE**: See [XCODE_PROJECT_SETUP.md](XCODE_PROJECT_SETUP.md) for step-by-step instructions to create the Xcode project first!
+
+After creating the Xcode project, continue with Firebase setup below.
+
 ### Prerequisites
 - Xcode 15.0 or later
 - iOS 17.0 or later
