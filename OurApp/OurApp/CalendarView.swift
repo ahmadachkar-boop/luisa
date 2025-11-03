@@ -520,6 +520,15 @@ struct EventDetailView: View {
     @State private var showingDeleteAlert = false
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var isUploadingPhotos = false
+    @State private var showingErrorAlert = false
+    @State private var errorMessage = ""
+    @State private var currentEvent: CalendarEvent
+
+    init(event: CalendarEvent, onDelete: @escaping () -> Void) {
+        self.event = event
+        self.onDelete = onDelete
+        _currentEvent = State(initialValue: event)
+    }
 
     var isPastEvent: Bool {
         event.date < Date()
@@ -604,10 +613,10 @@ struct EventDetailView: View {
                             }
                             .padding(.horizontal)
 
-                            if !event.photoURLs.isEmpty {
+                            if !currentEvent.photoURLs.isEmpty {
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack(spacing: 12) {
-                                        ForEach(event.photoURLs, id: \.self) { photoURL in
+                                        ForEach(currentEvent.photoURLs, id: \.self) { photoURL in
                                             AsyncImage(url: URL(string: photoURL)) { image in
                                                 image
                                                     .resizable()
@@ -754,6 +763,11 @@ struct EventDetailView: View {
             } message: {
                 Text("This will remove '\(event.title)' from your plans")
             }
+            .alert("Upload Error", isPresented: $showingErrorAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(errorMessage)
+            }
         }
     }
 
@@ -769,38 +783,76 @@ struct EventDetailView: View {
     }
 
     func uploadPhotos(_ items: [PhotosPickerItem]) async {
+        print("🔵 [UPLOAD START] Beginning photo upload for \(items.count) items")
         isUploadingPhotos = true
         var newPhotoURLs: [String] = []
+        var uploadErrors: [String] = []
 
-        for item in items {
-            if let data = try? await item.loadTransferable(type: Data.self) {
-                do {
-                    let url = try await FirebaseManager.shared.uploadEventPhoto(imageData: data)
-                    newPhotoURLs.append(url)
-                } catch {
-                    print("Error uploading photo: \(error)")
+        for (index, item) in items.enumerated() {
+            print("🔵 [UPLOAD] Processing item \(index + 1)/\(items.count)")
+
+            do {
+                print("🔵 [UPLOAD] Loading image data...")
+                guard let data = try await item.loadTransferable(type: Data.self) else {
+                    print("🔴 [UPLOAD ERROR] Failed to load image data for item \(index + 1)")
+                    uploadErrors.append("Failed to load image \(index + 1)")
+                    continue
                 }
+
+                print("🔵 [UPLOAD] Image data loaded: \(data.count) bytes")
+                print("🔵 [UPLOAD] Uploading to Firebase Storage...")
+
+                let url = try await FirebaseManager.shared.uploadEventPhoto(imageData: data)
+                print("🟢 [UPLOAD SUCCESS] Photo uploaded: \(url)")
+                newPhotoURLs.append(url)
+
+            } catch {
+                print("🔴 [UPLOAD ERROR] Failed to upload item \(index + 1): \(error.localizedDescription)")
+                print("🔴 [UPLOAD ERROR] Full error: \(error)")
+                uploadErrors.append("Photo \(index + 1): \(error.localizedDescription)")
             }
         }
 
+        print("🔵 [UPLOAD] Completed processing. Successful uploads: \(newPhotoURLs.count)")
+
         // Update event with new photos
         if !newPhotoURLs.isEmpty {
+            print("🔵 [FIREBASE] Updating event with \(newPhotoURLs.count) new photos")
             var updatedEvent = event
             updatedEvent.photoURLs.append(contentsOf: newPhotoURLs)
 
             do {
                 try await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
-                // Dismiss view to refresh - photos will show when reopened
+                print("🟢 [FIREBASE SUCCESS] Event updated in Firestore")
+
+                // Update local state to show photos immediately
                 await MainActor.run {
-                    dismiss()
+                    currentEvent = updatedEvent
+                    print("🟢 [UI UPDATE] Local state updated with new photos")
                 }
             } catch {
-                print("Error updating event: \(error)")
+                print("🔴 [FIREBASE ERROR] Failed to update event: \(error.localizedDescription)")
+                print("🔴 [FIREBASE ERROR] Full error: \(error)")
+                uploadErrors.append("Failed to save: \(error.localizedDescription)")
             }
+        }
+
+        // Show error alert if any failures occurred
+        if !uploadErrors.isEmpty {
+            await MainActor.run {
+                errorMessage = uploadErrors.joined(separator: "\n")
+                showingErrorAlert = true
+                print("🔴 [ERROR ALERT] Showing error to user: \(errorMessage)")
+            }
+        } else if newPhotoURLs.isEmpty {
+            print("⚠️ [WARNING] No photos were uploaded")
+        } else {
+            print("🟢 [COMPLETE] All photos uploaded successfully!")
         }
 
         isUploadingPhotos = false
         photoPickerItems = []
+        print("🔵 [UPLOAD END] Upload process completed")
     }
 }
 

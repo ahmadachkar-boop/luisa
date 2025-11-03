@@ -161,8 +161,14 @@ class FirebaseManager: ObservableObject {
     }
 
     func updateCalendarEvent(_ event: CalendarEvent) async throws {
-        guard let id = event.id else { return }
+        print("🔵 [FIREBASE] updateCalendarEvent called")
+        guard let id = event.id else {
+            print("🔴 [FIREBASE ERROR] Event has no ID!")
+            return
+        }
+        print("🔵 [FIREBASE] Updating event \(id) with \(event.photoURLs.count) photos")
         try db.collection("calendarEvents").document(id).setData(from: event)
+        print("🟢 [FIREBASE SUCCESS] Event \(id) updated successfully")
     }
 
     func deleteCalendarEvent(_ event: CalendarEvent) async throws {
@@ -182,11 +188,18 @@ class FirebaseManager: ObservableObject {
     }
 
     func uploadEventPhoto(imageData: Data) async throws -> String {
+        print("🔵 [FIREBASE STORAGE] uploadEventPhoto called with \(imageData.count) bytes")
         let fileName = "\(UUID().uuidString).jpg"
+        print("🔵 [FIREBASE STORAGE] Generated filename: \(fileName)")
         let storageRef = storage.reference().child("event_photos/\(fileName)")
+        print("🔵 [FIREBASE STORAGE] Storage path: event_photos/\(fileName)")
 
+        print("🔵 [FIREBASE STORAGE] Starting upload...")
         let _ = try await storageRef.putDataAsync(imageData)
+        print("🟢 [FIREBASE STORAGE] Upload complete, fetching download URL...")
+
         let downloadURL = try await storageRef.downloadURL()
+        print("🟢 [FIREBASE STORAGE] Download URL obtained: \(downloadURL.absoluteString)")
 
         return downloadURL.absoluteString
     }
