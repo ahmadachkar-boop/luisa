@@ -4,6 +4,8 @@ struct CalendarView: View {
     @StateObject private var viewModel = CalendarViewModel()
     @State private var showingAddEvent = false
     @State private var selectedDate = Date()
+    @State private var showError = false
+    @State private var errorMessage = ""
 
     var body: some View {
         NavigationView {
@@ -61,7 +63,12 @@ struct CalendarView: View {
                                             event: event,
                                             onDelete: {
                                                 Task {
-                                                    await viewModel.deleteEvent(event)
+                                                    do {
+                                                        try await viewModel.deleteEvent(event)
+                                                    } catch {
+                                                        errorMessage = "Failed to delete event: \(error.localizedDescription)"
+                                                        showError = true
+                                                    }
                                                 }
                                             }
                                         )
@@ -89,8 +96,18 @@ struct CalendarView: View {
             }
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView { event in
-                    await viewModel.addEvent(event)
+                    do {
+                        try await viewModel.addEvent(event)
+                    } catch {
+                        errorMessage = "Failed to add event: \(error.localizedDescription)"
+                        showError = true
+                    }
                 }
+            }
+            .alert("Error", isPresented: $showError) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(errorMessage)
             }
         }
     }
@@ -253,20 +270,12 @@ class CalendarViewModel: ObservableObject {
         }
     }
 
-    func addEvent(_ event: CalendarEvent) async {
-        do {
-            try await firebaseManager.addCalendarEvent(event)
-        } catch {
-            print("Error adding event: \(error)")
-        }
+    func addEvent(_ event: CalendarEvent) async throws {
+        try await firebaseManager.addCalendarEvent(event)
     }
 
-    func deleteEvent(_ event: CalendarEvent) async {
-        do {
-            try await firebaseManager.deleteCalendarEvent(event)
-        } catch {
-            print("Error deleting event: \(error)")
-        }
+    func deleteEvent(_ event: CalendarEvent) async throws {
+        try await firebaseManager.deleteCalendarEvent(event)
     }
 }
 
