@@ -9,7 +9,7 @@ struct PhotoIndex: Identifiable {
 
 struct PhotoGalleryView: View {
     @StateObject private var viewModel = PhotoGalleryViewModel()
-    @State private var selectedItem: PhotosPickerItem?
+    @State private var selectedItems: [PhotosPickerItem] = []
     @State private var showingAddPhoto = false
     @State private var isUploading = false
     @State private var showError = false
@@ -92,7 +92,7 @@ struct PhotoGalleryView: View {
                         ProgressView()
                             .tint(Color(red: 0.8, green: 0.7, blue: 1.0))
                     } else {
-                        PhotosPicker(selection: $selectedItem, matching: .images) {
+                        PhotosPicker(selection: $selectedItems, maxSelectionCount: 10, matching: .images) {
                             Image(systemName: "plus.circle.fill")
                                 .font(.title2)
                                 .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
@@ -100,29 +100,37 @@ struct PhotoGalleryView: View {
                     }
                 }
             }
-            .onChange(of: selectedItem) { newItem in
+            .onChange(of: selectedItems) { oldItems, newItems in
                 Task {
-                    guard let item = newItem else { return }
+                    guard !newItems.isEmpty else { return }
                     isUploading = true
 
-                    do {
-                        if let data = try await item.loadTransferable(type: Data.self),
-                           let uiImage = UIImage(data: data) {
-                            // Resize and compress the image before upload
-                            let resized = uiImage.resized(toMaxDimension: 1920)
-                            if let compressedData = resized.compressed(toMaxBytes: 1_000_000) {
-                                try await viewModel.uploadPhoto(imageData: compressedData)
-                            } else {
-                                throw NSError(domain: "PhotoUpload", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to compress image"])
+                    var uploadErrors: [String] = []
+
+                    for (index, item) in newItems.enumerated() {
+                        do {
+                            if let data = try await item.loadTransferable(type: Data.self),
+                               let uiImage = UIImage(data: data) {
+                                // Resize and compress the image before upload
+                                let resized = uiImage.resized(toMaxDimension: 1920)
+                                if let compressedData = resized.compressed(toMaxBytes: 1_000_000) {
+                                    try await viewModel.uploadPhoto(imageData: compressedData)
+                                } else {
+                                    uploadErrors.append("Failed to compress image \(index + 1)")
+                                }
                             }
+                        } catch {
+                            uploadErrors.append("Failed to upload photo \(index + 1): \(error.localizedDescription)")
                         }
-                    } catch {
-                        errorMessage = "Failed to upload photo: \(error.localizedDescription)"
+                    }
+
+                    if !uploadErrors.isEmpty {
+                        errorMessage = uploadErrors.joined(separator: "\n")
                         showError = true
                     }
 
                     isUploading = false
-                    selectedItem = nil
+                    selectedItems = []
                 }
             }
             .alert("Error", isPresented: $showError) {
@@ -131,13 +139,18 @@ struct PhotoGalleryView: View {
                 Text(errorMessage)
             }
             .fullScreenCover(item: $selectedPhotoIndex) { photoIndex in
-                let _ = print("🎬 [PRESENT] Presenting FullScreenPhotoViewer")
-                let _ = print("   → selectedPhotoIndex: \(photoIndex.value)")
-                let _ = print("   → photoURLs count: \(viewModel.photos.count)")
                 FullScreenPhotoViewer(
                     photoURLs: viewModel.photos.map { $0.imageURL },
                     initialIndex: photoIndex.value,
-                    onDismiss: { selectedPhotoIndex = nil }
+                    onDismiss: { selectedPhotoIndex = nil },
+                    onDelete: { indexToDelete in
+                        if indexToDelete < viewModel.photos.count {
+                            let photoToDelete = viewModel.photos[indexToDelete]
+                            Task {
+                                try? await viewModel.deletePhoto(photoToDelete)
+                            }
+                        }
+                    }
                 )
             }
         }

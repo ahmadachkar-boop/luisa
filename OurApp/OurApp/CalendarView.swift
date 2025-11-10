@@ -808,13 +808,22 @@ struct EventDetailView: View {
                 Text(errorMessage)
             }
             .fullScreenCover(item: $selectedPhotoIndex) { photoIndex in
-                let _ = print("🎬 [PRESENT] Presenting FullScreenPhotoViewer from Calendar")
-                let _ = print("   → selectedPhotoIndex: \(photoIndex.value)")
-                let _ = print("   → photoURLs count: \(currentEvent.photoURLs.count)")
                 FullScreenPhotoViewer(
                     photoURLs: currentEvent.photoURLs,
                     initialIndex: photoIndex.value,
-                    onDismiss: { selectedPhotoIndex = nil }
+                    onDismiss: { selectedPhotoIndex = nil },
+                    onDelete: { indexToDelete in
+                        if indexToDelete < currentEvent.photoURLs.count {
+                            var updatedPhotoURLs = currentEvent.photoURLs
+                            updatedPhotoURLs.remove(at: indexToDelete)
+                            Task {
+                                try? await FirebaseManager.shared.updateEventPhotos(eventId: event.id, photoURLs: updatedPhotoURLs)
+                                await MainActor.run {
+                                    currentEvent.photoURLs = updatedPhotoURLs
+                                }
+                            }
+                        }
+                    }
                 )
             }
         }

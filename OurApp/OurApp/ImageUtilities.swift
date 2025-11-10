@@ -190,6 +190,7 @@ struct FullScreenPhotoViewer: View {
     let photoURLs: [String]
     let initialIndex: Int
     let onDismiss: () -> Void
+    let onDelete: ((Int) -> Void)?
 
     // Use a unique ID to force complete view recreation
     @State private var viewID = UUID()
@@ -201,11 +202,16 @@ struct FullScreenPhotoViewer: View {
     @State private var saveErrorMessage = ""
     @State private var showingShareSheet = false
     @State private var currentImage: UIImage?
+    @State private var showingDeleteAlert = false
+    @State private var selectionMode = false
+    @State private var selectedIndices: Set<Int> = []
+    @State private var loadedImages: [Int: UIImage] = [:]
 
-    init(photoURLs: [String], initialIndex: Int, onDismiss: @escaping () -> Void) {
+    init(photoURLs: [String], initialIndex: Int, onDismiss: @escaping () -> Void, onDelete: ((Int) -> Void)? = nil) {
         self.photoURLs = photoURLs
         self.initialIndex = initialIndex
         self.onDismiss = onDismiss
+        self.onDelete = onDelete
 
         // Initialize directly with the index we want
         let safeIndex = max(0, min(initialIndex, photoURLs.count - 1))
@@ -221,8 +227,15 @@ struct FullScreenPhotoViewer: View {
             VStack(spacing: 0) {
                 // Top bar
                 HStack {
-                    Button(action: onDismiss) {
-                        Image(systemName: "xmark.circle.fill")
+                    Button(action: {
+                        if selectionMode {
+                            selectionMode = false
+                            selectedIndices.removeAll()
+                        } else {
+                            onDismiss()
+                        }
+                    }) {
+                        Image(systemName: selectionMode ? "checkmark.circle.fill" : "xmark.circle.fill")
                             .font(.title)
                             .foregroundColor(.white)
                             .shadow(radius: 3)
@@ -230,26 +243,54 @@ struct FullScreenPhotoViewer: View {
 
                     Spacer()
 
-                    Text("\(currentIndex + 1) / \(photoURLs.count)")
-                        .foregroundColor(.white)
-                        .font(.subheadline)
-                        .shadow(radius: 3)
+                    if selectionMode {
+                        Text("\(selectedIndices.count) selected")
+                            .foregroundColor(.white)
+                            .font(.subheadline)
+                            .shadow(radius: 3)
+                    } else {
+                        Text("\(currentIndex + 1) / \(photoURLs.count)")
+                            .foregroundColor(.white)
+                            .font(.subheadline)
+                            .shadow(radius: 3)
+                    }
 
                     Spacer()
 
-                    Menu {
-                        Button(action: saveCurrentPhoto) {
-                            Label("Save to Photos", systemImage: "square.and.arrow.down")
+                    if selectionMode {
+                        Button(action: saveSelectedPhotos) {
+                            Image(systemName: "square.and.arrow.down.fill")
+                                .font(.title)
+                                .foregroundColor(.white)
+                                .shadow(radius: 3)
                         }
+                        .disabled(selectedIndices.isEmpty)
+                        .opacity(selectedIndices.isEmpty ? 0.5 : 1)
+                    } else {
+                        Menu {
+                            Button(action: { selectionMode = true }) {
+                                Label("Select Photos", systemImage: "checkmark.circle")
+                            }
 
-                        Button(action: { showingShareSheet = true }) {
-                            Label("Share", systemImage: "square.and.arrow.up")
+                            Button(action: saveCurrentPhoto) {
+                                Label("Save to Photos", systemImage: "square.and.arrow.down")
+                            }
+
+                            Button(action: { showingShareSheet = true }) {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                            }
+
+                            if onDelete != nil {
+                                Button(role: .destructive, action: { showingDeleteAlert = true }) {
+                                    Label("Delete Photo", systemImage: "trash")
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle.fill")
+                                .font(.title)
+                                .foregroundColor(.white)
+                                .shadow(radius: 3)
                         }
-                    } label: {
-                        Image(systemName: "ellipsis.circle.fill")
-                            .font(.title)
-                            .foregroundColor(.white)
-                            .shadow(radius: 3)
                     }
                 }
                 .padding()
@@ -259,20 +300,46 @@ struct FullScreenPhotoViewer: View {
                 GeometryReader { geometry in
                     // Display current photo only
                     if currentIndex >= 0 && currentIndex < photoURLs.count {
-                        SinglePhotoView(
-                            photoURL: photoURLs[currentIndex],
-                            isZoomed: $isZoomed,
-                            onImageLoaded: { image in
-                                currentImage = image
+                        ZStack {
+                            SinglePhotoView(
+                                photoURL: photoURLs[currentIndex],
+                                isZoomed: $isZoomed,
+                                onImageLoaded: { image in
+                                    currentImage = image
+                                    loadedImages[currentIndex] = image
+                                }
+                            )
+                            .id("\(currentIndex)-\(viewID)")
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+
+                            // Selection checkbox overlay
+                            if selectionMode {
+                                VStack {
+                                    HStack {
+                                        Spacer()
+                                        Button(action: {
+                                            if selectedIndices.contains(currentIndex) {
+                                                selectedIndices.remove(currentIndex)
+                                            } else {
+                                                selectedIndices.insert(currentIndex)
+                                            }
+                                        }) {
+                                            Image(systemName: selectedIndices.contains(currentIndex) ? "checkmark.circle.fill" : "circle")
+                                                .font(.system(size: 32))
+                                                .foregroundColor(.white)
+                                                .shadow(color: .black.opacity(0.5), radius: 3)
+                                                .padding(20)
+                                        }
+                                    }
+                                    Spacer()
+                                }
                             }
-                        )
-                        .id("\(currentIndex)-\(viewID)")
-                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        }
                         .offset(y: dragOffset)
                         .gesture(
                             DragGesture(minimumDistance: 20)
                                 .onChanged { value in
-                                    if !isZoomed {
+                                    if !isZoomed && !selectionMode {
                                         // Only track vertical drag for dismiss gesture
                                         if abs(value.translation.height) > abs(value.translation.width) {
                                             dragOffset = value.translation.height
@@ -280,7 +347,7 @@ struct FullScreenPhotoViewer: View {
                                     }
                                 }
                                 .onEnded { value in
-                                    if !isZoomed {
+                                    if !isZoomed && !selectionMode {
                                         let horizontal = value.translation.width
                                         let vertical = value.translation.height
 
@@ -312,7 +379,7 @@ struct FullScreenPhotoViewer: View {
                 }
 
                 // Page indicators
-                if !isZoomed && photoURLs.count > 1 {
+                if !isZoomed && !selectionMode && photoURLs.count > 1 {
                     HStack(spacing: 8) {
                         ForEach(0..<photoURLs.count, id: \.self) { index in
                             Circle()
@@ -337,12 +404,21 @@ struct FullScreenPhotoViewer: View {
         .alert("Saved!", isPresented: $showingSaveSuccess) {
             Button("OK", role: .cancel) { }
         } message: {
-            Text("Photo saved to your library")
+            Text(selectedIndices.isEmpty ? "Photo saved to your library" : "\(selectedIndices.count) photos saved to your library")
         }
         .alert("Error", isPresented: $showingSaveError) {
             Button("OK", role: .cancel) { }
         } message: {
             Text(saveErrorMessage)
+        }
+        .alert("Delete Photo?", isPresented: $showingDeleteAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                onDelete?(currentIndex)
+                onDismiss()
+            }
+        } message: {
+            Text("This photo will be permanently deleted")
         }
         .sheet(isPresented: $showingShareSheet) {
             if let image = currentImage {
@@ -383,6 +459,52 @@ struct FullScreenPhotoViewer: View {
             showingSaveError = true
         }
         imageSaver.writeToPhotoAlbum(image: image)
+    }
+
+    private func saveSelectedPhotos() {
+        guard !selectedIndices.isEmpty else { return }
+
+        // First, ensure we have all images loaded
+        var imagesToSave: [UIImage] = []
+        var missingImages = false
+
+        for index in selectedIndices.sorted() {
+            if let image = loadedImages[index] {
+                imagesToSave.append(image)
+            } else {
+                missingImages = true
+            }
+        }
+
+        if missingImages {
+            saveErrorMessage = "Some images are not loaded yet. Please navigate to each photo first."
+            showingSaveError = true
+            return
+        }
+
+        // Save all images
+        var savedCount = 0
+        var errorOccurred = false
+
+        for (index, image) in imagesToSave.enumerated() {
+            let imageSaver = ImageSaver()
+            imageSaver.successHandler = {
+                savedCount += 1
+                if savedCount == imagesToSave.count {
+                    showingSaveSuccess = true
+                    selectionMode = false
+                    selectedIndices.removeAll()
+                }
+            }
+            imageSaver.errorHandler = { error in
+                if !errorOccurred {
+                    errorOccurred = true
+                    saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
+                    showingSaveError = true
+                }
+            }
+            imageSaver.writeToPhotoAlbum(image: image)
+        }
     }
 }
 
