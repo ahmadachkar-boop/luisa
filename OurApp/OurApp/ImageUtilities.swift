@@ -195,6 +195,7 @@ struct FullScreenPhotoViewer: View {
     @State private var isZoomed = false
     @State private var isGestureActive = false // Track active gestures to prevent conflicts
     @State private var hasInitialized = false // Track if TabView has initialized
+    @State private var hasAppearedOnce = false // Track if onAppear has fired once
 
     init(photoURLs: [String], initialIndex: Int = 0, onDismiss: @escaping () -> Void) {
         self.photoURLs = photoURLs
@@ -243,9 +244,17 @@ struct FullScreenPhotoViewer: View {
             // Note: Don't use .allowsHitTesting(false) - it blocks ALL child gestures including zoom/pan!
             // The custom Binding above prevents navigation when zoomed
             .onAppear {
-                // Fallback: If TabView never called setter with initialIndex, force init to complete
-                // This ensures we don't stay in init mode forever
-                if !hasInitialized {
+                // Only run this logic ONCE per FullScreenPhotoViewer instance
+                guard !hasAppearedOnce else { return }
+                hasAppearedOnce = true
+
+                // Force TabView to correct index on first appear
+                // This handles case where TabView shows wrong page despite our binding
+                DispatchQueue.main.async {
+                    if currentIndex != initialIndex {
+                        currentIndex = initialIndex
+                    }
+                    // Complete initialization after forcing correct index
                     hasInitialized = true
                 }
             }
