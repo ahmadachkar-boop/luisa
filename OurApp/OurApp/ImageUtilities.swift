@@ -194,6 +194,7 @@ struct FullScreenPhotoViewer: View {
     @State private var isDraggingToDismiss = false
     @State private var isZoomed = false
     @State private var isGestureActive = false // Track active gestures to prevent conflicts
+    @State private var hasAppearedOnce = false // Track if view has appeared once
 
     init(photoURLs: [String], initialIndex: Int = 0, onDismiss: @escaping () -> Void) {
         self.photoURLs = photoURLs
@@ -231,11 +232,17 @@ struct FullScreenPhotoViewer: View {
             .tabViewStyle(.page(indexDisplayMode: isZoomed ? .never : .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .offset(y: dragOffset)
-            .task {
-                // Ensure TabView displays correct initial page
-                // Using task ensures this runs once when view appears
-                if currentIndex != initialIndex {
-                    currentIndex = initialIndex
+            .onAppear {
+                // Only run once per instance
+                guard !hasAppearedOnce else { return }
+                hasAppearedOnce = true
+
+                // Force TabView to correct index after it's actually laid out
+                // Small delay ensures TabView finishes internal initialization
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    if currentIndex != initialIndex {
+                        currentIndex = initialIndex
+                    }
                 }
             }
             .onChange(of: currentIndex) { newIndex in
