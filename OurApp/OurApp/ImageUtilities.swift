@@ -209,7 +209,7 @@ struct FullScreenPhotoViewer: View {
         GeometryReader { geometry in
             ZStack {
                 Color.black
-                    .opacity(1 - abs(verticalOffset) / CGFloat(500))
+                    .opacity(CGFloat(1) - abs(verticalOffset) / CGFloat(500))
                     .ignoresSafeArea()
 
                 // Custom horizontal pager - show previous, current, and next photos
