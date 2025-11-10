@@ -545,6 +545,8 @@ struct EventDetailView: View {
     @State private var showingErrorAlert = false
     @State private var errorMessage = ""
     @State private var currentEvent: CalendarEvent
+    @State private var showingPhotoViewer = false
+    @State private var selectedPhotoIndex = 0
 
     init(event: CalendarEvent, onDelete: @escaping () -> Void) {
         self.event = event
@@ -638,19 +640,25 @@ struct EventDetailView: View {
                             if !currentEvent.photoURLs.isEmpty {
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack(spacing: 12) {
-                                        ForEach(currentEvent.photoURLs, id: \.self) { photoURL in
-                                            AsyncImage(url: URL(string: photoURL)) { image in
-                                                image
-                                                    .resizable()
-                                                    .scaledToFill()
-                                                    .frame(width: 250, height: 250)
-                                                    .clipShape(RoundedRectangle(cornerRadius: 15))
-                                            } placeholder: {
-                                                RoundedRectangle(cornerRadius: 15)
-                                                    .fill(Color.gray.opacity(0.2))
-                                                    .frame(width: 250, height: 250)
-                                                    .overlay(ProgressView())
+                                        ForEach(Array(currentEvent.photoURLs.enumerated()), id: \.offset) { index, photoURL in
+                                            Button(action: {
+                                                selectedPhotoIndex = index
+                                                showingPhotoViewer = true
+                                            }) {
+                                                CachedAsyncImage(url: URL(string: photoURL)) { image in
+                                                    image
+                                                        .resizable()
+                                                        .scaledToFill()
+                                                        .frame(width: 250, height: 250)
+                                                        .clipShape(RoundedRectangle(cornerRadius: 15))
+                                                } placeholder: {
+                                                    RoundedRectangle(cornerRadius: 15)
+                                                        .fill(Color.gray.opacity(0.2))
+                                                        .frame(width: 250, height: 250)
+                                                        .overlay(ProgressView())
+                                                }
                                             }
+                                            .buttonStyle(PlainButtonStyle())
                                         }
                                     }
                                     .padding(.horizontal)
@@ -790,6 +798,13 @@ struct EventDetailView: View {
             } message: {
                 Text(errorMessage)
             }
+            .fullScreenCover(isPresented: $showingPhotoViewer) {
+                FullScreenPhotoViewer(
+                    photoURLs: currentEvent.photoURLs,
+                    initialIndex: selectedPhotoIndex,
+                    onDismiss: { showingPhotoViewer = false }
+                )
+            }
         }
     }
 
@@ -815,16 +830,28 @@ struct EventDetailView: View {
 
             do {
                 print("🔵 [UPLOAD] Loading image data...")
-                guard let data = try await item.loadTransferable(type: Data.self) else {
+                guard let data = try await item.loadTransferable(type: Data.self),
+                      let uiImage = UIImage(data: data) else {
                     print("🔴 [UPLOAD ERROR] Failed to load image data for item \(index + 1)")
                     uploadErrors.append("Failed to load image \(index + 1)")
                     continue
                 }
 
                 print("🔵 [UPLOAD] Image data loaded: \(data.count) bytes")
+                print("🔵 [UPLOAD] Compressing image...")
+
+                // Resize and compress image before upload
+                let resized = uiImage.resized(toMaxDimension: 1920)
+                guard let compressedData = resized.compressed(toMaxBytes: 1_000_000) else {
+                    print("🔴 [UPLOAD ERROR] Failed to compress image for item \(index + 1)")
+                    uploadErrors.append("Failed to compress image \(index + 1)")
+                    continue
+                }
+
+                print("🔵 [UPLOAD] Compressed to \(compressedData.count) bytes")
                 print("🔵 [UPLOAD] Uploading to Firebase Storage...")
 
-                let url = try await FirebaseManager.shared.uploadEventPhoto(imageData: data)
+                let url = try await FirebaseManager.shared.uploadEventPhoto(imageData: compressedData)
                 print("🟢 [UPLOAD SUCCESS] Photo uploaded: \(url)")
                 newPhotoURLs.append(url)
 

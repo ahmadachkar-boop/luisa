@@ -8,6 +8,8 @@ struct PhotoGalleryView: View {
     @State private var isUploading = false
     @State private var showError = false
     @State private var errorMessage = ""
+    @State private var showingPhotoViewer = false
+    @State private var selectedPhotoIndex = 0
 
     let columns = [
         GridItem(.flexible(), spacing: 2),
@@ -47,20 +49,11 @@ struct PhotoGalleryView: View {
                 } else {
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: 2) {
-                            ForEach(viewModel.photos) { photo in
-                                NavigationLink(destination: PhotoDetailView(
-                                    photo: photo,
-                                    onDelete: {
-                                        Task {
-                                            do {
-                                                try await viewModel.deletePhoto(photo)
-                                            } catch {
-                                                errorMessage = "Failed to delete photo: \(error.localizedDescription)"
-                                                showError = true
-                                            }
-                                        }
-                                    }
-                                )) {
+                            ForEach(Array(viewModel.photos.enumerated()), id: \.element.id) { index, photo in
+                                Button(action: {
+                                    selectedPhotoIndex = index
+                                    showingPhotoViewer = true
+                                }) {
                                     CachedAsyncImage(url: URL(string: photo.imageURL)) { image in
                                         image
                                             .resizable()
@@ -75,6 +68,7 @@ struct PhotoGalleryView: View {
                                     .frame(width: UIScreen.main.bounds.width / 3 - 2, height: UIScreen.main.bounds.width / 3 - 2)
                                     .clipped()
                                 }
+                                .buttonStyle(PlainButtonStyle())
                             }
                         }
                         .padding(.top, 2)
@@ -125,6 +119,13 @@ struct PhotoGalleryView: View {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text(errorMessage)
+            }
+            .fullScreenCover(isPresented: $showingPhotoViewer) {
+                FullScreenPhotoViewer(
+                    photoURLs: viewModel.photos.map { $0.imageURL },
+                    initialIndex: selectedPhotoIndex,
+                    onDismiss: { showingPhotoViewer = false }
+                )
             }
         }
     }
