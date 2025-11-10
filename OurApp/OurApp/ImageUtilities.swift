@@ -238,15 +238,6 @@ struct FullScreenPhotoViewer: View {
             .offset(y: dragOffset)
             // Note: Don't use .allowsHitTesting(false) - it blocks ALL child gestures including zoom/pan!
             // The custom Binding above prevents navigation when zoomed
-            .onAppear {
-                // Ensure TabView starts at the correct index
-                // Use async to ensure this happens after TabView initializes
-                DispatchQueue.main.async {
-                    if currentIndex != initialIndex {
-                        currentIndex = initialIndex
-                    }
-                }
-            }
             .onChange(of: currentIndex) { newIndex in
                 // Immediately and synchronously reset all zoom states when changing photos
                 isZoomed = false
