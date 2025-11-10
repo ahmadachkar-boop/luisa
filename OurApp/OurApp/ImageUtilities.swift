@@ -213,11 +213,16 @@ struct FullScreenPhotoViewer: View {
             TabView(selection: Binding(
                 get: { currentIndex },
                 set: { newValue in
-                    // During initialization phase, accept all updates to let TabView settle
-                    // After initialization, only update if not zoomed/gesturing
+                    // During initialization, only accept the CORRECT value (initialIndex)
+                    // This filters out TabView's incorrect initialization calls
                     if !hasInitialized {
-                        currentIndex = newValue
+                        if newValue == initialIndex {
+                            currentIndex = newValue
+                            hasInitialized = true // Lock as soon as we get the correct value
+                        }
+                        // Silently ignore incorrect values during init
                     } else if !isZoomed && !isGestureActive {
+                        // After initialization, allow navigation when not zoomed
                         currentIndex = newValue
                     }
                 }
@@ -238,13 +243,11 @@ struct FullScreenPhotoViewer: View {
             // Note: Don't use .allowsHitTesting(false) - it blocks ALL child gestures including zoom/pan!
             // The custom Binding above prevents navigation when zoomed
             .onAppear {
-                // Force correct index in case TabView settled on wrong value during init
-                if currentIndex != initialIndex {
-                    currentIndex = initialIndex
+                // Fallback: If TabView never called setter with initialIndex, force init to complete
+                // This ensures we don't stay in init mode forever
+                if !hasInitialized {
+                    hasInitialized = true
                 }
-                // Mark as initialized IMMEDIATELY to close vulnerability window
-                // This prevents any further TabView setter calls from being accepted
-                hasInitialized = true
             }
             .onChange(of: currentIndex) { newIndex in
                 // Immediately and synchronously reset all zoom states when changing photos
