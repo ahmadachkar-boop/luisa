@@ -378,7 +378,7 @@ struct ZoomablePhotoView: View {
                             }
                         }
                     )
-                    .gesture(
+                    .simultaneousGesture(
                         MagnificationGesture()
                             .onChanged { value in
                                 // Mark gesture as active immediately to block TabView navigation
@@ -408,8 +408,8 @@ struct ZoomablePhotoView: View {
                                 }
                             }
                     )
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 10)
+                    .highPriorityGesture(
+                        DragGesture(minimumDistance: 5)
                             .onChanged { value in
                                 // Only handle drag when already zoomed
                                 if scale > 1.05 {
@@ -438,7 +438,8 @@ struct ZoomablePhotoView: View {
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                                     isGestureActive = false
                                 }
-                            }
+                            },
+                        including: scale > 1.05 ? .all : .none
                     )
                     .onTapGesture(count: 2) {
                         withAnimation(.spring(response: 0.3)) {
