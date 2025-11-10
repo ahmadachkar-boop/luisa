@@ -51,6 +51,11 @@ struct PhotoGalleryView: View {
                         LazyVGrid(columns: columns, spacing: 2) {
                             ForEach(Array(viewModel.photos.enumerated()), id: \.element.id) { index, photo in
                                 Button(action: {
+                                    print("📸 [GALLERY] Photo tapped")
+                                    print("   → Index: \(index)")
+                                    print("   → Total photos: \(viewModel.photos.count)")
+                                    print("   → Photo ID: \(photo.id)")
+                                    print("   → Photo URL: \(photo.imageURL)")
                                     selectedPhotoIndex = index
                                     showingPhotoViewer = true
                                 }) {
@@ -121,6 +126,9 @@ struct PhotoGalleryView: View {
                 Text(errorMessage)
             }
             .fullScreenCover(isPresented: $showingPhotoViewer) {
+                let _ = print("🎬 [PRESENT] Presenting FullScreenPhotoViewer")
+                let _ = print("   → selectedPhotoIndex: \(selectedPhotoIndex)")
+                let _ = print("   → photoURLs count: \(viewModel.photos.count)")
                 FullScreenPhotoViewer(
                     photoURLs: viewModel.photos.map { $0.imageURL },
                     initialIndex: selectedPhotoIndex,
