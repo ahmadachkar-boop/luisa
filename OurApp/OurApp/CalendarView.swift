@@ -817,7 +817,9 @@ struct EventDetailView: View {
                             var updatedPhotoURLs = currentEvent.photoURLs
                             updatedPhotoURLs.remove(at: indexToDelete)
                             Task {
-                                try? await FirebaseManager.shared.updateEventPhotos(eventId: event.id, photoURLs: updatedPhotoURLs)
+                                var updatedEvent = currentEvent
+                                updatedEvent.photoURLs = updatedPhotoURLs
+                                try? await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
                                 await MainActor.run {
                                     currentEvent.photoURLs = updatedPhotoURLs
                                 }
