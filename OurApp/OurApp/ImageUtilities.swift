@@ -209,7 +209,7 @@ struct FullScreenPhotoViewer: View {
         GeometryReader { geometry in
             ZStack {
                 Color.black
-                    .opacity(1 - abs(verticalOffset) / 500)
+                    .opacity(1 - abs(verticalOffset) / CGFloat(500))
                     .ignoresSafeArea()
 
                 // Custom horizontal pager - show previous, current, and next photos
@@ -456,7 +456,7 @@ struct ZoomablePhotoView: View {
                                 .onAppear {
                                     imageSize = imageGeometry.size
                                 }
-                                .onChange(of: imageGeometry.size) { newSize in
+                                .onChange(of: imageGeometry.size) { _, newSize in
                                     imageSize = newSize
                                 }
                         }
@@ -534,8 +534,7 @@ struct ZoomablePhotoView: View {
             }
             .onAppear {
                 // Load and cache image, notify parent
-                if let url = URL(string: photoURL),
-                   let cachedImage = ImageCache.shared.get(forKey: photoURL) {
+                if let cachedImage = ImageCache.shared.get(forKey: photoURL) {
                     onImageLoaded(cachedImage)
                 } else {
                     // Try loading from URL
@@ -552,7 +551,7 @@ struct ZoomablePhotoView: View {
                 }
             }
         }
-        .onChange(of: photoURL) { _ in
+        .onChange(of: photoURL) { _, _ in
             // Reset zoom state when photo changes
             withAnimation(.easeOut(duration: 0.2)) {
                 scale = 1.0
