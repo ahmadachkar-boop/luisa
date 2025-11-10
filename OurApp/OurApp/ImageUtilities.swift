@@ -213,11 +213,10 @@ struct FullScreenPhotoViewer: View {
             TabView(selection: Binding(
                 get: { currentIndex },
                 set: { newValue in
-                    // Allow initial setup, then only update if not zoomed to prevent accidental navigation
+                    // During initialization phase, accept all updates to let TabView settle
+                    // After initialization, only update if not zoomed/gesturing
                     if !hasInitialized {
                         currentIndex = newValue
-                        // Mark as initialized IMMEDIATELY to block subsequent sets
-                        hasInitialized = true
                     } else if !isZoomed && !isGestureActive {
                         currentIndex = newValue
                     }
@@ -238,6 +237,11 @@ struct FullScreenPhotoViewer: View {
             .offset(y: dragOffset)
             // Note: Don't use .allowsHitTesting(false) - it blocks ALL child gestures including zoom/pan!
             // The custom Binding above prevents navigation when zoomed
+            .onAppear {
+                // Mark as initialized after view appears and TabView has settled on correct index
+                // This allows TabView to update freely during initial render/layout phase
+                hasInitialized = true
+            }
             .onChange(of: currentIndex) { newIndex in
                 // Immediately and synchronously reset all zoom states when changing photos
                 isZoomed = false
