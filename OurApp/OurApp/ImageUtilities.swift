@@ -231,8 +231,8 @@ struct FullScreenPhotoViewer: View {
             .tabViewStyle(.page(indexDisplayMode: isZoomed ? .never : .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .offset(y: dragOffset)
-            // Block TabView gestures when zoomed - don't use .disabled() as it resets TabView state
-            .allowsHitTesting(!isZoomed && !isGestureActive)
+            // Note: Don't use .allowsHitTesting(false) - it blocks ALL child gestures including zoom/pan!
+            // The custom Binding above prevents navigation when zoomed
             .onChange(of: currentIndex) { newIndex in
                 // Immediately and synchronously reset all zoom states when changing photos
                 isZoomed = false
@@ -381,16 +381,13 @@ struct ZoomablePhotoView: View {
                     .gesture(
                         MagnificationGesture()
                             .onChanged { value in
+                                // Mark gesture as active immediately to block TabView navigation
+                                isGestureActive = true
+
                                 let delta = value / lastScale
                                 lastScale = value
                                 let newScale = scale * delta
                                 scale = min(max(newScale, 1), 4)
-
-                                // Only mark gesture as active if we're actually zooming (not just two fingers touching)
-                                if abs(newScale - 1.0) > 0.05 {
-                                    isGestureActive = true
-                                }
-
                                 isZoomed = scale > 1.01
                             }
                             .onEnded { _ in
@@ -416,6 +413,9 @@ struct ZoomablePhotoView: View {
                             .onChanged { value in
                                 // Only handle drag when already zoomed
                                 if scale > 1.05 {
+                                    // Mark as active to prevent navigation during pan
+                                    isGestureActive = true
+
                                     // Calculate max offset to keep image within bounds
                                     let maxOffsetX = max(0, (imageSize.width * scale - geometry.size.width) / 2)
                                     let maxOffsetY = max(0, (imageSize.height * scale - geometry.size.height) / 2)
@@ -432,6 +432,11 @@ struct ZoomablePhotoView: View {
                             .onEnded { _ in
                                 if scale > 1.01 {
                                     lastOffset = offset
+                                }
+
+                                // Small delay before allowing navigation
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                    isGestureActive = false
                                 }
                             }
                     )
