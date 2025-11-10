@@ -242,11 +242,9 @@ struct FullScreenPhotoViewer: View {
                 if currentIndex != initialIndex {
                     currentIndex = initialIndex
                 }
-                // Mark as initialized after ensuring correct index
-                // Use a small delay to ensure the index update is processed
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    hasInitialized = true
-                }
+                // Mark as initialized IMMEDIATELY to close vulnerability window
+                // This prevents any further TabView setter calls from being accepted
+                hasInitialized = true
             }
             .onChange(of: currentIndex) { newIndex in
                 // Immediately and synchronously reset all zoom states when changing photos
