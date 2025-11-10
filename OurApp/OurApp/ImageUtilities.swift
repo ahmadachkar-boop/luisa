@@ -210,11 +210,6 @@ struct FullScreenPhotoViewer: View {
         // Initialize directly with the index we want
         let safeIndex = max(0, min(initialIndex, photoURLs.count - 1))
         _currentIndex = State(initialValue: safeIndex)
-
-        print("🔵 [INIT] FullScreenPhotoViewer initialized")
-        print("   → initialIndex: \(initialIndex)")
-        print("   → safeIndex: \(safeIndex)")
-        print("   → photoURLs count: \(photoURLs.count)")
     }
 
     var body: some View {
@@ -332,28 +327,12 @@ struct FullScreenPhotoViewer: View {
         }
         .statusBar(hidden: true)
         .onAppear {
-            print("🟢 [APPEAR] View appeared")
-            print("   → initialIndex: \(initialIndex)")
-            print("   → currentIndex BEFORE reset: \(currentIndex)")
-
             // Reset to initialIndex every time view appears
             // This fixes the issue where .fullScreenCover reuses view instances
             currentIndex = max(0, min(initialIndex, photoURLs.count - 1))
             viewID = UUID() // Force view recreation
             dragOffset = 0
             isZoomed = false
-
-            print("   → currentIndex AFTER reset: \(currentIndex)")
-            print("   → viewID: \(viewID)")
-            if let url = photoURLs[safe: currentIndex] {
-                print("   → Photo URL: \(url)")
-            }
-        }
-        .onChange(of: currentIndex) { oldValue, newValue in
-            print("📍 [INDEX CHANGE] currentIndex changed: \(oldValue) → \(newValue)")
-            if let url = photoURLs[safe: newValue] {
-                print("   → New photo URL: \(url)")
-            }
         }
         .alert("Saved!", isPresented: $showingSaveSuccess) {
             Button("OK", role: .cancel) { }
@@ -373,32 +352,18 @@ struct FullScreenPhotoViewer: View {
     }
 
     private func goToNext() {
-        print("➡️ [NAVIGATION] goToNext() called")
-        print("   → currentIndex BEFORE: \(currentIndex)")
-        guard currentIndex < photoURLs.count - 1 else {
-            print("   → ⚠️ Already at last photo, cannot go next")
-            return
-        }
+        guard currentIndex < photoURLs.count - 1 else { return }
         withAnimation(.easeInOut(duration: 0.3)) {
             currentIndex += 1
             viewID = UUID() // Force view recreation
-            print("   → currentIndex AFTER: \(currentIndex)")
-            print("   → New viewID: \(viewID)")
         }
     }
 
     private func goToPrevious() {
-        print("⬅️ [NAVIGATION] goToPrevious() called")
-        print("   → currentIndex BEFORE: \(currentIndex)")
-        guard currentIndex > 0 else {
-            print("   → ⚠️ Already at first photo, cannot go previous")
-            return
-        }
+        guard currentIndex > 0 else { return }
         withAnimation(.easeInOut(duration: 0.3)) {
             currentIndex -= 1
             viewID = UUID() // Force view recreation
-            print("   → currentIndex AFTER: \(currentIndex)")
-            print("   → New viewID: \(viewID)")
         }
     }
 
@@ -451,9 +416,6 @@ struct SinglePhotoView: View {
                                 isZoomed = scale > 1.01
                             }
                             .onEnded { _ in
-                                print("🔍 [ZOOM] Zoom gesture ended")
-                                print("   → Final scale: \(scale)")
-                                print("   → isZoomed: \(scale > 1.01)")
                                 lastScale = 1.0
                                 if scale < 1 {
                                     withAnimation(.spring(response: 0.3)) {
@@ -465,8 +427,24 @@ struct SinglePhotoView: View {
                                 }
                             }
                     )
-                    .gesture(
-                        DragGesture()
+                    .simultaneousGesture(
+                        TapGesture(count: 2)
+                            .onEnded { _ in
+                                withAnimation(.spring(response: 0.3)) {
+                                    if scale > 1 {
+                                        scale = 1
+                                        offset = .zero
+                                        lastOffset = .zero
+                                        isZoomed = false
+                                    } else {
+                                        scale = 2.5
+                                        isZoomed = true
+                                    }
+                                }
+                            }
+                    )
+                    .highPriorityGesture(
+                        DragGesture(minimumDistance: 0)
                             .onChanged { value in
                                 guard scale > 1.01 else { return }
 
@@ -485,22 +463,12 @@ struct SinglePhotoView: View {
                                 )
                             }
                             .onEnded { _ in
-                                lastOffset = offset
-                            }
+                                if scale > 1.01 {
+                                    lastOffset = offset
+                                }
+                            },
+                        including: scale > 1.01 ? .all : .none
                     )
-                    .onTapGesture(count: 2) {
-                        withAnimation(.spring(response: 0.3)) {
-                            if scale > 1 {
-                                scale = 1
-                                offset = .zero
-                                lastOffset = .zero
-                                isZoomed = false
-                            } else {
-                                scale = 2.5
-                                isZoomed = true
-                            }
-                        }
-                    }
             } placeholder: {
                 ZStack {
                     Color.black
@@ -510,28 +478,18 @@ struct SinglePhotoView: View {
                 }
             }
             .onAppear {
-                print("🖼️ [IMAGE] SinglePhotoView appeared")
-                print("   → Photo URL: \(photoURL)")
-
                 // Load image and notify parent
                 Task {
                     if let cachedImage = ImageCache.shared.get(forKey: photoURL) {
-                        print("   → ✅ Image found in cache")
-                        print("   → Image size: \(cachedImage.size)")
                         onImageLoaded(cachedImage)
                     } else {
-                        print("   → ⏳ Image NOT in cache, downloading...")
                         if let url = URL(string: photoURL),
                            let (data, _) = try? await URLSession.shared.data(from: url),
                            let image = UIImage(data: data) {
-                            print("   → ✅ Image downloaded successfully")
-                            print("   → Image size: \(image.size)")
                             ImageCache.shared.set(image, forKey: photoURL)
                             await MainActor.run {
                                 onImageLoaded(image)
                             }
-                        } else {
-                            print("   → ❌ Failed to download image")
                         }
                     }
                 }
