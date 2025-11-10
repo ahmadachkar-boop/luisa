@@ -208,7 +208,16 @@ struct FullScreenPhotoViewer: View {
                 .opacity(CGFloat(1) - abs(dragOffset) / CGFloat(500))
                 .ignoresSafeArea()
 
-            TabView(selection: $currentIndex) {
+            // Use explicit selection binding to prevent TabView from resetting
+            TabView(selection: Binding(
+                get: { currentIndex },
+                set: { newValue in
+                    // Only update if not zoomed to prevent accidental navigation
+                    if !isZoomed && !isGestureActive {
+                        currentIndex = newValue
+                    }
+                }
+            )) {
                 ForEach(Array(photoURLs.enumerated()), id: \.offset) { index, photoURL in
                     ZoomablePhotoView(
                         photoURL: photoURL,
@@ -222,13 +231,8 @@ struct FullScreenPhotoViewer: View {
             .tabViewStyle(.page(indexDisplayMode: isZoomed ? .never : .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .offset(y: dragOffset)
-            // Completely disable TabView navigation when zoomed or gesture is active
-            .disabled(isZoomed || isGestureActive)
+            // Block TabView gestures when zoomed - don't use .disabled() as it resets TabView state
             .allowsHitTesting(!isZoomed && !isGestureActive)
-            .onAppear {
-                // Ensure TabView starts at the correct index
-                currentIndex = initialIndex
-            }
             .onChange(of: currentIndex) { newIndex in
                 // Immediately and synchronously reset all zoom states when changing photos
                 isZoomed = false
@@ -375,22 +379,25 @@ struct ZoomablePhotoView: View {
                         }
                     )
                     .gesture(
-                        MagnificationGesture(minimumScaleDelta: 0.0)
+                        MagnificationGesture()
                             .onChanged { value in
-                                // Mark gesture as active to block TabView navigation
-                                isGestureActive = true
-
                                 let delta = value / lastScale
                                 lastScale = value
                                 let newScale = scale * delta
                                 scale = min(max(newScale, 1), 4)
+
+                                // Only mark gesture as active if we're actually zooming (not just two fingers touching)
+                                if abs(newScale - 1.0) > 0.05 {
+                                    isGestureActive = true
+                                }
+
                                 isZoomed = scale > 1.01
                             }
                             .onEnded { _ in
                                 lastScale = 1.0
 
                                 // Small delay before allowing navigation to prevent immediate swipes
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                                     isGestureActive = false
                                 }
 
@@ -405,10 +412,10 @@ struct ZoomablePhotoView: View {
                             }
                     )
                     .simultaneousGesture(
-                        DragGesture(minimumDistance: 0)
+                        DragGesture(minimumDistance: 10)
                             .onChanged { value in
-                                // Only handle drag when already zoomed and not actively zooming
-                                if scale > 1.01 && !isGestureActive {
+                                // Only handle drag when already zoomed
+                                if scale > 1.05 {
                                     // Calculate max offset to keep image within bounds
                                     let maxOffsetX = max(0, (imageSize.width * scale - geometry.size.width) / 2)
                                     let maxOffsetY = max(0, (imageSize.height * scale - geometry.size.height) / 2)
