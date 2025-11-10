@@ -194,8 +194,6 @@ struct FullScreenPhotoViewer: View {
     @State private var isDraggingToDismiss = false
     @State private var isZoomed = false
     @State private var isGestureActive = false // Track active gestures to prevent conflicts
-    @State private var hasInitialized = false // Track if TabView has initialized
-    @State private var hasAppearedOnce = false // Track if onAppear has fired once
 
     init(photoURLs: [String], initialIndex: Int = 0, onDismiss: @escaping () -> Void) {
         self.photoURLs = photoURLs
@@ -210,20 +208,12 @@ struct FullScreenPhotoViewer: View {
                 .opacity(CGFloat(1) - abs(dragOffset) / CGFloat(500))
                 .ignoresSafeArea()
 
-            // Use explicit selection binding to prevent TabView from resetting
+            // Use explicit selection binding to prevent navigation when zoomed
             TabView(selection: Binding(
                 get: { currentIndex },
                 set: { newValue in
-                    // During initialization, only accept the CORRECT value (initialIndex)
-                    // This filters out TabView's incorrect initialization calls
-                    if !hasInitialized {
-                        if newValue == initialIndex {
-                            currentIndex = newValue
-                            hasInitialized = true // Lock as soon as we get the correct value
-                        }
-                        // Silently ignore incorrect values during init
-                    } else if !isZoomed && !isGestureActive {
-                        // After initialization, allow navigation when not zoomed
+                    // Only update if not zoomed or actively gesturing
+                    if !isZoomed && !isGestureActive {
                         currentIndex = newValue
                     }
                 }
@@ -241,21 +231,11 @@ struct FullScreenPhotoViewer: View {
             .tabViewStyle(.page(indexDisplayMode: isZoomed ? .never : .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .offset(y: dragOffset)
-            // Note: Don't use .allowsHitTesting(false) - it blocks ALL child gestures including zoom/pan!
-            // The custom Binding above prevents navigation when zoomed
-            .onAppear {
-                // Only run this logic ONCE per FullScreenPhotoViewer instance
-                guard !hasAppearedOnce else { return }
-                hasAppearedOnce = true
-
-                // Force TabView to correct index on first appear
-                // This handles case where TabView shows wrong page despite our binding
-                DispatchQueue.main.async {
-                    if currentIndex != initialIndex {
-                        currentIndex = initialIndex
-                    }
-                    // Complete initialization after forcing correct index
-                    hasInitialized = true
+            .task {
+                // Ensure TabView displays correct initial page
+                // Using task ensures this runs once when view appears
+                if currentIndex != initialIndex {
+                    currentIndex = initialIndex
                 }
             }
             .onChange(of: currentIndex) { newIndex in
