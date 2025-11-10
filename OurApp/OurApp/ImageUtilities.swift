@@ -184,128 +184,148 @@ struct FullScreenPhotoViewer: View {
     let initialIndex: Int
     let onDismiss: () -> Void
 
-    @State private var selectedIndex: Int
+    @State private var currentIndex: Int
+    @State private var horizontalOffset: CGFloat = 0
+    @State private var verticalOffset: CGFloat = 0
+    @State private var isDraggingHorizontal = false
+    @State private var isDraggingVertical = false
+    @State private var isAnyPhotoZoomed = false
     @State private var showingSaveSuccess = false
     @State private var showingSaveError = false
     @State private var saveErrorMessage = ""
     @State private var showingShareSheet = false
     @State private var currentImage: UIImage?
-    @State private var dragOffset: CGFloat = 0
-    @State private var isDraggingToDismiss = false
-    @State private var isZoomed = false
-    @State private var isGestureActive = false // Track active gestures to prevent conflicts
 
     init(photoURLs: [String], initialIndex: Int = 0, onDismiss: @escaping () -> Void) {
         self.photoURLs = photoURLs
         self.initialIndex = initialIndex
         self.onDismiss = onDismiss
 
-        let safeInitial = max(0, min(initialIndex, photoURLs.count - 1))
-        _selectedIndex = State(initialValue: safeInitial)
+        let safeIndex = max(0, min(initialIndex, photoURLs.count - 1))
+        _currentIndex = State(initialValue: safeIndex)
     }
 
     var body: some View {
-        ZStack {
-            Color.black
-                .opacity(CGFloat(1) - abs(dragOffset) / CGFloat(500))
-                .ignoresSafeArea()
+        GeometryReader { geometry in
+            ZStack {
+                Color.black
+                    .opacity(1 - abs(verticalOffset) / 500)
+                    .ignoresSafeArea()
 
-            TabView(selection: $selectedIndex) {
-                ForEach(photoURLs.indices, id: \.self) { idx in
-                    ZoomablePhotoView(
-                        photoURL: photoURLs[idx],
-                        isZoomed: $isZoomed,
-                        isGestureActive: $isGestureActive
-                    )
-                    .tag(idx)
+                // Custom horizontal pager - show previous, current, and next photos
+                HStack(spacing: 0) {
+                    ForEach(visibleIndices, id: \.self) { index in
+                        ZoomablePhotoView(
+                            photoURL: photoURLs[index],
+                            isAnyPhotoZoomed: $isAnyPhotoZoomed,
+                            onImageLoaded: { image in
+                                if index == currentIndex {
+                                    currentImage = image
+                                }
+                            }
+                        )
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                    }
                 }
-            }
-            .tabViewStyle(.page(indexDisplayMode: isZoomed ? .never : .always))
-            .indexViewStyle(.page(backgroundDisplayMode: .always))
-            .offset(y: dragOffset)
-            .task {
-                // Defer to the next runloop so UIPageViewController has mounted
-                await MainActor.run {
-                    selectedIndex = max(0, min(initialIndex, photoURLs.count - 1))
-                }
-            }
-            .onChange(of: selectedIndex) { newIndex in
-                // Guard against navigation when zoomed or actively gesturing
-                guard !isZoomed && !isGestureActive else { return }
-                // Update cached image for new selection
-                if newIndex >= 0 && newIndex < photoURLs.count {
-                    currentImage = ImageCache.shared.get(forKey: photoURLs[newIndex])
-                }
-            }
-            .if(!isZoomed && !isGestureActive) { view in
-                view.gesture(
-                    DragGesture(minimumDistance: 30) // Increased threshold to prevent accidental triggers
+                .offset(x: horizontalPagerOffset(width: geometry.size.width), y: verticalOffset)
+                .gesture(
+                    DragGesture(minimumDistance: 20)
                         .onChanged { value in
-                            // Only allow vertical drag to dismiss when not zoomed or actively gesturing
-                            if abs(value.translation.height) > abs(value.translation.width) * 1.5 {
-                                isDraggingToDismiss = true
-                                dragOffset = value.translation.height
+                            // Only allow navigation gestures when not zoomed
+                            guard !isAnyPhotoZoomed else { return }
+
+                            let horizontal = abs(value.translation.width)
+                            let vertical = abs(value.translation.height)
+
+                            // Determine gesture direction on first significant movement
+                            if !isDraggingHorizontal && !isDraggingVertical {
+                                if horizontal > vertical {
+                                    isDraggingHorizontal = true
+                                } else {
+                                    isDraggingVertical = true
+                                }
+                            }
+
+                            // Apply appropriate offset
+                            if isDraggingHorizontal {
+                                horizontalOffset = value.translation.width
+                            } else if isDraggingVertical {
+                                verticalOffset = value.translation.height
                             }
                         }
                         .onEnded { value in
-                            if isDraggingToDismiss && abs(dragOffset) > 100 {
-                                onDismiss()
-                            } else {
-                                withAnimation(.spring(response: 0.3)) {
-                                    dragOffset = 0
-                                }
+                            guard !isAnyPhotoZoomed else { return }
+
+                            if isDraggingHorizontal {
+                                handleHorizontalDragEnd(translation: value.translation.width, width: geometry.size.width)
+                            } else if isDraggingVertical {
+                                handleVerticalDragEnd(translation: value.translation.height)
                             }
-                            isDraggingToDismiss = false
+
+                            isDraggingHorizontal = false
+                            isDraggingVertical = false
                         }
                 )
-            }
 
-            // Top toolbar
-            VStack {
-                HStack {
-                    Button(action: onDismiss) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title)
+                // Top toolbar
+                VStack {
+                    HStack {
+                        Button(action: onDismiss) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title)
+                                .foregroundColor(.white)
+                                .shadow(radius: 3)
+                        }
+
+                        Spacer()
+
+                        Text("\(currentIndex + 1) / \(photoURLs.count)")
                             .foregroundColor(.white)
+                            .font(.subheadline)
                             .shadow(radius: 3)
+
+                        Spacer()
+
+                        Menu {
+                            Button(action: saveToPhotoLibrary) {
+                                Label("Save to Photos", systemImage: "square.and.arrow.down")
+                            }
+
+                            Button(action: { showingShareSheet = true }) {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle.fill")
+                                .font(.title)
+                                .foregroundColor(.white)
+                                .shadow(radius: 3)
+                        }
                     }
+                    .padding()
+                    .opacity(isDraggingVertical ? 0 : 1)
 
                     Spacer()
+                }
 
-                    Text("\(selectedIndex + 1) / \(photoURLs.count)")
-                        .foregroundColor(.white)
-                        .font(.subheadline)
-                        .shadow(radius: 3)
-
-                    Spacer()
-
-                    Menu {
-                        Button(action: saveToPhotoLibrary) {
-                            Label("Save to Photos", systemImage: "square.and.arrow.down")
+                // Page indicators (only when not zoomed)
+                if !isAnyPhotoZoomed && photoURLs.count > 1 {
+                    VStack {
+                        Spacer()
+                        HStack(spacing: 8) {
+                            ForEach(0..<photoURLs.count, id: \.self) { index in
+                                Circle()
+                                    .fill(index == currentIndex ? Color.white : Color.white.opacity(0.5))
+                                    .frame(width: 8, height: 8)
+                            }
                         }
-
-                        Button(action: { showingShareSheet = true }) {
-                            Label("Share", systemImage: "square.and.arrow.up")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle.fill")
-                            .font(.title)
-                            .foregroundColor(.white)
-                            .shadow(radius: 3)
+                        .padding(.bottom, 20)
                     }
                 }
-                .padding()
-                .opacity(isDraggingToDismiss ? 0 : 1)
-
-                Spacer()
             }
         }
         .statusBar(hidden: true)
         .onAppear {
-            // Load initial image
-            if initialIndex < photoURLs.count {
-                currentImage = ImageCache.shared.get(forKey: photoURLs[initialIndex])
-            }
+            loadCurrentImage()
         }
         .alert("Saved!", isPresented: $showingSaveSuccess) {
             Button("OK", role: .cancel) { }
@@ -322,6 +342,72 @@ struct FullScreenPhotoViewer: View {
                 ShareSheet(items: [image])
             }
         }
+    }
+
+    // Calculate which photo indices should be visible (previous, current, next)
+    private var visibleIndices: [Int] {
+        var indices: [Int] = []
+
+        // Previous photo
+        if currentIndex > 0 {
+            indices.append(currentIndex - 1)
+        }
+
+        // Current photo
+        indices.append(currentIndex)
+
+        // Next photo
+        if currentIndex < photoURLs.count - 1 {
+            indices.append(currentIndex + 1)
+        }
+
+        return indices
+    }
+
+    // Calculate horizontal offset for the pager
+    private func horizontalPagerOffset(width: CGFloat) -> CGFloat {
+        let baseOffset: CGFloat
+        if currentIndex == 0 {
+            // First photo - no previous
+            baseOffset = 0
+        } else {
+            // Show previous photo to the left
+            baseOffset = -width
+        }
+        return baseOffset + horizontalOffset
+    }
+
+    private func handleHorizontalDragEnd(translation: CGFloat, width: CGFloat) {
+        let threshold = width * 0.3
+
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            if translation < -threshold && currentIndex < photoURLs.count - 1 {
+                // Swipe left - next photo
+                currentIndex += 1
+                loadCurrentImage()
+            } else if translation > threshold && currentIndex > 0 {
+                // Swipe right - previous photo
+                currentIndex -= 1
+                loadCurrentImage()
+            }
+
+            horizontalOffset = 0
+        }
+    }
+
+    private func handleVerticalDragEnd(translation: CGFloat) {
+        if abs(translation) > 100 {
+            onDismiss()
+        } else {
+            withAnimation(.spring(response: 0.3)) {
+                verticalOffset = 0
+            }
+        }
+    }
+
+    private func loadCurrentImage() {
+        guard currentIndex >= 0 && currentIndex < photoURLs.count else { return }
+        currentImage = ImageCache.shared.get(forKey: photoURLs[currentIndex])
     }
 
     private func saveToPhotoLibrary() {
@@ -346,8 +432,8 @@ struct FullScreenPhotoViewer: View {
 // MARK: - Zoomable Photo View
 struct ZoomablePhotoView: View {
     let photoURL: String
-    @Binding var isZoomed: Bool
-    @Binding var isGestureActive: Bool
+    @Binding var isAnyPhotoZoomed: Bool
+    let onImageLoaded: (UIImage) -> Void
 
     @State private var scale: CGFloat = 1.0
     @State private var lastScale: CGFloat = 1.0
@@ -366,86 +452,79 @@ struct ZoomablePhotoView: View {
                     .offset(offset)
                     .background(
                         GeometryReader { imageGeometry in
-                            Color.clear.onAppear {
-                                imageSize = imageGeometry.size
-                            }
+                            Color.clear
+                                .onAppear {
+                                    imageSize = imageGeometry.size
+                                }
+                                .onChange(of: imageGeometry.size) { newSize in
+                                    imageSize = newSize
+                                }
                         }
                     )
-                    .simultaneousGesture(
+                    .gesture(
                         MagnificationGesture()
                             .onChanged { value in
-                                // Mark gesture as active immediately to block TabView navigation
-                                isGestureActive = true
-
                                 let delta = value / lastScale
                                 lastScale = value
                                 let newScale = scale * delta
                                 scale = min(max(newScale, 1), 4)
-                                isZoomed = scale > 1.01
+
+                                // Update zoom state
+                                isAnyPhotoZoomed = scale > 1.05
                             }
                             .onEnded { _ in
                                 lastScale = 1.0
-
-                                // Small delay before allowing navigation to prevent immediate swipes
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                    isGestureActive = false
-                                }
 
                                 withAnimation(.spring(response: 0.3)) {
                                     if scale < 1 {
                                         scale = 1
                                         offset = .zero
                                         lastOffset = .zero
-                                        isZoomed = false
                                     }
+                                }
+
+                                // Update zoom state after animation
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                    isAnyPhotoZoomed = scale > 1.05
                                 }
                             }
                     )
-                    .highPriorityGesture(
-                        DragGesture(minimumDistance: 5)
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
                             .onChanged { value in
-                                // Only handle drag when already zoomed
-                                if scale > 1.05 {
-                                    // Mark as active to prevent navigation during pan
-                                    isGestureActive = true
+                                // Only handle pan when zoomed
+                                guard scale > 1.05 else { return }
 
-                                    // Calculate max offset to keep image within bounds
-                                    let maxOffsetX = max(0, (imageSize.width * scale - geometry.size.width) / 2)
-                                    let maxOffsetY = max(0, (imageSize.height * scale - geometry.size.height) / 2)
+                                // Calculate max offset to keep image within bounds
+                                let maxOffsetX = max(0, (imageSize.width * scale - geometry.size.width) / 2)
+                                let maxOffsetY = max(0, (imageSize.height * scale - geometry.size.height) / 2)
 
-                                    let newOffsetX = lastOffset.width + value.translation.width
-                                    let newOffsetY = lastOffset.height + value.translation.height
+                                let newOffsetX = lastOffset.width + value.translation.width
+                                let newOffsetY = lastOffset.height + value.translation.height
 
-                                    offset = CGSize(
-                                        width: min(max(newOffsetX, -maxOffsetX), maxOffsetX),
-                                        height: min(max(newOffsetY, -maxOffsetY), maxOffsetY)
-                                    )
-                                }
+                                offset = CGSize(
+                                    width: min(max(newOffsetX, -maxOffsetX), maxOffsetX),
+                                    height: min(max(newOffsetY, -maxOffsetY), maxOffsetY)
+                                )
                             }
                             .onEnded { _ in
-                                if scale > 1.01 {
+                                if scale > 1.05 {
                                     lastOffset = offset
                                 }
-
-                                // Small delay before allowing navigation
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                                    isGestureActive = false
-                                }
-                            },
-                        including: scale > 1.05 ? .all : .none
+                            }
                     )
                     .onTapGesture(count: 2) {
                         withAnimation(.spring(response: 0.3)) {
                             if scale > 1 {
+                                // Zoom out
                                 scale = 1
                                 offset = .zero
                                 lastOffset = .zero
-                                isZoomed = false
-                                isGestureActive = false
+                                isAnyPhotoZoomed = false
                             } else {
-                                scale = 2
-                                isZoomed = true
-                                // Don't set gesture active for tap, it's instant
+                                // Zoom in
+                                scale = 2.5
+                                isAnyPhotoZoomed = true
                             }
                         }
                     }
@@ -453,19 +532,35 @@ struct ZoomablePhotoView: View {
                 ProgressView()
                     .tint(.white)
             }
-        }
-        .onChange(of: scale) { newScale in
-            isZoomed = newScale > 1.01
+            .onAppear {
+                // Load and cache image, notify parent
+                if let url = URL(string: photoURL),
+                   let cachedImage = ImageCache.shared.get(forKey: photoURL) {
+                    onImageLoaded(cachedImage)
+                } else {
+                    // Try loading from URL
+                    Task {
+                        if let url = URL(string: photoURL),
+                           let (data, _) = try? await URLSession.shared.data(from: url),
+                           let image = UIImage(data: data) {
+                            ImageCache.shared.set(image, forKey: photoURL)
+                            await MainActor.run {
+                                onImageLoaded(image)
+                            }
+                        }
+                    }
+                }
+            }
         }
         .onChange(of: photoURL) { _ in
-            // Reset all zoom and gesture state when photo changes
-            scale = 1.0
-            lastScale = 1.0
-            offset = .zero
-            lastOffset = .zero
-            imageSize = .zero
-            isZoomed = false
-            isGestureActive = false
+            // Reset zoom state when photo changes
+            withAnimation(.easeOut(duration: 0.2)) {
+                scale = 1.0
+                lastScale = 1.0
+                offset = .zero
+                lastOffset = .zero
+                isAnyPhotoZoomed = false
+            }
         }
     }
 }
