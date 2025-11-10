@@ -216,10 +216,8 @@ struct FullScreenPhotoViewer: View {
                     // Allow initial setup, then only update if not zoomed to prevent accidental navigation
                     if !hasInitialized {
                         currentIndex = newValue
-                        // Mark as initialized after first set
-                        DispatchQueue.main.async {
-                            hasInitialized = true
-                        }
+                        // Mark as initialized IMMEDIATELY to block subsequent sets
+                        hasInitialized = true
                     } else if !isZoomed && !isGestureActive {
                         currentIndex = newValue
                     }
