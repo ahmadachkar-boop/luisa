@@ -2,6 +2,12 @@ import SwiftUI
 import PhotosUI
 import MapKit
 
+// Wrapper to make Int work with .fullScreenCover(item:)
+struct CalendarPhotoIndex: Identifiable {
+    let id = UUID()
+    let value: Int
+}
+
 struct CalendarView: View {
     @StateObject private var viewModel = CalendarViewModel()
     @State private var showingAddEvent = false
@@ -545,8 +551,7 @@ struct EventDetailView: View {
     @State private var showingErrorAlert = false
     @State private var errorMessage = ""
     @State private var currentEvent: CalendarEvent
-    @State private var showingPhotoViewer = false
-    @State private var selectedPhotoIndex = 0
+    @State private var selectedPhotoIndex: CalendarPhotoIndex?
 
     init(event: CalendarEvent, onDelete: @escaping () -> Void) {
         self.event = event
@@ -642,8 +647,12 @@ struct EventDetailView: View {
                                     HStack(spacing: 12) {
                                         ForEach(Array(currentEvent.photoURLs.enumerated()), id: \.offset) { index, photoURL in
                                             Button(action: {
-                                                selectedPhotoIndex = index
-                                                showingPhotoViewer = true
+                                                print("📅 [CALENDAR] Memory photo tapped")
+                                                print("   → Index: \(index)")
+                                                print("   → Total photos: \(currentEvent.photoURLs.count)")
+                                                print("   → Photo URL: \(photoURL)")
+                                                selectedPhotoIndex = CalendarPhotoIndex(value: index)
+                                                print("   → selectedPhotoIndex set to: \(String(describing: selectedPhotoIndex?.value))")
                                             }) {
                                                 CachedAsyncImage(url: URL(string: photoURL)) { image in
                                                     image
@@ -798,13 +807,15 @@ struct EventDetailView: View {
             } message: {
                 Text(errorMessage)
             }
-            .fullScreenCover(isPresented: $showingPhotoViewer) {
+            .fullScreenCover(item: $selectedPhotoIndex) { photoIndex in
+                let _ = print("🎬 [PRESENT] Presenting FullScreenPhotoViewer from Calendar")
+                let _ = print("   → selectedPhotoIndex: \(photoIndex.value)")
+                let _ = print("   → photoURLs count: \(currentEvent.photoURLs.count)")
                 FullScreenPhotoViewer(
                     photoURLs: currentEvent.photoURLs,
-                    initialIndex: selectedPhotoIndex,
-                    onDismiss: { showingPhotoViewer = false }
+                    initialIndex: photoIndex.value,
+                    onDismiss: { selectedPhotoIndex = nil }
                 )
-                .id(selectedPhotoIndex)
             }
         }
     }
