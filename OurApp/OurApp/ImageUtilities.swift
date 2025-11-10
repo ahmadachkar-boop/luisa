@@ -184,8 +184,7 @@ struct FullScreenPhotoViewer: View {
     let initialIndex: Int
     let onDismiss: () -> Void
 
-    @State private var currentIndex: Int
-    @State private var selectedID: String?
+    @State private var selectedIndex: Int
     @State private var showingSaveSuccess = false
     @State private var showingSaveError = false
     @State private var saveErrorMessage = ""
@@ -201,10 +200,8 @@ struct FullScreenPhotoViewer: View {
         self.initialIndex = initialIndex
         self.onDismiss = onDismiss
 
-        _currentIndex = State(initialValue: initialIndex)
-        // Use stable, unique tag for initial page
-        let safeInitial = (initialIndex >= 0 && initialIndex < photoURLs.count) ? initialIndex : 0
-        _selectedID = State(initialValue: photoURLs[safeInitial])
+        let safeInitial = max(0, min(initialIndex, photoURLs.count - 1))
+        _selectedIndex = State(initialValue: safeInitial)
     }
 
     var body: some View {
@@ -213,34 +210,32 @@ struct FullScreenPhotoViewer: View {
                 .opacity(CGFloat(1) - abs(dragOffset) / CGFloat(500))
                 .ignoresSafeArea()
 
-            // Use direct binding for immediate selection synchronization
-            TabView(selection: $selectedID) {
-                ForEach(photoURLs, id: \.self) { photoURL in
+            TabView(selection: $selectedIndex) {
+                ForEach(photoURLs.indices, id: \.self) { idx in
                     ZoomablePhotoView(
-                        photoURL: photoURL,
+                        photoURL: photoURLs[idx],
                         isZoomed: $isZoomed,
                         isGestureActive: $isGestureActive
                     )
-                    .tag(photoURL) // Stable identity via URL
+                    .tag(idx)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: isZoomed ? .never : .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .offset(y: dragOffset)
-            .onAppear {
-                // Set initial selection without animation to prevent race condition
-                let safeInitial = (initialIndex >= 0 && initialIndex < photoURLs.count) ? initialIndex : 0
-                withTransaction(Transaction(animation: nil)) {
-                    selectedID = photoURLs[safeInitial]
+            .task {
+                // Defer to the next runloop so UIPageViewController has mounted
+                await MainActor.run {
+                    selectedIndex = max(0, min(initialIndex, photoURLs.count - 1))
                 }
             }
-            .onChange(of: selectedID) { newID in
+            .onChange(of: selectedIndex) { newIndex in
                 // Guard against navigation when zoomed or actively gesturing
-                guard !isZoomed && !isGestureActive,
-                      let newID,
-                      let idx = photoURLs.firstIndex(of: newID) else { return }
-                currentIndex = idx
-                currentImage = ImageCache.shared.get(forKey: newID)
+                guard !isZoomed && !isGestureActive else { return }
+                // Update cached image for new selection
+                if newIndex >= 0 && newIndex < photoURLs.count {
+                    currentImage = ImageCache.shared.get(forKey: photoURLs[newIndex])
+                }
             }
             .if(!isZoomed && !isGestureActive) { view in
                 view.gesture(
@@ -277,7 +272,7 @@ struct FullScreenPhotoViewer: View {
 
                     Spacer()
 
-                    Text("\(currentIndex + 1) / \(photoURLs.count)")
+                    Text("\(selectedIndex + 1) / \(photoURLs.count)")
                         .foregroundColor(.white)
                         .font(.subheadline)
                         .shadow(radius: 3)

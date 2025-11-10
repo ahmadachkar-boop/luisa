@@ -126,7 +126,6 @@ struct PhotoGalleryView: View {
                     initialIndex: selectedPhotoIndex,
                     onDismiss: { showingPhotoViewer = false }
                 )
-                .id(selectedPhotoIndex) // Force new instance for each photo
             }
         }
     }

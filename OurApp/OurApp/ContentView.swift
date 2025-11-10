@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var selectedTab = 0
-    private let appVersion = "1.0.8"
+    private let appVersion = "1.0.9"
 
     var body: some View {
         ZStack {
