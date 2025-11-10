@@ -180,6 +180,7 @@ struct FullScreenPhotoViewer: View {
     @State private var currentImage: UIImage?
     @State private var dragOffset: CGFloat = 0
     @State private var isDraggingToDismiss = false
+    @State private var isZoomed = false
 
     init(photoURLs: [String], initialIndex: Int = 0, onDismiss: @escaping () -> Void) {
         self.photoURLs = photoURLs
@@ -196,13 +197,17 @@ struct FullScreenPhotoViewer: View {
 
             TabView(selection: $currentIndex) {
                 ForEach(Array(photoURLs.enumerated()), id: \.offset) { index, photoURL in
-                    ZoomablePhotoView(photoURL: photoURL)
-                        .tag(index)
+                    ZoomablePhotoView(
+                        photoURL: photoURL,
+                        isZoomed: $isZoomed
+                    )
+                    .tag(index)
                 }
             }
-            .tabViewStyle(.page(indexDisplayMode: .always))
+            .tabViewStyle(.page(indexDisplayMode: isZoomed ? .never : .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .offset(y: dragOffset)
+            .allowsHitTesting(!isZoomed) // Disable TabView gestures when zoomed
             .onChange(of: currentIndex) { newIndex in
                 // Load the new current image for save/share
                 if newIndex < photoURLs.count {
@@ -213,8 +218,8 @@ struct FullScreenPhotoViewer: View {
             .gesture(
                 DragGesture(minimumDistance: 20)
                     .onChanged { value in
-                        // Only allow vertical drag to dismiss
-                        if abs(value.translation.height) > abs(value.translation.width) {
+                        // Only allow vertical drag to dismiss when not zoomed
+                        if !isZoomed && abs(value.translation.height) > abs(value.translation.width) {
                             isDraggingToDismiss = true
                             dragOffset = value.translation.height
                         }
@@ -228,7 +233,8 @@ struct FullScreenPhotoViewer: View {
                             }
                         }
                         isDraggingToDismiss = false
-                    }
+                    },
+                including: isZoomed ? .subviews : .all // Only apply when not zoomed
             )
 
             // Top toolbar
@@ -317,11 +323,13 @@ struct FullScreenPhotoViewer: View {
 // MARK: - Zoomable Photo View
 struct ZoomablePhotoView: View {
     let photoURL: String
+    @Binding var isZoomed: Bool
 
     @State private var scale: CGFloat = 1.0
     @State private var lastScale: CGFloat = 1.0
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
+    @State private var imageSize: CGSize = .zero
 
     var body: some View {
         GeometryReader { geometry in
@@ -332,6 +340,13 @@ struct ZoomablePhotoView: View {
                     .frame(width: geometry.size.width, height: geometry.size.height)
                     .scaleEffect(scale)
                     .offset(offset)
+                    .background(
+                        GeometryReader { imageGeometry in
+                            Color.clear.onAppear {
+                                imageSize = imageGeometry.size
+                            }
+                        }
+                    )
                     .gesture(
                         MagnificationGesture()
                             .onChanged { value in
@@ -339,6 +354,7 @@ struct ZoomablePhotoView: View {
                                 lastScale = value
                                 let newScale = scale * delta
                                 scale = min(max(newScale, 1), 4)
+                                isZoomed = scale > 1.01
                             }
                             .onEnded { _ in
                                 lastScale = 1.0
@@ -347,17 +363,25 @@ struct ZoomablePhotoView: View {
                                         scale = 1
                                         offset = .zero
                                         lastOffset = .zero
+                                        isZoomed = false
                                     }
                                 }
                             }
                     )
-                    .simultaneousGesture(
+                    .highPriorityGesture(
                         DragGesture()
                             .onChanged { value in
                                 if scale > 1 {
+                                    // Calculate max offset to keep image within bounds
+                                    let maxOffsetX = max(0, (imageSize.width * scale - geometry.size.width) / 2)
+                                    let maxOffsetY = max(0, (imageSize.height * scale - geometry.size.height) / 2)
+
+                                    let newOffsetX = lastOffset.width + value.translation.width
+                                    let newOffsetY = lastOffset.height + value.translation.height
+
                                     offset = CGSize(
-                                        width: lastOffset.width + value.translation.width,
-                                        height: lastOffset.height + value.translation.height
+                                        width: min(max(newOffsetX, -maxOffsetX), maxOffsetX),
+                                        height: min(max(newOffsetY, -maxOffsetY), maxOffsetY)
                                     )
                                 }
                             }
@@ -365,7 +389,8 @@ struct ZoomablePhotoView: View {
                                 if scale > 1 {
                                     lastOffset = offset
                                 }
-                            }
+                            },
+                        including: scale > 1 ? .all : .subviews
                     )
                     .onTapGesture(count: 2) {
                         withAnimation(.spring(response: 0.3)) {
@@ -373,8 +398,10 @@ struct ZoomablePhotoView: View {
                                 scale = 1
                                 offset = .zero
                                 lastOffset = .zero
+                                isZoomed = false
                             } else {
                                 scale = 2
+                                isZoomed = true
                             }
                         }
                     }
@@ -382,6 +409,9 @@ struct ZoomablePhotoView: View {
                 ProgressView()
                     .tint(.white)
             }
+        }
+        .onChange(of: scale) { newScale in
+            isZoomed = newScale > 1.01
         }
     }
 }
