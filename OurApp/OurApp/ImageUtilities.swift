@@ -262,76 +262,57 @@ struct FullScreenPhotoViewer: View {
 
                 // Photo display area
                 GeometryReader { geometry in
-                    ZStack {
-                        // Display current photo only
-                        if currentIndex >= 0 && currentIndex < photoURLs.count {
-                            SinglePhotoView(
-                                photoURL: photoURLs[currentIndex],
-                                isZoomed: $isZoomed,
-                                onImageLoaded: { image in
-                                    currentImage = image
+                    // Display current photo only
+                    if currentIndex >= 0 && currentIndex < photoURLs.count {
+                        SinglePhotoView(
+                            photoURL: photoURLs[currentIndex],
+                            isZoomed: $isZoomed,
+                            onImageLoaded: { image in
+                                currentImage = image
+                            }
+                        )
+                        .id("\(currentIndex)-\(viewID)")
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .offset(y: dragOffset)
+                        .gesture(
+                            DragGesture(minimumDistance: 20)
+                                .onChanged { value in
+                                    if !isZoomed {
+                                        // Only track vertical drag for dismiss gesture
+                                        if abs(value.translation.height) > abs(value.translation.width) {
+                                            dragOffset = value.translation.height
+                                        }
+                                    }
                                 }
-                            )
-                            .id("\(currentIndex)-\(viewID)")
-                            .frame(width: geometry.size.width, height: geometry.size.height)
-                            .offset(y: dragOffset)
-                            .gesture(
-                                DragGesture(minimumDistance: 30)
-                                    .onChanged { value in
-                                        if !isZoomed {
-                                            if abs(value.translation.height) > abs(value.translation.width) {
-                                                dragOffset = value.translation.height
-                                            } else if value.translation.width > 50 {
-                                                // Swipe right - go to previous
+                                .onEnded { value in
+                                    if !isZoomed {
+                                        let horizontal = value.translation.width
+                                        let vertical = value.translation.height
+
+                                        // Vertical dismiss
+                                        if abs(dragOffset) > 100 {
+                                            onDismiss()
+                                            return
+                                        }
+
+                                        // Horizontal swipe navigation
+                                        if abs(horizontal) > abs(vertical) && abs(horizontal) > 50 {
+                                            if horizontal > 0 && currentIndex > 0 {
+                                                // Swipe right - previous photo
                                                 goToPrevious()
-                                            } else if value.translation.width < -50 {
-                                                // Swipe left - go to next
+                                            } else if horizontal < 0 && currentIndex < photoURLs.count - 1 {
+                                                // Swipe left - next photo
                                                 goToNext()
                                             }
                                         }
-                                    }
-                                    .onEnded { value in
-                                        if !isZoomed {
-                                            if abs(dragOffset) > 100 {
-                                                onDismiss()
-                                            } else {
-                                                withAnimation(.spring(response: 0.3)) {
-                                                    dragOffset = 0
-                                                }
-                                            }
+
+                                        // Reset vertical offset
+                                        withAnimation(.spring(response: 0.3)) {
+                                            dragOffset = 0
                                         }
                                     }
-                            )
-                        }
-
-                        // Navigation buttons (when not zoomed)
-                        if !isZoomed && photoURLs.count > 1 {
-                            HStack {
-                                // Previous button
-                                if currentIndex > 0 {
-                                    Button(action: goToPrevious) {
-                                        Image(systemName: "chevron.left.circle.fill")
-                                            .font(.system(size: 44))
-                                            .foregroundColor(.white.opacity(0.7))
-                                            .shadow(radius: 3)
-                                    }
-                                    .padding(.leading, 20)
                                 }
-
-                                Spacer()
-
-                                // Next button
-                                if currentIndex < photoURLs.count - 1 {
-                                    Button(action: goToNext) {
-                                        Image(systemName: "chevron.right.circle.fill")
-                                            .font(.system(size: 44))
-                                            .foregroundColor(.white.opacity(0.7))
-                                            .shadow(radius: 3)
-                                    }
-                                    .padding(.trailing, 20)
-                                }
-                            }
-                        }
+                        )
                     }
                 }
 
