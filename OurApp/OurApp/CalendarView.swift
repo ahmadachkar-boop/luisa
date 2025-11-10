@@ -552,6 +552,11 @@ struct EventDetailView: View {
     @State private var errorMessage = ""
     @State private var currentEvent: CalendarEvent
     @State private var selectedPhotoIndex: CalendarPhotoIndex?
+    @State private var selectionMode = false
+    @State private var selectedPhotoIndices: Set<Int> = []
+    @State private var showingSaveSuccess = false
+    @State private var showingSaveError = false
+    @State private var saveErrorMessage = ""
 
     init(event: CalendarEvent, onDelete: @escaping () -> Void) {
         self.event = event
@@ -646,28 +651,54 @@ struct EventDetailView: View {
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack(spacing: 12) {
                                         ForEach(Array(currentEvent.photoURLs.enumerated()), id: \.offset) { index, photoURL in
-                                            Button(action: {
-                                                print("📅 [CALENDAR] Memory photo tapped")
-                                                print("   → Index: \(index)")
-                                                print("   → Total photos: \(currentEvent.photoURLs.count)")
-                                                print("   → Photo URL: \(photoURL)")
-                                                selectedPhotoIndex = CalendarPhotoIndex(value: index)
-                                                print("   → selectedPhotoIndex set to: \(String(describing: selectedPhotoIndex?.value))")
-                                            }) {
-                                                CachedAsyncImage(url: URL(string: photoURL)) { image in
-                                                    image
-                                                        .resizable()
-                                                        .scaledToFill()
-                                                        .frame(width: 250, height: 250)
-                                                        .clipShape(RoundedRectangle(cornerRadius: 15))
-                                                } placeholder: {
-                                                    RoundedRectangle(cornerRadius: 15)
-                                                        .fill(Color.gray.opacity(0.2))
-                                                        .frame(width: 250, height: 250)
-                                                        .overlay(ProgressView())
+                                            ZStack(alignment: .topTrailing) {
+                                                Button(action: {
+                                                    if selectionMode {
+                                                        if selectedPhotoIndices.contains(index) {
+                                                            selectedPhotoIndices.remove(index)
+                                                        } else {
+                                                            selectedPhotoIndices.insert(index)
+                                                        }
+                                                    } else {
+                                                        selectedPhotoIndex = CalendarPhotoIndex(value: index)
+                                                    }
+                                                }) {
+                                                    CachedAsyncImage(url: URL(string: photoURL)) { image in
+                                                        image
+                                                            .resizable()
+                                                            .scaledToFill()
+                                                            .frame(width: 250, height: 250)
+                                                            .clipShape(RoundedRectangle(cornerRadius: 15))
+                                                    } placeholder: {
+                                                        RoundedRectangle(cornerRadius: 15)
+                                                            .fill(Color.gray.opacity(0.2))
+                                                            .frame(width: 250, height: 250)
+                                                            .overlay(ProgressView())
+                                                    }
+                                                    .overlay(
+                                                        selectionMode ?
+                                                            RoundedRectangle(cornerRadius: 15)
+                                                                .stroke(selectedPhotoIndices.contains(index) ? Color.blue : Color.clear, lineWidth: 3)
+                                                        : nil
+                                                    )
+                                                }
+                                                .buttonStyle(PlainButtonStyle())
+                                                .onLongPressGesture(minimumDuration: 0.5) {
+                                                    if !selectionMode {
+                                                        selectionMode = true
+                                                        selectedPhotoIndices.insert(index)
+                                                    }
+                                                }
+
+                                                // Checkmark overlay
+                                                if selectionMode {
+                                                    Image(systemName: selectedPhotoIndices.contains(index) ? "checkmark.circle.fill" : "circle")
+                                                        .font(.title2)
+                                                        .foregroundColor(selectedPhotoIndices.contains(index) ? .blue : .white)
+                                                        .shadow(radius: 2)
+                                                        .padding(10)
                                                 }
                                             }
-                                            .buttonStyle(PlainButtonStyle())
                                         }
                                     }
                                     .padding(.horizontal)
@@ -777,19 +808,45 @@ struct EventDetailView: View {
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") {
-                        dismiss()
+                if selectionMode {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button("Cancel") {
+                            selectionMode = false
+                            selectedPhotoIndices.removeAll()
+                        }
+                        .foregroundColor(Color(red: 0.6, green: 0.3, blue: 0.8))
                     }
-                    .foregroundColor(Color(red: 0.6, green: 0.3, blue: 0.8))
-                }
 
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(role: .destructive) {
-                        showingDeleteAlert = true
-                    } label: {
-                        Image(systemName: "trash")
-                            .foregroundColor(.red)
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        HStack(spacing: 16) {
+                            Button(action: saveSelectedPhotos) {
+                                Image(systemName: "square.and.arrow.down")
+                                    .foregroundColor(Color(red: 0.6, green: 0.3, blue: 0.8))
+                            }
+                            .disabled(selectedPhotoIndices.isEmpty)
+
+                            Button(action: deleteSelectedPhotos) {
+                                Image(systemName: "trash")
+                                    .foregroundColor(.red)
+                            }
+                            .disabled(selectedPhotoIndices.isEmpty)
+                        }
+                    }
+                } else {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button("Done") {
+                            dismiss()
+                        }
+                        .foregroundColor(Color(red: 0.6, green: 0.3, blue: 0.8))
+                    }
+
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(role: .destructive) {
+                            showingDeleteAlert = true
+                        } label: {
+                            Image(systemName: "trash")
+                                .foregroundColor(.red)
+                        }
                     }
                 }
             }
@@ -806,6 +863,16 @@ struct EventDetailView: View {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text(errorMessage)
+            }
+            .alert("Saved!", isPresented: $showingSaveSuccess) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("\(selectedPhotoIndices.count) photo\(selectedPhotoIndices.count == 1 ? "" : "s") saved to your library")
+            }
+            .alert("Error", isPresented: $showingSaveError) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(saveErrorMessage)
             }
             .fullScreenCover(item: $selectedPhotoIndex) { photoIndex in
                 FullScreenPhotoViewer(
@@ -827,6 +894,84 @@ struct EventDetailView: View {
                         }
                     }
                 )
+            }
+        }
+    }
+
+    private func saveSelectedPhotos() {
+        guard !selectedPhotoIndices.isEmpty else { return }
+
+        Task {
+            var savedCount = 0
+            var errorOccurred = false
+
+            for index in selectedPhotoIndices.sorted() {
+                guard index < currentEvent.photoURLs.count else { continue }
+                let photoURL = currentEvent.photoURLs[index]
+
+                // Load image
+                if let cachedImage = ImageCache.shared.get(forKey: photoURL) {
+                    let imageSaver = ImageSaver()
+                    imageSaver.successHandler = {
+                        savedCount += 1
+                        if savedCount == selectedPhotoIndices.count {
+                            showingSaveSuccess = true
+                            selectionMode = false
+                            selectedPhotoIndices.removeAll()
+                        }
+                    }
+                    imageSaver.errorHandler = { error in
+                        if !errorOccurred {
+                            errorOccurred = true
+                            saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
+                            showingSaveError = true
+                        }
+                    }
+                    imageSaver.writeToPhotoAlbum(image: cachedImage)
+                } else if let url = URL(string: photoURL),
+                          let data = try? Data(contentsOf: url),
+                          let image = UIImage(data: data) {
+                    ImageCache.shared.set(image, forKey: photoURL)
+                    let imageSaver = ImageSaver()
+                    imageSaver.successHandler = {
+                        savedCount += 1
+                        if savedCount == selectedPhotoIndices.count {
+                            showingSaveSuccess = true
+                            selectionMode = false
+                            selectedPhotoIndices.removeAll()
+                        }
+                    }
+                    imageSaver.errorHandler = { error in
+                        if !errorOccurred {
+                            errorOccurred = true
+                            saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
+                            showingSaveError = true
+                        }
+                    }
+                    imageSaver.writeToPhotoAlbum(image: image)
+                }
+            }
+        }
+    }
+
+    private func deleteSelectedPhotos() {
+        guard !selectedPhotoIndices.isEmpty else { return }
+
+        Task {
+            var updatedPhotoURLs = currentEvent.photoURLs
+            for index in selectedPhotoIndices.sorted().reversed() {
+                guard index < updatedPhotoURLs.count else { continue }
+                updatedPhotoURLs.remove(at: index)
+            }
+
+            var updatedEvent = currentEvent
+            updatedEvent.photoURLs = updatedPhotoURLs
+            try? await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
+
+            await MainActor.run {
+                currentEvent.photoURLs = updatedPhotoURLs
+                selectionMode = false
+                selectedPhotoIndices.removeAll()
             }
         }
     }
