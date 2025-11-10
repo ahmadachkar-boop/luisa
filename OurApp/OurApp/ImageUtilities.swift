@@ -1,6 +1,18 @@
 import SwiftUI
 import UIKit
 
+// MARK: - View Extension for Conditional Modifiers
+extension View {
+    @ViewBuilder
+    func `if`<Transform: View>(_ condition: Bool, transform: (Self) -> Transform) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
+    }
+}
+
 // MARK: - Image Cache Manager
 class ImageCache {
     static let shared = ImageCache()
@@ -202,40 +214,49 @@ struct FullScreenPhotoViewer: View {
                         isZoomed: $isZoomed
                     )
                     .tag(index)
+                    .id(photoURL) // Force view recreation when photo changes
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: isZoomed ? .never : .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .offset(y: dragOffset)
             .allowsHitTesting(!isZoomed) // Disable TabView gestures when zoomed
+            .onAppear {
+                // Ensure TabView starts at the correct index
+                currentIndex = initialIndex
+            }
             .onChange(of: currentIndex) { newIndex in
+                // Reset zoom when changing photos
+                isZoomed = false
+
                 // Load the new current image for save/share
                 if newIndex < photoURLs.count {
                     let photoURL = photoURLs[newIndex]
                     currentImage = ImageCache.shared.get(forKey: photoURL)
                 }
             }
-            .gesture(
-                DragGesture(minimumDistance: 20)
-                    .onChanged { value in
-                        // Only allow vertical drag to dismiss when not zoomed
-                        if !isZoomed && abs(value.translation.height) > abs(value.translation.width) {
-                            isDraggingToDismiss = true
-                            dragOffset = value.translation.height
-                        }
-                    }
-                    .onEnded { value in
-                        if isDraggingToDismiss && abs(dragOffset) > 100 {
-                            onDismiss()
-                        } else {
-                            withAnimation(.spring(response: 0.3)) {
-                                dragOffset = 0
+            .if(!isZoomed) { view in
+                view.gesture(
+                    DragGesture(minimumDistance: 20)
+                        .onChanged { value in
+                            // Only allow vertical drag to dismiss when not zoomed
+                            if abs(value.translation.height) > abs(value.translation.width) {
+                                isDraggingToDismiss = true
+                                dragOffset = value.translation.height
                             }
                         }
-                        isDraggingToDismiss = false
-                    },
-                including: isZoomed ? .subviews : .all // Only apply when not zoomed
-            )
+                        .onEnded { value in
+                            if isDraggingToDismiss && abs(dragOffset) > 100 {
+                                onDismiss()
+                            } else {
+                                withAnimation(.spring(response: 0.3)) {
+                                    dragOffset = 0
+                                }
+                            }
+                            isDraggingToDismiss = false
+                        }
+                )
+            }
 
             // Top toolbar
             VStack {
@@ -412,6 +433,15 @@ struct ZoomablePhotoView: View {
         }
         .onChange(of: scale) { newScale in
             isZoomed = newScale > 1.01
+        }
+        .onChange(of: photoURL) { _ in
+            // Reset zoom state when photo changes
+            scale = 1.0
+            lastScale = 1.0
+            offset = .zero
+            lastOffset = .zero
+            imageSize = .zero
+            isZoomed = false
         }
     }
 }
