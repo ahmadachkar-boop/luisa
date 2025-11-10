@@ -161,12 +161,89 @@ class FirebaseManager: ObservableObject {
     }
 
     func updateCalendarEvent(_ event: CalendarEvent) async throws {
-        guard let id = event.id else { return }
+        print("🔵 [FIREBASE] updateCalendarEvent called")
+        guard let id = event.id else {
+            print("🔴 [FIREBASE ERROR] Event has no ID!")
+            return
+        }
+        print("🔵 [FIREBASE] Updating event \(id) with \(event.photoURLs.count) photos")
         try db.collection("calendarEvents").document(id).setData(from: event)
+        print("🟢 [FIREBASE SUCCESS] Event \(id) updated successfully")
     }
 
     func deleteCalendarEvent(_ event: CalendarEvent) async throws {
         guard let id = event.id else { return }
+
+        // Delete event photos from storage
+        for photoURL in event.photoURLs {
+            do {
+                let storageRef = storage.reference(forURL: photoURL)
+                try await storageRef.delete()
+            } catch {
+                print("Error deleting event photo: \(error)")
+            }
+        }
+
         try await db.collection("calendarEvents").document(id).delete()
+    }
+
+    func uploadEventPhoto(imageData: Data) async throws -> String {
+        print("🔵 [FIREBASE STORAGE] uploadEventPhoto called with \(imageData.count) bytes")
+        let fileName = "\(UUID().uuidString).jpg"
+        print("🔵 [FIREBASE STORAGE] Generated filename: \(fileName)")
+        let storageRef = storage.reference().child("event_photos/\(fileName)")
+        print("🔵 [FIREBASE STORAGE] Storage path: event_photos/\(fileName)")
+
+        print("🔵 [FIREBASE STORAGE] Starting upload...")
+        let _ = try await storageRef.putDataAsync(imageData)
+        print("🟢 [FIREBASE STORAGE] Upload complete, fetching download URL...")
+
+        let downloadURL = try await storageRef.downloadURL()
+        print("🟢 [FIREBASE STORAGE] Download URL obtained: \(downloadURL.absoluteString)")
+
+        return downloadURL.absoluteString
+    }
+
+    // MARK: - Wish List
+    func addWishListItem(_ item: WishListItem) async throws {
+        try db.collection("wishList").addDocument(from: item)
+    }
+
+    func getWishListItems() -> AsyncThrowingStream<[WishListItem], Error> {
+        AsyncThrowingStream { continuation in
+            let listener = db.collection("wishList")
+                .order(by: "createdAt", descending: true)
+                .addSnapshotListener { snapshot, error in
+                    if let error = error {
+                        continuation.finish(throwing: error)
+                        return
+                    }
+
+                    guard let documents = snapshot?.documents else {
+                        continuation.yield([])
+                        return
+                    }
+
+                    let items = documents.compactMap { doc -> WishListItem? in
+                        try? doc.data(as: WishListItem.self)
+                    }
+
+                    continuation.yield(items)
+                }
+
+            continuation.onTermination = { _ in
+                listener.remove()
+            }
+        }
+    }
+
+    func updateWishListItem(_ item: WishListItem) async throws {
+        guard let id = item.id else { return }
+        try db.collection("wishList").document(id).setData(from: item)
+    }
+
+    func deleteWishListItem(_ item: WishListItem) async throws {
+        guard let id = item.id else { return }
+        try await db.collection("wishList").document(id).delete()
     }
 }

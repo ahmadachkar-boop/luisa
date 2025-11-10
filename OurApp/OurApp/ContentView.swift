@@ -22,6 +22,12 @@ struct ContentView: View {
                     Label("Our Plans", systemImage: "calendar.circle.fill")
                 }
                 .tag(2)
+
+            WishListView()
+                .tabItem {
+                    Label("Wish List", systemImage: "star.circle.fill")
+                }
+                .tag(3)
         }
         .accentColor(Color(red: 0.8, green: 0.7, blue: 1.0)) // Light purple
     }
