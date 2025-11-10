@@ -804,6 +804,7 @@ struct EventDetailView: View {
                     initialIndex: selectedPhotoIndex,
                     onDismiss: { showingPhotoViewer = false }
                 )
+                .id(selectedPhotoIndex)
             }
         }
     }

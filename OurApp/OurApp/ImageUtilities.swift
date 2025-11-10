@@ -325,6 +325,9 @@ struct FullScreenPhotoViewer: View {
         }
         .statusBar(hidden: true)
         .onAppear {
+            // Reset to initial index every time view appears
+            let safeIndex = max(0, min(initialIndex, photoURLs.count - 1))
+            currentIndex = safeIndex
             loadCurrentImage()
         }
         .alert("Saved!", isPresented: $showingSaveSuccess) {
