@@ -557,6 +557,7 @@ struct EventDetailView: View {
     @State private var showingSaveSuccess = false
     @State private var showingSaveError = false
     @State private var saveErrorMessage = ""
+    @State private var savedPhotoCount = 0
 
     init(event: CalendarEvent, onDelete: @escaping () -> Void) {
         self.event = event
@@ -867,7 +868,7 @@ struct EventDetailView: View {
             .alert("Saved!", isPresented: $showingSaveSuccess) {
                 Button("OK", role: .cancel) { }
             } message: {
-                Text("\(selectedPhotoIndices.count) photo\(selectedPhotoIndices.count == 1 ? "" : "s") saved to your library")
+                Text("\(savedPhotoCount) photo\(savedPhotoCount == 1 ? "" : "s") saved to your library")
             }
             .alert("Error", isPresented: $showingSaveError) {
                 Button("OK", role: .cancel) { }
@@ -901,6 +902,8 @@ struct EventDetailView: View {
     private func saveSelectedPhotos() {
         guard !selectedPhotoIndices.isEmpty else { return }
 
+        let totalCount = selectedPhotoIndices.count
+
         Task {
             var savedCount = 0
             var errorOccurred = false
@@ -914,17 +917,22 @@ struct EventDetailView: View {
                     let imageSaver = ImageSaver()
                     imageSaver.successHandler = {
                         savedCount += 1
-                        if savedCount == selectedPhotoIndices.count {
-                            showingSaveSuccess = true
-                            selectionMode = false
-                            selectedPhotoIndices.removeAll()
+                        if savedCount == totalCount {
+                            Task { @MainActor in
+                                savedPhotoCount = totalCount
+                                showingSaveSuccess = true
+                                selectionMode = false
+                                selectedPhotoIndices.removeAll()
+                            }
                         }
                     }
                     imageSaver.errorHandler = { error in
                         if !errorOccurred {
                             errorOccurred = true
-                            saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
-                            showingSaveError = true
+                            Task { @MainActor in
+                                saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
+                                showingSaveError = true
+                            }
                         }
                     }
                     imageSaver.writeToPhotoAlbum(image: cachedImage)
@@ -935,17 +943,22 @@ struct EventDetailView: View {
                     let imageSaver = ImageSaver()
                     imageSaver.successHandler = {
                         savedCount += 1
-                        if savedCount == selectedPhotoIndices.count {
-                            showingSaveSuccess = true
-                            selectionMode = false
-                            selectedPhotoIndices.removeAll()
+                        if savedCount == totalCount {
+                            Task { @MainActor in
+                                savedPhotoCount = totalCount
+                                showingSaveSuccess = true
+                                selectionMode = false
+                                selectedPhotoIndices.removeAll()
+                            }
                         }
                     }
                     imageSaver.errorHandler = { error in
                         if !errorOccurred {
                             errorOccurred = true
-                            saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
-                            showingSaveError = true
+                            Task { @MainActor in
+                                saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
+                                showingSaveError = true
+                            }
                         }
                     }
                     imageSaver.writeToPhotoAlbum(image: image)
