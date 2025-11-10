@@ -193,6 +193,7 @@ struct FullScreenPhotoViewer: View {
     @State private var dragOffset: CGFloat = 0
     @State private var isDraggingToDismiss = false
     @State private var isZoomed = false
+    @State private var isGestureActive = false // Track active gestures to prevent conflicts
 
     init(photoURLs: [String], initialIndex: Int = 0, onDismiss: @escaping () -> Void) {
         self.photoURLs = photoURLs
@@ -211,7 +212,8 @@ struct FullScreenPhotoViewer: View {
                 ForEach(Array(photoURLs.enumerated()), id: \.offset) { index, photoURL in
                     ZoomablePhotoView(
                         photoURL: photoURL,
-                        isZoomed: $isZoomed
+                        isZoomed: $isZoomed,
+                        isGestureActive: $isGestureActive
                     )
                     .tag(index)
                     .id(photoURL) // Force view recreation when photo changes
@@ -220,14 +222,17 @@ struct FullScreenPhotoViewer: View {
             .tabViewStyle(.page(indexDisplayMode: isZoomed ? .never : .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .offset(y: dragOffset)
-            .allowsHitTesting(!isZoomed) // Disable TabView gestures when zoomed
+            // Completely disable TabView navigation when zoomed or gesture is active
+            .disabled(isZoomed || isGestureActive)
+            .allowsHitTesting(!isZoomed && !isGestureActive)
             .onAppear {
                 // Ensure TabView starts at the correct index
                 currentIndex = initialIndex
             }
             .onChange(of: currentIndex) { newIndex in
-                // Reset zoom when changing photos
+                // Immediately and synchronously reset all zoom states when changing photos
                 isZoomed = false
+                isGestureActive = false
 
                 // Load the new current image for save/share
                 if newIndex < photoURLs.count {
@@ -235,12 +240,12 @@ struct FullScreenPhotoViewer: View {
                     currentImage = ImageCache.shared.get(forKey: photoURL)
                 }
             }
-            .if(!isZoomed) { view in
+            .if(!isZoomed && !isGestureActive) { view in
                 view.gesture(
-                    DragGesture(minimumDistance: 20)
+                    DragGesture(minimumDistance: 30) // Increased threshold to prevent accidental triggers
                         .onChanged { value in
-                            // Only allow vertical drag to dismiss when not zoomed
-                            if abs(value.translation.height) > abs(value.translation.width) {
+                            // Only allow vertical drag to dismiss when not zoomed or actively gesturing
+                            if abs(value.translation.height) > abs(value.translation.width) * 1.5 {
                                 isDraggingToDismiss = true
                                 dragOffset = value.translation.height
                             }
@@ -345,6 +350,7 @@ struct FullScreenPhotoViewer: View {
 struct ZoomablePhotoView: View {
     let photoURL: String
     @Binding var isZoomed: Bool
+    @Binding var isGestureActive: Bool
 
     @State private var scale: CGFloat = 1.0
     @State private var lastScale: CGFloat = 1.0
@@ -369,8 +375,11 @@ struct ZoomablePhotoView: View {
                         }
                     )
                     .gesture(
-                        MagnificationGesture()
+                        MagnificationGesture(minimumScaleDelta: 0.0)
                             .onChanged { value in
+                                // Mark gesture as active to block TabView navigation
+                                isGestureActive = true
+
                                 let delta = value / lastScale
                                 lastScale = value
                                 let newScale = scale * delta
@@ -379,6 +388,12 @@ struct ZoomablePhotoView: View {
                             }
                             .onEnded { _ in
                                 lastScale = 1.0
+
+                                // Small delay before allowing navigation to prevent immediate swipes
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                    isGestureActive = false
+                                }
+
                                 withAnimation(.spring(response: 0.3)) {
                                     if scale < 1 {
                                         scale = 1
@@ -389,10 +404,11 @@ struct ZoomablePhotoView: View {
                                 }
                             }
                     )
-                    .highPriorityGesture(
-                        DragGesture()
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 0)
                             .onChanged { value in
-                                if scale > 1 {
+                                // Only handle drag when already zoomed and not actively zooming
+                                if scale > 1.01 && !isGestureActive {
                                     // Calculate max offset to keep image within bounds
                                     let maxOffsetX = max(0, (imageSize.width * scale - geometry.size.width) / 2)
                                     let maxOffsetY = max(0, (imageSize.height * scale - geometry.size.height) / 2)
@@ -407,11 +423,10 @@ struct ZoomablePhotoView: View {
                                 }
                             }
                             .onEnded { _ in
-                                if scale > 1 {
+                                if scale > 1.01 {
                                     lastOffset = offset
                                 }
-                            },
-                        including: scale > 1 ? .all : .subviews
+                            }
                     )
                     .onTapGesture(count: 2) {
                         withAnimation(.spring(response: 0.3)) {
@@ -420,9 +435,11 @@ struct ZoomablePhotoView: View {
                                 offset = .zero
                                 lastOffset = .zero
                                 isZoomed = false
+                                isGestureActive = false
                             } else {
                                 scale = 2
                                 isZoomed = true
+                                // Don't set gesture active for tap, it's instant
                             }
                         }
                     }
@@ -435,13 +452,14 @@ struct ZoomablePhotoView: View {
             isZoomed = newScale > 1.01
         }
         .onChange(of: photoURL) { _ in
-            // Reset zoom state when photo changes
+            // Reset all zoom and gesture state when photo changes
             scale = 1.0
             lastScale = 1.0
             offset = .zero
             lastOffset = .zero
             imageSize = .zero
             isZoomed = false
+            isGestureActive = false
         }
     }
 }
