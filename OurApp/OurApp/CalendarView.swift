@@ -712,9 +712,9 @@ struct EventDetailView: View {
                                     .padding(.horizontal)
                             }
                         }
-                        .onChange(of: photoPickerItems) { items in
+                        .onChange(of: photoPickerItems) { oldItems, newItems in
                             Task {
-                                await uploadPhotos(items)
+                                await uploadPhotos(newItems)
                             }
                         }
 
@@ -1148,8 +1148,8 @@ struct AddEventView: View {
             description: description,
             date: date,
             location: location,
-            isSpecial: isSpecial,
             createdBy: "You",
+            isSpecial: isSpecial,
             photoURLs: []
         )
 
