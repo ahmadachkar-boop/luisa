@@ -185,6 +185,7 @@ struct FullScreenPhotoViewer: View {
     let onDismiss: () -> Void
 
     @State private var currentIndex: Int
+    @State private var selectedID: String?
     @State private var showingSaveSuccess = false
     @State private var showingSaveError = false
     @State private var saveErrorMessage = ""
@@ -194,13 +195,16 @@ struct FullScreenPhotoViewer: View {
     @State private var isDraggingToDismiss = false
     @State private var isZoomed = false
     @State private var isGestureActive = false // Track active gestures to prevent conflicts
-    @State private var hasAppearedOnce = false // Track if view has appeared once
 
     init(photoURLs: [String], initialIndex: Int = 0, onDismiss: @escaping () -> Void) {
         self.photoURLs = photoURLs
         self.initialIndex = initialIndex
         self.onDismiss = onDismiss
+
         _currentIndex = State(initialValue: initialIndex)
+        // Use stable, unique tag for initial page
+        let safeInitial = (initialIndex >= 0 && initialIndex < photoURLs.count) ? initialIndex : 0
+        _selectedID = State(initialValue: photoURLs[safeInitial])
     }
 
     var body: some View {
@@ -209,52 +213,40 @@ struct FullScreenPhotoViewer: View {
                 .opacity(CGFloat(1) - abs(dragOffset) / CGFloat(500))
                 .ignoresSafeArea()
 
-            // Use explicit selection binding to prevent navigation when zoomed
+            // Use stable ID selection to avoid index race conditions
             TabView(selection: Binding(
-                get: { currentIndex },
+                get: { selectedID },
                 set: { newValue in
                     // Only update if not zoomed or actively gesturing
                     if !isZoomed && !isGestureActive {
-                        currentIndex = newValue
+                        selectedID = newValue
                     }
                 }
             )) {
-                ForEach(Array(photoURLs.enumerated()), id: \.offset) { index, photoURL in
+                ForEach(photoURLs, id: \.self) { photoURL in
                     ZoomablePhotoView(
                         photoURL: photoURL,
                         isZoomed: $isZoomed,
                         isGestureActive: $isGestureActive
                     )
-                    .tag(index)
-                    .id(photoURL) // Force view recreation when photo changes
+                    .tag(photoURL) // Stable identity via URL
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: isZoomed ? .never : .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .offset(y: dragOffset)
-            .onAppear {
-                // Only run once per instance
-                guard !hasAppearedOnce else { return }
-                hasAppearedOnce = true
-
-                // Force TabView to correct index after it's actually laid out
-                // Small delay ensures TabView finishes internal initialization
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    if currentIndex != initialIndex {
-                        currentIndex = initialIndex
-                    }
-                }
+            .task {
+                // Ensure selection is correct after first layout
+                let safeInitial = (initialIndex >= 0 && initialIndex < photoURLs.count) ? initialIndex : 0
+                selectedID = photoURLs[safeInitial]
             }
-            .onChange(of: currentIndex) { newIndex in
-                // Immediately and synchronously reset all zoom states when changing photos
+            .onChange(of: selectedID) { newID in
+                // Map selectedID back to currentIndex and update state
+                guard let newID, let idx = photoURLs.firstIndex(of: newID) else { return }
+                currentIndex = idx
                 isZoomed = false
                 isGestureActive = false
-
-                // Load the new current image for save/share
-                if newIndex < photoURLs.count {
-                    let photoURL = photoURLs[newIndex]
-                    currentImage = ImageCache.shared.get(forKey: photoURL)
-                }
+                currentImage = ImageCache.shared.get(forKey: newID)
             }
             .if(!isZoomed && !isGestureActive) { view in
                 view.gesture(
