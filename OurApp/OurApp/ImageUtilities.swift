@@ -173,15 +173,13 @@ struct FullScreenPhotoViewer: View {
     let onDismiss: () -> Void
 
     @State private var currentIndex: Int
-    @State private var scale: CGFloat = 1.0
-    @State private var lastScale: CGFloat = 1.0
-    @State private var offset: CGSize = .zero
-    @State private var lastOffset: CGSize = .zero
     @State private var showingSaveSuccess = false
     @State private var showingSaveError = false
     @State private var saveErrorMessage = ""
     @State private var showingShareSheet = false
     @State private var currentImage: UIImage?
+    @State private var dragOffset: CGFloat = 0
+    @State private var isDraggingToDismiss = false
 
     init(photoURLs: [String], initialIndex: Int = 0, onDismiss: @escaping () -> Void) {
         self.photoURLs = photoURLs
@@ -192,91 +190,46 @@ struct FullScreenPhotoViewer: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color.black
+                .opacity(1 - abs(dragOffset) / 500)
+                .ignoresSafeArea()
 
             TabView(selection: $currentIndex) {
                 ForEach(Array(photoURLs.enumerated()), id: \.offset) { index, photoURL in
-                    GeometryReader { geometry in
-                        ZStack {
-                            CachedAsyncImage(url: URL(string: photoURL)) { image in
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: geometry.size.width, height: geometry.size.height)
-                                    .scaleEffect(scale)
-                                    .offset(offset)
-                                    .gesture(
-                                        MagnificationGesture()
-                                            .onChanged { value in
-                                                let delta = value / lastScale
-                                                lastScale = value
-                                                scale = min(max(scale * delta, 1), 4)
-                                            }
-                                            .onEnded { _ in
-                                                lastScale = 1.0
-                                                if scale < 1 {
-                                                    withAnimation {
-                                                        scale = 1
-                                                        offset = .zero
-                                                    }
-                                                }
-                                            }
-                                    )
-                                    .gesture(
-                                        DragGesture()
-                                            .onChanged { value in
-                                                if scale > 1 {
-                                                    offset = CGSize(
-                                                        width: lastOffset.width + value.translation.width,
-                                                        height: lastOffset.height + value.translation.height
-                                                    )
-                                                }
-                                            }
-                                            .onEnded { _ in
-                                                lastOffset = offset
-                                            }
-                                    )
-                                    .onAppear {
-                                        if let uiImage = ImageCache.shared.get(forKey: photoURL) {
-                                            currentImage = uiImage
-                                        }
-                                    }
-                                    .onTapGesture(count: 2) {
-                                        withAnimation {
-                                            if scale > 1 {
-                                                scale = 1
-                                                offset = .zero
-                                                lastOffset = .zero
-                                            } else {
-                                                scale = 2
-                                            }
-                                        }
-                                    }
-                            } placeholder: {
-                                ProgressView()
-                                    .tint(.white)
-                            }
-                        }
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                    }
-                    .tag(index)
+                    ZoomablePhotoView(photoURL: photoURL)
+                        .tag(index)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
+            .offset(y: dragOffset)
             .onChange(of: currentIndex) { newIndex in
-                // Reset zoom when switching photos
-                withAnimation {
-                    scale = 1
-                    offset = .zero
-                    lastOffset = .zero
-                }
-                // Load the new current image
+                // Load the new current image for save/share
                 if newIndex < photoURLs.count {
                     let photoURL = photoURLs[newIndex]
                     currentImage = ImageCache.shared.get(forKey: photoURL)
                 }
             }
+            .gesture(
+                DragGesture(minimumDistance: 20)
+                    .onChanged { value in
+                        // Only allow vertical drag to dismiss
+                        if abs(value.translation.height) > abs(value.translation.width) {
+                            isDraggingToDismiss = true
+                            dragOffset = value.translation.height
+                        }
+                    }
+                    .onEnded { value in
+                        if isDraggingToDismiss && abs(dragOffset) > 100 {
+                            onDismiss()
+                        } else {
+                            withAnimation(.spring(response: 0.3)) {
+                                dragOffset = 0
+                            }
+                        }
+                        isDraggingToDismiss = false
+                    }
+            )
 
             // Top toolbar
             VStack {
@@ -313,11 +266,18 @@ struct FullScreenPhotoViewer: View {
                     }
                 }
                 .padding()
+                .opacity(isDraggingToDismiss ? 0 : 1)
 
                 Spacer()
             }
         }
         .statusBar(hidden: true)
+        .onAppear {
+            // Load initial image
+            if initialIndex < photoURLs.count {
+                currentImage = ImageCache.shared.get(forKey: photoURLs[initialIndex])
+            }
+        }
         .alert("Saved!", isPresented: $showingSaveSuccess) {
             Button("OK", role: .cancel) { }
         } message: {
@@ -351,5 +311,77 @@ struct FullScreenPhotoViewer: View {
             showingSaveError = true
         }
         imageSaver.writeToPhotoAlbum(image: image)
+    }
+}
+
+// MARK: - Zoomable Photo View
+struct ZoomablePhotoView: View {
+    let photoURL: String
+
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    var body: some View {
+        GeometryReader { geometry in
+            CachedAsyncImage(url: URL(string: photoURL)) { image in
+                image
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .scaleEffect(scale)
+                    .offset(offset)
+                    .gesture(
+                        MagnificationGesture()
+                            .onChanged { value in
+                                let delta = value / lastScale
+                                lastScale = value
+                                let newScale = scale * delta
+                                scale = min(max(newScale, 1), 4)
+                            }
+                            .onEnded { _ in
+                                lastScale = 1.0
+                                withAnimation(.spring(response: 0.3)) {
+                                    if scale < 1 {
+                                        scale = 1
+                                        offset = .zero
+                                        lastOffset = .zero
+                                    }
+                                }
+                            }
+                    )
+                    .simultaneousGesture(
+                        DragGesture()
+                            .onChanged { value in
+                                if scale > 1 {
+                                    offset = CGSize(
+                                        width: lastOffset.width + value.translation.width,
+                                        height: lastOffset.height + value.translation.height
+                                    )
+                                }
+                            }
+                            .onEnded { _ in
+                                if scale > 1 {
+                                    lastOffset = offset
+                                }
+                            }
+                    )
+                    .onTapGesture(count: 2) {
+                        withAnimation(.spring(response: 0.3)) {
+                            if scale > 1 {
+                                scale = 1
+                                offset = .zero
+                                lastOffset = .zero
+                            } else {
+                                scale = 2
+                            }
+                        }
+                    }
+            } placeholder: {
+                ProgressView()
+                    .tint(.white)
+            }
+        }
     }
 }
