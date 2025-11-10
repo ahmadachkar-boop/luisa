@@ -1,6 +1,12 @@
 import SwiftUI
 import PhotosUI
 
+// Wrapper to make Int work with .fullScreenCover(item:)
+struct PhotoIndex: Identifiable {
+    let id = UUID()
+    let value: Int
+}
+
 struct PhotoGalleryView: View {
     @StateObject private var viewModel = PhotoGalleryViewModel()
     @State private var selectedItem: PhotosPickerItem?
@@ -8,8 +14,7 @@ struct PhotoGalleryView: View {
     @State private var isUploading = false
     @State private var showError = false
     @State private var errorMessage = ""
-    @State private var showingPhotoViewer = false
-    @State private var selectedPhotoIndex = 0
+    @State private var selectedPhotoIndex: PhotoIndex?
 
     let columns = [
         GridItem(.flexible(), spacing: 2),
@@ -56,8 +61,8 @@ struct PhotoGalleryView: View {
                                     print("   → Total photos: \(viewModel.photos.count)")
                                     print("   → Photo ID: \(photo.id)")
                                     print("   → Photo URL: \(photo.imageURL)")
-                                    selectedPhotoIndex = index
-                                    showingPhotoViewer = true
+                                    selectedPhotoIndex = PhotoIndex(value: index)
+                                    print("   → selectedPhotoIndex set to: \(String(describing: selectedPhotoIndex?.value))")
                                 }) {
                                     CachedAsyncImage(url: URL(string: photo.imageURL)) { image in
                                         image
@@ -125,16 +130,15 @@ struct PhotoGalleryView: View {
             } message: {
                 Text(errorMessage)
             }
-            .fullScreenCover(isPresented: $showingPhotoViewer) {
+            .fullScreenCover(item: $selectedPhotoIndex) { photoIndex in
                 let _ = print("🎬 [PRESENT] Presenting FullScreenPhotoViewer")
-                let _ = print("   → selectedPhotoIndex: \(selectedPhotoIndex)")
+                let _ = print("   → selectedPhotoIndex: \(photoIndex.value)")
                 let _ = print("   → photoURLs count: \(viewModel.photos.count)")
                 FullScreenPhotoViewer(
                     photoURLs: viewModel.photos.map { $0.imageURL },
-                    initialIndex: selectedPhotoIndex,
-                    onDismiss: { showingPhotoViewer = false }
+                    initialIndex: photoIndex.value,
+                    onDismiss: { selectedPhotoIndex = nil }
                 )
-                .id(selectedPhotoIndex)
             }
         }
     }
