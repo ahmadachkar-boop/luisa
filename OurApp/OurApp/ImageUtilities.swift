@@ -213,16 +213,8 @@ struct FullScreenPhotoViewer: View {
                 .opacity(CGFloat(1) - abs(dragOffset) / CGFloat(500))
                 .ignoresSafeArea()
 
-            // Use stable ID selection to avoid index race conditions
-            TabView(selection: Binding(
-                get: { selectedID },
-                set: { newValue in
-                    // Only update if not zoomed or actively gesturing
-                    if !isZoomed && !isGestureActive {
-                        selectedID = newValue
-                    }
-                }
-            )) {
+            // Use direct binding for immediate selection synchronization
+            TabView(selection: $selectedID) {
                 ForEach(photoURLs, id: \.self) { photoURL in
                     ZoomablePhotoView(
                         photoURL: photoURL,
@@ -235,17 +227,19 @@ struct FullScreenPhotoViewer: View {
             .tabViewStyle(.page(indexDisplayMode: isZoomed ? .never : .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .offset(y: dragOffset)
-            .task {
-                // Ensure selection is correct after first layout
+            .onAppear {
+                // Set initial selection without animation to prevent race condition
                 let safeInitial = (initialIndex >= 0 && initialIndex < photoURLs.count) ? initialIndex : 0
-                selectedID = photoURLs[safeInitial]
+                withTransaction(Transaction(animation: nil)) {
+                    selectedID = photoURLs[safeInitial]
+                }
             }
             .onChange(of: selectedID) { newID in
-                // Map selectedID back to currentIndex and update state
-                guard let newID, let idx = photoURLs.firstIndex(of: newID) else { return }
+                // Guard against navigation when zoomed or actively gesturing
+                guard !isZoomed && !isGestureActive,
+                      let newID,
+                      let idx = photoURLs.firstIndex(of: newID) else { return }
                 currentIndex = idx
-                isZoomed = false
-                isGestureActive = false
                 currentImage = ImageCache.shared.get(forKey: newID)
             }
             .if(!isZoomed && !isGestureActive) { view in
