@@ -337,6 +337,14 @@ struct FullScreenPhotoViewer: View {
             }
         }
         .statusBar(hidden: true)
+        .onAppear {
+            // Reset to initialIndex every time view appears
+            // This fixes the issue where .fullScreenCover reuses view instances
+            currentIndex = max(0, min(initialIndex, photoURLs.count - 1))
+            viewID = UUID() // Force view recreation
+            dragOffset = 0
+            isZoomed = false
+        }
         .alert("Saved!", isPresented: $showingSaveSuccess) {
             Button("OK", role: .cancel) { }
         } message: {
