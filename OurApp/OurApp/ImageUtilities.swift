@@ -194,6 +194,7 @@ struct FullScreenPhotoViewer: View {
     @State private var isDraggingToDismiss = false
     @State private var isZoomed = false
     @State private var isGestureActive = false // Track active gestures to prevent conflicts
+    @State private var hasInitialized = false // Track if TabView has initialized
 
     init(photoURLs: [String], initialIndex: Int = 0, onDismiss: @escaping () -> Void) {
         self.photoURLs = photoURLs
@@ -212,8 +213,14 @@ struct FullScreenPhotoViewer: View {
             TabView(selection: Binding(
                 get: { currentIndex },
                 set: { newValue in
-                    // Only update if not zoomed to prevent accidental navigation
-                    if !isZoomed && !isGestureActive {
+                    // Allow initial setup, then only update if not zoomed to prevent accidental navigation
+                    if !hasInitialized {
+                        currentIndex = newValue
+                        // Mark as initialized after first set
+                        DispatchQueue.main.async {
+                            hasInitialized = true
+                        }
+                    } else if !isZoomed && !isGestureActive {
                         currentIndex = newValue
                     }
                 }
@@ -233,6 +240,15 @@ struct FullScreenPhotoViewer: View {
             .offset(y: dragOffset)
             // Note: Don't use .allowsHitTesting(false) - it blocks ALL child gestures including zoom/pan!
             // The custom Binding above prevents navigation when zoomed
+            .onAppear {
+                // Ensure TabView starts at the correct index
+                // Use async to ensure this happens after TabView initializes
+                DispatchQueue.main.async {
+                    if currentIndex != initialIndex {
+                        currentIndex = initialIndex
+                    }
+                }
+            }
             .onChange(of: currentIndex) { newIndex in
                 // Immediately and synchronously reset all zoom states when changing photos
                 isZoomed = false
