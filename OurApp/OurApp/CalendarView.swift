@@ -652,7 +652,26 @@ struct EventDetailView: View {
                                     HStack(spacing: 12) {
                                         ForEach(Array(currentEvent.photoURLs.enumerated()), id: \.offset) { index, photoURL in
                                             ZStack(alignment: .topTrailing) {
-                                                Button(action: {
+                                                CachedAsyncImage(url: URL(string: photoURL)) { image in
+                                                    image
+                                                        .resizable()
+                                                        .scaledToFill()
+                                                        .frame(width: 250, height: 250)
+                                                        .clipShape(RoundedRectangle(cornerRadius: 15))
+                                                } placeholder: {
+                                                    RoundedRectangle(cornerRadius: 15)
+                                                        .fill(Color.gray.opacity(0.2))
+                                                        .frame(width: 250, height: 250)
+                                                        .overlay(ProgressView())
+                                                }
+                                                .overlay(
+                                                    selectionMode ?
+                                                        RoundedRectangle(cornerRadius: 15)
+                                                            .stroke(selectedPhotoIndices.contains(index) ? Color.blue : Color.clear, lineWidth: 3)
+                                                    : nil
+                                                )
+                                                .contentShape(RoundedRectangle(cornerRadius: 15))
+                                                .onTapGesture {
                                                     if selectionMode {
                                                         if selectedPhotoIndices.contains(index) {
                                                             selectedPhotoIndices.remove(index)
@@ -662,27 +681,7 @@ struct EventDetailView: View {
                                                     } else {
                                                         selectedPhotoIndex = CalendarPhotoIndex(value: index)
                                                     }
-                                                }) {
-                                                    CachedAsyncImage(url: URL(string: photoURL)) { image in
-                                                        image
-                                                            .resizable()
-                                                            .scaledToFill()
-                                                            .frame(width: 250, height: 250)
-                                                            .clipShape(RoundedRectangle(cornerRadius: 15))
-                                                    } placeholder: {
-                                                        RoundedRectangle(cornerRadius: 15)
-                                                            .fill(Color.gray.opacity(0.2))
-                                                            .frame(width: 250, height: 250)
-                                                            .overlay(ProgressView())
-                                                    }
-                                                    .overlay(
-                                                        selectionMode ?
-                                                            RoundedRectangle(cornerRadius: 15)
-                                                                .stroke(selectedPhotoIndices.contains(index) ? Color.blue : Color.clear, lineWidth: 3)
-                                                        : nil
-                                                    )
                                                 }
-                                                .buttonStyle(PlainButtonStyle())
                                                 .onLongPressGesture(minimumDuration: 0.5) {
                                                     if !selectionMode {
                                                         selectionMode = true
@@ -697,6 +696,7 @@ struct EventDetailView: View {
                                                         .foregroundColor(selectedPhotoIndices.contains(index) ? .blue : .white)
                                                         .shadow(radius: 2)
                                                         .padding(10)
+                                                        .allowsHitTesting(false)
                                                 }
                                             }
                                         }

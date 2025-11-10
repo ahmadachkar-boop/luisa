@@ -61,7 +61,27 @@ struct PhotoGalleryView: View {
                         LazyVGrid(columns: columns, spacing: 2) {
                             ForEach(Array(viewModel.photos.enumerated()), id: \.element.id) { index, photo in
                                 ZStack(alignment: .topTrailing) {
-                                    Button(action: {
+                                    CachedAsyncImage(url: URL(string: photo.imageURL)) { image in
+                                        image
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                    } placeholder: {
+                                        Rectangle()
+                                            .fill(Color.gray.opacity(0.3))
+                                            .overlay {
+                                                ProgressView()
+                                            }
+                                    }
+                                    .frame(width: UIScreen.main.bounds.width / 3 - 2, height: UIScreen.main.bounds.width / 3 - 2)
+                                    .clipped()
+                                    .overlay(
+                                        selectionMode ?
+                                            RoundedRectangle(cornerRadius: 0)
+                                                .stroke(selectedPhotoIndices.contains(index) ? Color.blue : Color.clear, lineWidth: 3)
+                                        : nil
+                                    )
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
                                         if selectionMode {
                                             if selectedPhotoIndices.contains(index) {
                                                 selectedPhotoIndices.remove(index)
@@ -71,28 +91,7 @@ struct PhotoGalleryView: View {
                                         } else {
                                             selectedPhotoIndex = PhotoIndex(value: index)
                                         }
-                                    }) {
-                                        CachedAsyncImage(url: URL(string: photo.imageURL)) { image in
-                                            image
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fill)
-                                        } placeholder: {
-                                            Rectangle()
-                                                .fill(Color.gray.opacity(0.3))
-                                                .overlay {
-                                                    ProgressView()
-                                                }
-                                        }
-                                        .frame(width: UIScreen.main.bounds.width / 3 - 2, height: UIScreen.main.bounds.width / 3 - 2)
-                                        .clipped()
-                                        .overlay(
-                                            selectionMode ?
-                                                RoundedRectangle(cornerRadius: 0)
-                                                    .stroke(selectedPhotoIndices.contains(index) ? Color.blue : Color.clear, lineWidth: 3)
-                                            : nil
-                                        )
                                     }
-                                    .buttonStyle(PlainButtonStyle())
                                     .onLongPressGesture(minimumDuration: 0.5) {
                                         if !selectionMode {
                                             selectionMode = true
@@ -107,6 +106,7 @@ struct PhotoGalleryView: View {
                                             .foregroundColor(selectedPhotoIndices.contains(index) ? .blue : .white)
                                             .shadow(radius: 2)
                                             .padding(8)
+                                            .allowsHitTesting(false)
                                     }
                                 }
                             }
