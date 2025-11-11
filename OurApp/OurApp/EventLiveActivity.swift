@@ -47,6 +47,7 @@ struct EventLiveActivity: Widget {
                             Text(context.state.eventTitle)
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundColor(.white)
+                                .lineLimit(2)
 
                             if context.state.totalEvents > 1 {
                                 Text("Event \(context.state.currentIndex + 1) of \(context.state.totalEvents)")
@@ -70,26 +71,19 @@ struct EventLiveActivity: Widget {
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
-                    HStack {
-                        if context.state.currentIndex > 0 {
-                            Button(intent: PreviousEventIntent()) {
-                                Label("Previous", systemImage: "chevron.left")
-                                    .font(.caption)
-                            }
-                            .tint(.white.opacity(0.8))
+                    VStack(spacing: 8) {
+                        if context.state.totalEvents > 1 {
+                            Text("Swipe to see other events")
+                                .font(.system(size: 11))
+                                .foregroundColor(.white.opacity(0.6))
                         }
 
-                        Spacer()
-
-                        if context.state.currentIndex < context.state.totalEvents - 1 {
-                            Button(intent: NextEventIntent()) {
-                                Label("Next", systemImage: "chevron.right")
-                                    .font(.caption)
-                            }
-                            .tint(.white.opacity(0.8))
-                        }
+                        Text("Tap to open in app")
+                            .font(.system(size: 11))
+                            .foregroundColor(.white.opacity(0.6))
                     }
-                    .padding(.horizontal)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 8)
                 }
 
             } compactLeading: {
@@ -113,26 +107,5 @@ struct EventLiveActivity: Widget {
                     .foregroundColor(.white)
             }
         }
-    }
-}
-
-// MARK: - App Intents for Interactive Controls
-@available(iOS 16.1, *)
-struct PreviousEventIntent: AppIntent {
-    static var title: LocalizedStringResource = "Previous Event"
-
-    func perform() async throws -> some IntentResult {
-        // This will be handled by your app
-        return .result()
-    }
-}
-
-@available(iOS 16.1, *)
-struct NextEventIntent: AppIntent {
-    static var title: LocalizedStringResource = "Next Event"
-
-    func perform() async throws -> some IntentResult {
-        // This will be handled by your app
-        return .result()
     }
 }
