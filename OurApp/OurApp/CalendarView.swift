@@ -233,35 +233,6 @@ struct CalendarView: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                         }
 
-                        // Countdown Banner - Swipeable (at top)
-                        if !viewModel.upcomingEvents.isEmpty {
-                            let upcomingToShow = Array(viewModel.upcomingEvents.prefix(5))
-
-                            TabView(selection: $countdownBannerIndex) {
-                                ForEach(Array(upcomingToShow.enumerated()), id: \.element.id) { index, event in
-                                    ModernCountdownBanner(event: event, onTap: {
-                                        selectedEventForDetail = event
-                                    })
-                                    .tag(index)
-                                }
-                            }
-                            .tabViewStyle(.page(indexDisplayMode: .never))
-                            .frame(height: 50)
-                            .padding(.horizontal)
-                            .padding(.top, 8)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                            .onChange(of: countdownBannerIndex) { oldValue, newValue in
-                                // Reset timer when user manually swipes
-                                resetCountdownTimer()
-                            }
-                            .onAppear {
-                                startCountdownResetTimer()
-                            }
-                            .onDisappear {
-                                TimerManager.shared.invalidate(id: "countdownReset")
-                            }
-                        }
-
                         // Month label (always visible, swipe calendar to navigate)
                         Text(currentMonth, format: .dateTime.month(.wide).year())
                             .font(.title2)
@@ -298,6 +269,35 @@ struct CalendarView: View {
                                     }
                                 }
                         )
+
+                        // Countdown Banner - Swipeable (below calendar)
+                        if !viewModel.upcomingEvents.isEmpty {
+                            let upcomingToShow = Array(viewModel.upcomingEvents.prefix(5))
+
+                            TabView(selection: $countdownBannerIndex) {
+                                ForEach(Array(upcomingToShow.enumerated()), id: \.element.id) { index, event in
+                                    ModernCountdownBanner(event: event, onTap: {
+                                        selectedEventForDetail = event
+                                    })
+                                    .tag(index)
+                                }
+                            }
+                            .tabViewStyle(.page(indexDisplayMode: .never))
+                            .frame(height: 50)
+                            .padding(.horizontal)
+                            .padding(.bottom, 16)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .onChange(of: countdownBannerIndex) { oldValue, newValue in
+                                // Reset timer when user manually swipes
+                                resetCountdownTimer()
+                            }
+                            .onAppear {
+                                startCountdownResetTimer()
+                            }
+                            .onDisappear {
+                                TimerManager.shared.invalidate(id: "countdownReset")
+                            }
+                        }
 
                         // Month Summary Card (only for past months)
                         if isMonthInPast(currentMonth) {
@@ -383,16 +383,13 @@ struct CalendarView: View {
                         }
                     }
                 }
-                .refreshable {
-                    await refreshCalendar()
-                }
                 .blur(radius: showingToolDrawer ? 3 : 0)
                 .allowsHitTesting(!showingToolDrawer)
-                .gesture(
-                    DragGesture()
-                        .onChanged { value in
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 20)
+                        .onEnded { value in
                             // Pull down from top to open drawer
-                            if value.translation.height > 0 && value.startLocation.y < 100 {
+                            if value.translation.height > 50 && value.startLocation.y < 100 {
                                 withAnimation(.spring(response: 0.3)) {
                                     showingToolDrawer = true
                                 }
@@ -436,8 +433,7 @@ struct CalendarView: View {
                     .ignoresSafeArea()
                 }
             }
-            .navigationTitle("Our Plans")
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarHidden(true)
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView(initialDate: selectedDate) { event in
                     do {
@@ -864,20 +860,32 @@ struct ModernEventCard: View {
                             }
                         }
 
-                        // Tap for full view hint
-                        if !event.photoURLs.isEmpty {
-                            Text("Tap card again for photos & full view")
-                                .font(.caption)
-                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                                .italic()
-                                .padding(.top, 4)
-                        } else {
-                            Text("Tap card again for full view")
-                                .font(.caption)
-                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                                .italic()
-                                .padding(.top, 4)
+                        // Button to open full view
+                        Button(action: {
+                            onTap()
+                        }) {
+                            HStack {
+                                Image(systemName: !event.photoURLs.isEmpty ? "photo.fill" : "arrow.up.right.square.fill")
+                                    .font(.caption)
+                                Text(!event.photoURLs.isEmpty ? "View Photos & Details" : "View Full Details")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 0.7, green: 0.4, blue: 0.95),
+                                        Color(red: 0.55, green: 0.3, blue: 0.85)
+                                    ],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .cornerRadius(12)
                         }
+                        .padding(.top, 8)
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 16)
@@ -926,12 +934,13 @@ struct ModernEventCard: View {
                 radius: 15, x: 0, y: 4)
         .contentShape(Rectangle())
         .onTapGesture {
-            if isExpanded {
-                // If already expanded, open full detail view
-                onTap()
-            } else {
-                // First tap: expand inline
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            // Toggle expansion state
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                if isExpanded {
+                    // Collapse if already expanded
+                    expandedCardId = nil
+                } else {
+                    // Expand if collapsed
                     expandedCardId = event.id
                 }
             }
