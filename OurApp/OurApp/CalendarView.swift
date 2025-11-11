@@ -694,6 +694,7 @@ struct EventDetailView: View {
     let onDelete: () -> Void
     @Environment(\.dismiss) var dismiss
     @State private var showingDeleteAlert = false
+    @State private var showingEditView = false
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var isUploadingPhotos = false
     @State private var showingErrorAlert = false
@@ -733,33 +734,51 @@ struct EventDetailView: View {
                 ScrollView {
                     VStack(spacing: 24) {
                         // Date display
-                        VStack(spacing: 8) {
-                            Text(event.date, format: .dateTime.day())
-                                .font(.system(size: 60, weight: .bold))
-                                .foregroundColor(.white)
+                        ZStack {
+                            // Background (either custom image or gradient)
+                            if let backgroundURL = currentEvent.backgroundImageURL {
+                                CachedAsyncImage(url: URL(string: backgroundURL)) { phase in
+                                    if let image = phase.image {
+                                        image
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                            .scaleEffect(currentEvent.backgroundScale ?? 1.0)
+                                            .offset(
+                                                x: CGFloat(currentEvent.backgroundOffsetX ?? 0.0),
+                                                y: CGFloat(currentEvent.backgroundOffsetY ?? 0.0)
+                                            )
+                                    } else {
+                                        defaultGradientBackground(isSpecial: currentEvent.isSpecial)
+                                    }
+                                }
+                            } else {
+                                defaultGradientBackground(isSpecial: currentEvent.isSpecial)
+                            }
 
-                            Text(event.date, format: .dateTime.month(.wide).year())
-                                .font(.title3)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.white.opacity(0.95))
+                            // Date text overlay
+                            VStack(spacing: 8) {
+                                Text(currentEvent.date, format: .dateTime.day())
+                                    .font(.system(size: 60, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
 
-                            Text(event.date, format: .dateTime.weekday(.wide))
-                                .font(.subheadline)
-                                .foregroundColor(.white.opacity(0.9))
+                                Text(currentEvent.date, format: .dateTime.month(.wide).year())
+                                    .font(.title3)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white)
+                                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+
+                                Text(currentEvent.date, format: .dateTime.weekday(.wide))
+                                    .font(.subheadline)
+                                    .foregroundColor(.white)
+                                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+                            }
+                            .padding(.vertical, 30)
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 30)
-                        .background(
-                            LinearGradient(
-                                colors: event.isSpecial ?
-                                    [Color(red: 0.8, green: 0.3, blue: 0.7), Color(red: 0.6, green: 0.2, blue: 0.9)] :
-                                    [Color(red: 0.5, green: 0.3, blue: 0.8), Color(red: 0.4, green: 0.2, blue: 0.7)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .cornerRadius(20)
-                        .shadow(color: event.isSpecial ? Color.purple.opacity(0.4) : Color.black.opacity(0.2),
+                        .frame(height: 150)
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
+                        .shadow(color: currentEvent.isSpecial ? Color.purple.opacity(0.4) : Color.black.opacity(0.2),
                                 radius: 15, x: 0, y: 5)
                         .padding(.horizontal)
 
@@ -990,11 +1009,20 @@ struct EventDetailView: View {
                     }
 
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Button(role: .destructive) {
-                            showingDeleteAlert = true
-                        } label: {
-                            Image(systemName: "trash")
-                                .foregroundColor(.red)
+                        HStack(spacing: 16) {
+                            Button {
+                                showingEditView = true
+                            } label: {
+                                Image(systemName: "pencil")
+                                    .foregroundColor(Color(red: 0.6, green: 0.3, blue: 0.8))
+                            }
+
+                            Button(role: .destructive) {
+                                showingDeleteAlert = true
+                            } label: {
+                                Image(systemName: "trash")
+                                    .foregroundColor(.red)
+                            }
                         }
                     }
                 }
@@ -1043,6 +1071,20 @@ struct EventDetailView: View {
                         }
                     }
                 )
+            }
+            .sheet(isPresented: $showingEditView) {
+                EditEventView(event: currentEvent) { updatedEvent in
+                    Task {
+                        do {
+                            try await FirebaseManager.shared.updateEvent(updatedEvent)
+                            await MainActor.run {
+                                currentEvent = updatedEvent
+                            }
+                        } catch {
+                            print("❌ Failed to update event: \(error)")
+                        }
+                    }
+                }
             }
         }
     }
@@ -1223,6 +1265,16 @@ struct EventDetailView: View {
         isUploadingPhotos = false
         photoPickerItems = []
     }
+
+    private func defaultGradientBackground(isSpecial: Bool) -> some View {
+        LinearGradient(
+            colors: isSpecial ?
+                [Color(red: 0.8, green: 0.3, blue: 0.7), Color(red: 0.6, green: 0.2, blue: 0.9)] :
+                [Color(red: 0.5, green: 0.3, blue: 0.8), Color(red: 0.4, green: 0.2, blue: 0.7)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 }
 
 // MARK: - Add Event View (keeping existing)
@@ -1307,6 +1359,265 @@ struct AddEventView: View {
     }
 }
 
+// MARK: - Edit Event View
+struct EditEventView: View {
+    @Environment(\.dismiss) var dismiss
+    let event: CalendarEvent
+    let onSave: (CalendarEvent) async -> Void
+
+    @State private var title: String
+    @State private var description: String
+    @State private var location: String
+    @State private var date: Date
+    @State private var isSpecial: Bool
+    @State private var isSaving = false
+    @State private var backgroundImageItem: PhotosPickerItem?
+    @State private var isUploadingBackground = false
+    @State private var backgroundImageURL: String?
+    @State private var backgroundOffsetX: Double
+    @State private var backgroundOffsetY: Double
+    @State private var backgroundScale: Double
+    @State private var showingBackgroundPicker = false
+
+    init(event: CalendarEvent, onSave: @escaping (CalendarEvent) async -> Void) {
+        self.event = event
+        self.onSave = onSave
+        _title = State(initialValue: event.title)
+        _description = State(initialValue: event.description)
+        _location = State(initialValue: event.location)
+        _date = State(initialValue: event.date)
+        _isSpecial = State(initialValue: event.isSpecial)
+        _backgroundImageURL = State(initialValue: event.backgroundImageURL)
+        _backgroundOffsetX = State(initialValue: event.backgroundOffsetX ?? 0.0)
+        _backgroundOffsetY = State(initialValue: event.backgroundOffsetY ?? 0.0)
+        _backgroundScale = State(initialValue: event.backgroundScale ?? 1.0)
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("Details") {
+                    TextField("Title", text: $title)
+                    TextField("Description (optional)", text: $description, axis: .vertical)
+                        .lineLimit(3...6)
+                }
+
+                Section("When & Where") {
+                    DatePicker("Date & Time", selection: $date)
+                    TextField("Location (optional)", text: $location)
+                }
+
+                Section {
+                    Toggle("Special Event 💜", isOn: $isSpecial)
+                }
+
+                Section("Event Card Background") {
+                    // Preview of current background
+                    VStack(spacing: 8) {
+                        Text("Preview")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        // Mini preview of the event card
+                        ZStack {
+                            if let backgroundURL = backgroundImageURL {
+                                CachedAsyncImage(url: URL(string: backgroundURL)) { phase in
+                                    if let image = phase.image {
+                                        image
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                            .scaleEffect(backgroundScale)
+                                            .offset(x: backgroundOffsetX, y: backgroundOffsetY)
+                                    } else {
+                                        defaultBackground
+                                    }
+                                }
+                            } else {
+                                defaultBackground
+                            }
+
+                            // Event info overlay
+                            VStack(spacing: 4) {
+                                Text(date, format: .dateTime.day())
+                                    .font(.system(size: 40, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+
+                                Text(date, format: .dateTime.month(.wide).year())
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white)
+                                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                            }
+                        }
+                        .frame(height: 120)
+                        .frame(maxWidth: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 15))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 15)
+                                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                        )
+                    }
+
+                    // Background options
+                    Button(action: {
+                        showingBackgroundPicker = true
+                    }) {
+                        HStack {
+                            Image(systemName: backgroundImageURL == nil ? "photo.badge.plus" : "photo")
+                            Text(backgroundImageURL == nil ? "Add Background Image" : "Change Background Image")
+                        }
+                    }
+
+                    if backgroundImageURL != nil {
+                        Button(role: .destructive, action: {
+                            backgroundImageURL = nil
+                            backgroundOffsetX = 0
+                            backgroundOffsetY = 0
+                            backgroundScale = 1.0
+                        }) {
+                            HStack {
+                                Image(systemName: "trash")
+                                Text("Remove Background Image")
+                            }
+                        }
+                    }
+
+                    // Image positioning controls (only show if image exists)
+                    if backgroundImageURL != nil {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Image Position")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("Horizontal")
+                                        .font(.caption2)
+                                        .frame(width: 70, alignment: .leading)
+                                    Slider(value: $backgroundOffsetX, in: -100...100)
+                                    Text("\(Int(backgroundOffsetX))")
+                                        .font(.caption2)
+                                        .frame(width: 30)
+                                }
+
+                                HStack {
+                                    Text("Vertical")
+                                        .font(.caption2)
+                                        .frame(width: 70, alignment: .leading)
+                                    Slider(value: $backgroundOffsetY, in: -100...100)
+                                    Text("\(Int(backgroundOffsetY))")
+                                        .font(.caption2)
+                                        .frame(width: 30)
+                                }
+
+                                HStack {
+                                    Text("Scale")
+                                        .font(.caption2)
+                                        .frame(width: 70, alignment: .leading)
+                                    Slider(value: $backgroundScale, in: 0.5...3.0)
+                                    Text(String(format: "%.1f", backgroundScale))
+                                        .font(.caption2)
+                                        .frame(width: 30)
+                                }
+                            }
+
+                            Button("Reset Position") {
+                                withAnimation {
+                                    backgroundOffsetX = 0
+                                    backgroundOffsetY = 0
+                                    backgroundScale = 1.0
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Edit Event")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if isSaving || isUploadingBackground {
+                        ProgressView()
+                    } else {
+                        Button("Save") {
+                            Task {
+                                await saveEvent()
+                            }
+                        }
+                        .disabled(title.isEmpty)
+                    }
+                }
+            }
+            .photosPicker(isPresented: $showingBackgroundPicker, selection: $backgroundImageItem, matching: .images)
+            .onChange(of: backgroundImageItem) { oldValue, newValue in
+                Task {
+                    await loadBackgroundImage()
+                }
+            }
+        }
+    }
+
+    var defaultBackground: some View {
+        LinearGradient(
+            colors: isSpecial ?
+                [Color(red: 0.8, green: 0.3, blue: 0.7), Color(red: 0.6, green: 0.2, blue: 0.9)] :
+                [Color(red: 0.5, green: 0.3, blue: 0.8), Color(red: 0.4, green: 0.2, blue: 0.7)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    func loadBackgroundImage() async {
+        guard let item = backgroundImageItem else { return }
+
+        isUploadingBackground = true
+
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self) else {
+                isUploadingBackground = false
+                return
+            }
+
+            // Upload to Firebase Storage
+            let url = try await FirebaseManager.shared.uploadEventPhoto(imageData: data)
+            backgroundImageURL = url
+            print("✅ Background image uploaded: \(url)")
+        } catch {
+            print("❌ Failed to upload background image: \(error)")
+        }
+
+        isUploadingBackground = false
+    }
+
+    func saveEvent() async {
+        isSaving = true
+
+        var updatedEvent = event
+        updatedEvent.title = title
+        updatedEvent.description = description
+        updatedEvent.date = date
+        updatedEvent.location = location
+        updatedEvent.isSpecial = isSpecial
+        updatedEvent.backgroundImageURL = backgroundImageURL
+        updatedEvent.backgroundOffsetX = backgroundOffsetX
+        updatedEvent.backgroundOffsetY = backgroundOffsetY
+        updatedEvent.backgroundScale = backgroundScale
+
+        await onSave(updatedEvent)
+        isSaving = false
+        dismiss()
+    }
+}
+
 // MARK: - View Models
 class CalendarViewModel: ObservableObject {
     @Published var events: [CalendarEvent] = []
@@ -1339,6 +1650,10 @@ class CalendarViewModel: ObservableObject {
 
     func addEvent(_ event: CalendarEvent) async throws {
         try await firebaseManager.addCalendarEvent(event)
+    }
+
+    func updateEvent(_ event: CalendarEvent) async throws {
+        try await firebaseManager.updateEvent(event)
     }
 
     func deleteEvent(_ event: CalendarEvent) async throws {
