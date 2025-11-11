@@ -337,7 +337,7 @@ struct CalendarView: View {
                             EmptyStateView(isUpcoming: selectedTab == 0)
                                 .padding(.top, 60)
                         } else {
-                            List {
+                            LazyVStack(spacing: 12) {
                                 ForEach(eventsToShow) { event in
                                     ModernEventCard(
                                         event: event,
@@ -355,10 +355,7 @@ struct CalendarView: View {
                                             }
                                         }
                                     )
-                                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Color.clear)
-                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    .contextMenu {
                                         Button(role: .destructive) {
                                             Task {
                                                 do {
@@ -374,8 +371,7 @@ struct CalendarView: View {
                                     }
                                 }
                             }
-                            .listStyle(.plain)
-                            .scrollContentBackground(.hidden)
+                            .padding(.horizontal)
                             .padding(.bottom, 100)
                         }
                     }
