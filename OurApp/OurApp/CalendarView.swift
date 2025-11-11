@@ -92,7 +92,7 @@ struct CalendarView: View {
 
                             // Countdown Banner - Swipeable
                             if !viewModel.upcomingEvents.isEmpty {
-                                let upcomingToShow = Array(viewModel.upcomingEvents.prefix(5))
+                                let upcomingToShow = Array(viewModel.upcomingEvents.prefix(10))
 
                                 TabView(selection: $countdownBannerIndex) {
                                     ForEach(Array(upcomingToShow.enumerated()), id: \.element.id) { index, event in
@@ -102,7 +102,7 @@ struct CalendarView: View {
                                         .tag(index)
                                     }
                                 }
-                                .tabViewStyle(.page(indexDisplayMode: upcomingToShow.count > 1 ? .automatic : .never))
+                                .tabViewStyle(.page(indexDisplayMode: .never))
                                 .frame(height: 80)
                                 .padding(.horizontal)
                                 .transition(.move(edge: .top).combined(with: .opacity))
