@@ -14,16 +14,19 @@ import SwiftUI
     - Create a new project or select existing
     - Enable Google Calendar API
     - Create OAuth 2.0 Client ID (iOS)
-    - Download and add GoogleService-Info.plist to project
+    - Download the Client ID (looks like: XXXXXXXXXX-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com)
 
  3. Add URL scheme to Info.plist:
     - Key: URL types
     - Add your reversed client ID as URL scheme
 
- 4. Import required frameworks (uncomment when SDK is added):
-    // import GoogleSignIn
-    // import GoogleAPIClientForREST
+ 4. Add your Client ID to the signIn() method below
+
+ This implementation uses URLSession for direct REST API calls to Google Calendar,
+ so you don't need the GoogleAPIClientForREST library.
  */
+
+import GoogleSignIn
 
 @MainActor
 class GoogleCalendarManager: ObservableObject {
@@ -71,28 +74,25 @@ class GoogleCalendarManager: ObservableObject {
     // MARK: - Authentication
 
     func checkSignInStatus() {
-        // TODO: Check if user is signed in to Google
-        // Uncomment when Google Sign-In SDK is added:
-        /*
         if let user = GIDSignIn.sharedInstance.currentUser {
             isSignedIn = user.grantedScopes?.contains("https://www.googleapis.com/auth/calendar") ?? false
+        } else {
+            isSignedIn = false
         }
-        */
-
-        // Placeholder: Check UserDefaults for demo
-        isSignedIn = UserDefaults.standard.bool(forKey: "googleSignedIn")
     }
 
     func signIn() async throws {
-        // TODO: Implement Google Sign-In with Calendar scope
-        // Uncomment when Google Sign-In SDK is added:
-        /*
         guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
               let rootViewController = windowScene.windows.first?.rootViewController else {
             throw GoogleCalendarError.noViewController
         }
 
-        let signInConfig = GIDConfiguration(clientID: "YOUR_CLIENT_ID")
+        // IMPORTANT: Replace YOUR_CLIENT_ID with your actual Google Cloud OAuth Client ID
+        // Example: 123456789-abcdefghijklmnopqrstuvwxyz.apps.googleusercontent.com
+        let clientID = "YOUR_CLIENT_ID"
+
+        let signInConfig = GIDConfiguration(clientID: clientID)
+        GIDSignIn.sharedInstance.configuration = signInConfig
 
         let result = try await GIDSignIn.sharedInstance.signIn(
             withPresenting: rootViewController,
@@ -101,22 +101,10 @@ class GoogleCalendarManager: ObservableObject {
         )
 
         isSignedIn = true
-        */
-
-        // Placeholder implementation for demo
-        try await Task.sleep(nanoseconds: 1_000_000_000) // Simulate API call
-        UserDefaults.standard.set(true, forKey: "googleSignedIn")
-        isSignedIn = true
     }
 
     func signOut() {
-        // TODO: Sign out from Google
-        // Uncomment when Google Sign-In SDK is added:
-        /*
         GIDSignIn.sharedInstance.signOut()
-        */
-
-        UserDefaults.standard.set(false, forKey: "googleSignedIn")
         isSignedIn = false
         lastSyncDate = nil
         UserDefaults.standard.removeObject(forKey: "lastSyncDate")
@@ -129,63 +117,213 @@ class GoogleCalendarManager: ObservableObject {
             throw GoogleCalendarError.notSignedIn
         }
 
+        guard let user = GIDSignIn.sharedInstance.currentUser else {
+            throw GoogleCalendarError.notSignedIn
+        }
+
+        // Refresh access token if needed
+        try await refreshTokenIfNeeded(user: user)
+
         isSyncing = true
         defer { isSyncing = false }
 
-        // TODO: Implement actual sync logic
-        // This would involve:
-        // 1. Fetching events from Google Calendar API
-        // 2. Comparing with local Firebase events
-        // 3. Uploading new local events to Google Calendar
-        // 4. Downloading new Google Calendar events to Firebase
-        // 5. Resolving conflicts
+        // Fetch all local events from Firebase
+        let localEvents = try await firebaseManager.fetchAllEvents()
 
-        // Placeholder implementation
-        try await Task.sleep(nanoseconds: 2_000_000_000) // Simulate API call
+        // Determine sync time range
+        let calendar = Calendar.current
+        var dateComponents = DateComponents()
+
+        let startDate: Date
+        if syncPast {
+            dateComponents.year = -1
+            startDate = calendar.date(byAdding: dateComponents, to: Date()) ?? Date()
+        } else {
+            startDate = Date()
+        }
+
+        let endDate: Date
+        if syncUpcoming {
+            dateComponents.year = 1
+            endDate = calendar.date(byAdding: dateComponents, to: Date()) ?? Date()
+        } else {
+            endDate = Date()
+        }
+
+        // Fetch events from Google Calendar
+        let googleEvents = try await fetchGoogleCalendarEvents(
+            user: user,
+            startDate: startDate,
+            endDate: endDate
+        )
+
+        // Upload new local events to Google Calendar
+        for event in localEvents where event.googleCalendarId == nil {
+            if (syncUpcoming && event.date >= Date()) || (syncPast && event.date < Date()) {
+                let googleEventId = try await uploadEventToGoogle(event, user: user)
+                // Update local event with Google Calendar ID
+                var updatedEvent = event
+                updatedEvent.googleCalendarId = googleEventId
+                updatedEvent.lastSyncedAt = Date()
+                try await firebaseManager.updateEvent(updatedEvent)
+            }
+        }
+
+        // Update existing synced events
+        for event in localEvents where event.googleCalendarId != nil {
+            if let lastSynced = event.lastSyncedAt,
+               event.date > lastSynced {
+                try await updateEventInGoogle(event, googleEventId: event.googleCalendarId!, user: user)
+            }
+        }
 
         lastSyncDate = Date()
         UserDefaults.standard.set(lastSyncDate, forKey: "lastSyncDate")
+    }
 
-        // Actual implementation would be something like:
-        /*
-        let service = GTLRCalendarService()
-        service.authorizer = GIDSignIn.sharedInstance.currentUser?.fetcherAuthorizer
+    private func refreshTokenIfNeeded(user: GIDGoogleUser) async throws {
+        if user.accessToken.expirationDate?.timeIntervalSinceNow ?? 0 < 300 {
+            try await user.refreshTokensIfNeeded()
+        }
+    }
 
-        // Fetch events from Google Calendar
-        let query = GTLRCalendarQuery_EventsList.query(withCalendarId: "primary")
-        query.timeMin = GTLRDateTime(date: Date())
+    private func fetchGoogleCalendarEvents(user: GIDGoogleUser, startDate: Date, endDate: Date) async throws -> [[String: Any]] {
+        let accessToken = user.accessToken.tokenString
 
-        let ticket = service.executeQuery(query) { (ticket, response, error) in
-            // Handle response
+        // Format dates for API (RFC3339)
+        let formatter = ISO8601DateFormatter()
+        let timeMin = formatter.string(from: startDate)
+        let timeMax = formatter.string(from: endDate)
+
+        var components = URLComponents(string: "https://www.googleapis.com/calendar/v3/calendars/primary/events")!
+        components.queryItems = [
+            URLQueryItem(name: "timeMin", value: timeMin),
+            URLQueryItem(name: "timeMax", value: timeMax),
+            URLQueryItem(name: "singleEvents", value: "true"),
+            URLQueryItem(name: "orderBy", value: "startTime")
+        ]
+
+        var request = URLRequest(url: components.url!)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw GoogleCalendarError.apiError("Failed to fetch events")
         }
 
-        // Upload local events to Google Calendar
-        for event in localEvents {
-            if event.googleCalendarId == nil {
-                try await uploadEventToGoogle(event)
-            }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = json["items"] as? [[String: Any]] else {
+            return []
         }
-        */
+
+        return items
     }
 
-    func uploadEventToGoogle(_ event: CalendarEvent) async throws -> String {
-        // TODO: Upload a single event to Google Calendar
-        // Returns the Google Calendar event ID
+    func uploadEventToGoogle(_ event: CalendarEvent, user: GIDGoogleUser) async throws -> String {
+        let accessToken = user.accessToken.tokenString
 
-        try await Task.sleep(nanoseconds: 500_000_000)
-        return "google_event_\(UUID().uuidString)"
+        let url = URL(string: "https://www.googleapis.com/calendar/v3/calendars/primary/events")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        // Create event body
+        let formatter = ISO8601DateFormatter()
+        let eventBody: [String: Any] = [
+            "summary": event.title,
+            "description": event.description,
+            "location": event.location,
+            "start": [
+                "dateTime": formatter.string(from: event.date),
+                "timeZone": TimeZone.current.identifier
+            ],
+            "end": [
+                "dateTime": formatter.string(from: event.date.addingTimeInterval(3600)), // 1 hour default
+                "timeZone": TimeZone.current.identifier
+            ]
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: eventBody)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw GoogleCalendarError.apiError("Failed to create event")
+        }
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let eventId = json["id"] as? String else {
+            throw GoogleCalendarError.apiError("Invalid response")
+        }
+
+        return eventId
     }
 
-    func deleteEventFromGoogle(_ googleEventId: String) async throws {
-        // TODO: Delete event from Google Calendar
+    func deleteEventFromGoogle(_ googleEventId: String, user: GIDGoogleUser? = nil) async throws {
+        let user = user ?? GIDSignIn.sharedInstance.currentUser
+        guard let user = user else {
+            throw GoogleCalendarError.notSignedIn
+        }
 
-        try await Task.sleep(nanoseconds: 500_000_000)
+        try await refreshTokenIfNeeded(user: user)
+        let accessToken = user.accessToken.tokenString
+
+        let url = URL(string: "https://www.googleapis.com/calendar/v3/calendars/primary/events/\(googleEventId)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 204 else {
+            throw GoogleCalendarError.apiError("Failed to delete event")
+        }
     }
 
-    func updateEventInGoogle(_ event: CalendarEvent, googleEventId: String) async throws {
-        // TODO: Update existing event in Google Calendar
+    func updateEventInGoogle(_ event: CalendarEvent, googleEventId: String, user: GIDGoogleUser? = nil) async throws {
+        let user = user ?? GIDSignIn.sharedInstance.currentUser
+        guard let user = user else {
+            throw GoogleCalendarError.notSignedIn
+        }
 
-        try await Task.sleep(nanoseconds: 500_000_000)
+        try await refreshTokenIfNeeded(user: user)
+        let accessToken = user.accessToken.tokenString
+
+        let url = URL(string: "https://www.googleapis.com/calendar/v3/calendars/primary/events/\(googleEventId)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        // Create event body
+        let formatter = ISO8601DateFormatter()
+        let eventBody: [String: Any] = [
+            "summary": event.title,
+            "description": event.description,
+            "location": event.location,
+            "start": [
+                "dateTime": formatter.string(from: event.date),
+                "timeZone": TimeZone.current.identifier
+            ],
+            "end": [
+                "dateTime": formatter.string(from: event.date.addingTimeInterval(3600)),
+                "timeZone": TimeZone.current.identifier
+            ]
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: eventBody)
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw GoogleCalendarError.apiError("Failed to update event")
+        }
     }
 }
 
@@ -217,42 +355,46 @@ enum GoogleCalendarError: LocalizedError {
  DETAILED SETUP STEPS:
 
  1. Add Swift Package Dependencies:
-    a. In Xcode: File > Add Package Dependencies
-    b. Add Google Sign-In: https://github.com/google/GoogleSignIn-iOS
-    c. Add Google API Client: https://github.com/google/google-api-objectivec-client-for-rest
+    In Xcode: File > Add Package Dependencies
+    Add Google Sign-In: https://github.com/google/GoogleSignIn-iOS
+    Version: 7.0.0 or later
 
  2. Google Cloud Console Setup:
     a. Go to https://console.cloud.google.com
     b. Create a new project or select existing
     c. Enable APIs:
        - Google Calendar API
-       - Google Sign-In API
+       - Google Sign-In API (if available)
     d. Create credentials:
        - Create OAuth 2.0 Client ID
        - Application type: iOS
-       - Bundle ID: com.yourcompany.OurApp (or your actual bundle ID)
-       - Download the client configuration
+       - Bundle ID: (use your actual bundle ID from Xcode)
+       - Copy the Client ID (format: XXXXXXXXXX-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com)
 
  3. Configure Xcode Project:
-    a. Add GoogleService-Info.plist to project
+    a. Update the signIn() method above with your Client ID
     b. In Info.plist, add URL scheme:
        <key>CFBundleURLTypes</key>
        <array>
          <dict>
            <key>CFBundleURLSchemes</key>
            <array>
-             <string>com.googleusercontent.apps.YOUR-CLIENT-ID</string>
+             <string>com.googleusercontent.apps.YOUR-CLIENT-ID-HERE</string>
            </array>
          </dict>
        </array>
     c. Update OurAppApp.swift to handle URL:
+       import GoogleSignIn
+
        .onOpenURL { url in
            GIDSignIn.sharedInstance.handle(url)
        }
 
- 4. Update CalendarEvent Model:
-    Add field to track Google Calendar sync:
-    var googleCalendarId: String? // ID of event in Google Calendar
-
- 5. Uncomment the TODO sections in this file and implement actual API calls
+ 4. Test the Integration:
+    - Build and run the app
+    - Go to Settings tab
+    - Tap "Connect Google Calendar"
+    - Sign in with Google account
+    - Grant calendar permissions
+    - Try "Sync Now" to test
  */

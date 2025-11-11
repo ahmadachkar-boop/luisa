@@ -19,13 +19,14 @@ The foundation for Google Calendar sync has been implemented, but requires exter
 
 1. Open your project in Xcode
 2. Go to **File → Add Package Dependencies**
-3. Add the following packages:
+3. Add the following package:
    ```
    https://github.com/google/GoogleSignIn-iOS
-   https://github.com/google/google-api-objectivec-client-for-rest
    ```
-4. Select version: **7.0.0 or later** for GoogleSignIn
+4. Select version: **7.0.0 or later**
 5. Add to target: **OurApp**
+
+**Note:** This implementation uses URLSession for direct REST API calls to Google Calendar, so you don't need the GoogleAPIClientForREST library.
 
 ### Step 2: Set Up Google Cloud Project
 
@@ -50,18 +51,13 @@ The foundation for Google Calendar sync has been implemented, but requires exter
    - Bundle ID: Enter your app's bundle identifier (found in Xcode → Target → General → Bundle Identifier)
    - Click "Create"
 
-5. **Download Configuration:**
-   - Download the `GoogleService-Info.plist` file
-   - Or note down your **Client ID** (looks like: `XXXXXXXXXX-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com`)
+5. **Copy Your Client ID:**
+   - Copy your **Client ID** (format: `XXXXXXXXXX-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com`)
+   - You'll need this for Step 3 and Step 4
 
 ### Step 3: Configure Xcode Project
 
-1. **Add GoogleService-Info.plist:**
-   - Drag the downloaded `GoogleService-Info.plist` into your Xcode project
-   - Ensure "Copy items if needed" is checked
-   - Add to target: **OurApp**
-
-2. **Add URL Scheme:**
+1. **Add URL Scheme:**
    - Open `Info.plist`
    - Add new row: **URL types** (Array)
    - Inside that, add Item 0 (Dictionary)
@@ -84,61 +80,42 @@ The foundation for Google Calendar sync has been implemented, but requires exter
    </array>
    ```
 
-### Step 4: Update App Delegate
+### Step 4: Add Your Client ID to the Code
+
+1. Open `GoogleCalendarManager.swift`
+2. Find the `signIn()` method (around line 92)
+3. Replace `"YOUR_CLIENT_ID"` with your actual Client ID:
+   ```swift
+   let clientID = "XXXXXXXXXX-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
+   ```
+
+### Step 5: Verify App Delegate Integration
+
+The app delegate has already been updated for you. You can verify:
 
 1. Open `OurAppApp.swift`
-2. Add Google Sign-In import:
+2. Confirm it has the Google Sign-In import and URL handler:
    ```swift
+   import SwiftUI
+   import FirebaseCore
    import GoogleSignIn
-   ```
-3. Add URL handler:
-   ```swift
-   .onOpenURL { url in
-       GIDSignIn.sharedInstance.handle(url)
+
+   @main
+   struct OurAppApp: App {
+       // ... initialization code ...
+
+       var body: some Scene {
+           WindowGroup {
+               ContentView()
+                   .onOpenURL { url in
+                       GIDSignIn.sharedInstance.handle(url)
+                   }
+           }
+       }
    }
    ```
 
-Example:
-```swift
-import SwiftUI
-import GoogleSignIn
-
-@main
-struct OurAppApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .onOpenURL { url in
-                    GIDSignIn.sharedInstance.handle(url)
-                }
-        }
-    }
-}
-```
-
-### Step 5: Implement Google Calendar API Calls
-
-Open `GoogleCalendarManager.swift` and uncomment the TODO sections:
-
-1. **Uncomment imports:**
-   ```swift
-   import GoogleSignIn
-   import GoogleAPIClientForREST
-   ```
-
-2. **Update `signIn()` method** - Replace placeholder with actual Google Sign-In
-3. **Update `syncEvents()` method** - Implement actual API calls
-4. **Update other sync methods** - Complete upload, update, delete operations
-
-Reference the detailed comments in `GoogleCalendarManager.swift` for implementation guidance.
-
-### Step 6: Handle Calendar Permissions
-
-Add Calendar usage description to Info.plist:
-```xml
-<key>NSCalendarsUsageDescription</key>
-<string>We need access to sync your events with Google Calendar</string>
-```
+### Step 6: Test the Integration
 
 ## Testing the Integration
 
