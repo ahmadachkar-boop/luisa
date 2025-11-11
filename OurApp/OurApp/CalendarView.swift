@@ -169,6 +169,8 @@ struct CalendarView: View {
     @State private var selectedTags: Set<String> = []
     @State private var showingFilterSheet = false
     @State private var showingSearch = false
+    @State private var showingToolDrawer = false
+    @State private var expandedCardId: UUID? = nil
 
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
@@ -233,50 +235,16 @@ struct CalendarView: View {
 
                         // Header with month selector
                         VStack(spacing: 16) {
-                            // Month navigation
-                            HStack {
-                                Button(action: {
-                                    withAnimation(.spring(response: 0.3)) {
-                                        currentMonth = Calendar.current.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
-                                    }
-                                }) {
-                                    Image(systemName: "chevron.left")
-                                        .font(.title3)
-                                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                                        .frame(width: 44, height: 44)
-                                }
-
-                                Spacer()
-
-                                VStack(spacing: 2) {
-                                    Text(currentMonth, format: .dateTime.month(.wide))
-                                        .font(.title2)
-                                        .fontWeight(.bold)
-                                        .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
-
-                                    Text(currentMonth, format: .dateTime.year())
-                                        .font(.caption)
-                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                                }
-
-                                Spacer()
-
-                                Button(action: {
-                                    withAnimation(.spring(response: 0.3)) {
-                                        currentMonth = Calendar.current.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
-                                    }
-                                }) {
-                                    Image(systemName: "chevron.right")
-                                        .font(.title3)
-                                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                                        .frame(width: 44, height: 44)
-                                }
-                            }
-                            .padding(.horizontal)
+                            // Month label (always visible, swipe calendar to navigate)
+                            Text(currentMonth, format: .dateTime.month(.wide).year())
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
+                                .padding(.horizontal)
 
                             // Countdown Banner - Swipeable
                             if !viewModel.upcomingEvents.isEmpty {
-                                let upcomingToShow = Array(viewModel.upcomingEvents.prefix(10))
+                                let upcomingToShow = Array(viewModel.upcomingEvents.prefix(5))
 
                                 TabView(selection: $countdownBannerIndex) {
                                     ForEach(Array(upcomingToShow.enumerated()), id: \.element.id) { index, event in
@@ -314,6 +282,24 @@ struct CalendarView: View {
                         )
                         .padding(.horizontal)
                         .padding(.bottom, 16)
+                        .gesture(
+                            DragGesture(minimumDistance: 30)
+                                .onEnded { value in
+                                    let horizontalAmount = value.translation.width
+
+                                    if horizontalAmount < -50 {
+                                        // Swipe left - next month
+                                        withAnimation(.spring(response: 0.3)) {
+                                            currentMonth = Calendar.current.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
+                                        }
+                                    } else if horizontalAmount > 50 {
+                                        // Swipe right - previous month
+                                        withAnimation(.spring(response: 0.3)) {
+                                            currentMonth = Calendar.current.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
+                                        }
+                                    }
+                                }
+                        )
 
                         // Month Summary Card (only for past months)
                         if isMonthInPast(currentMonth) {
@@ -363,6 +349,8 @@ struct CalendarView: View {
                                         event: event,
                                         onTap: {
                                             selectedEventForDetail = event
+                                            // Close expansion when opening detail
+                                            expandedCardId = nil
                                         },
                                         onDelete: {
                                             Task {
@@ -373,7 +361,8 @@ struct CalendarView: View {
                                                     showError = true
                                                 }
                                             }
-                                        }
+                                        },
+                                        expandedCardId: $expandedCardId
                                     )
                                     .contextMenu {
                                         Button(role: .destructive) {
@@ -399,71 +388,58 @@ struct CalendarView: View {
                 .refreshable {
                     await refreshCalendar()
                 }
-
-                // Floating action button
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Button(action: {
-                            showingAddEvent = true
-                        }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "plus")
-                                    .font(.title3)
-                                    .fontWeight(.semibold)
-                                Text("New Plan")
-                                    .fontWeight(.semibold)
+                .blur(radius: showingToolDrawer ? 3 : 0)
+                .allowsHitTesting(!showingToolDrawer)
+                .gesture(
+                    DragGesture()
+                        .onChanged { value in
+                            // Pull down from top to open drawer
+                            if value.translation.height > 0 && value.startLocation.y < 100 {
+                                withAnimation(.spring(response: 0.3)) {
+                                    showingToolDrawer = true
+                                }
                             }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 16)
-                            .background(
-                                LinearGradient(
-                                    colors: [
-                                        Color(red: 0.7, green: 0.4, blue: 0.95),
-                                        Color(red: 0.55, green: 0.3, blue: 0.85)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .cornerRadius(.cornerRadiusLarge)
-                            .shadow(color: Color.purple.opacity(0.4), radius: 15, x: 0, y: 8)
                         }
-                        .padding(.trailing, 24)
-                        .padding(.bottom, 24)
+                )
+
+                // TOOL DRAWER OVERLAY
+                if showingToolDrawer {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.3)) {
+                                showingToolDrawer = false
+                            }
+                        }
+
+                    VStack {
+                        ToolDrawerView(
+                            showingSearch: $showingSearch,
+                            showingFilterSheet: $showingFilterSheet,
+                            onNewPlan: {
+                                showingToolDrawer = false
+                                showingAddEvent = true
+                            },
+                            onRefresh: {
+                                Task {
+                                    await refreshCalendar()
+                                }
+                            },
+                            onClose: {
+                                withAnimation(.spring(response: 0.3)) {
+                                    showingToolDrawer = false
+                                }
+                            }
+                        )
+                        .transition(.move(edge: .top).combined(with: .opacity))
+
+                        Spacer()
                     }
+                    .ignoresSafeArea()
                 }
             }
             .navigationTitle("Our Plans")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack(spacing: 16) {
-                        Button(action: {
-                            showingSearch = true
-                        }) {
-                            Image(systemName: "magnifyingglass")
-                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                        }
-
-                        Button(action: {
-                            showingFilterSheet = true
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: selectedTags.isEmpty ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
-                                if !selectedTags.isEmpty {
-                                    Text("\(selectedTags.count)")
-                                        .font(.caption2)
-                                        .fontWeight(.bold)
-                                }
-                            }
-                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                        }
-                    }
-                }
-            }
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView(initialDate: selectedDate) { event in
                     do {
@@ -748,115 +724,158 @@ struct ModernEventCard: View {
     let event: CalendarEvent
     let onTap: () -> Void
     let onDelete: () -> Void
+    @Binding var expandedCardId: UUID?
+
+    private var isExpanded: Bool {
+        expandedCardId == event.id
+    }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            // Date badge
-            VStack(spacing: 4) {
-                Text(event.date, format: .dateTime.day())
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundColor(.white)
+        VStack(alignment: .leading, spacing: 0) {
+            // MAIN CARD CONTENT (always visible)
+            HStack(alignment: .top, spacing: 16) {
+                // Date badge
+                VStack(spacing: 4) {
+                    Text(event.date, format: .dateTime.day())
+                        .font(.system(size: 26, weight: .bold))
+                        .foregroundColor(.white)
 
-                Text(event.date, format: .dateTime.month(.abbreviated).year())
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.9))
-                    .textCase(.uppercase)
-            }
-            .frame(width: 70, height: 70)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 18)
-                        .fill(
-                            LinearGradient(
-                                colors: event.isSpecial ?
-                                    [Color(red: 0.85, green: 0.35, blue: 0.75), Color(red: 0.65, green: 0.25, blue: 0.9)] :
-                                    [Color(red: 0.6, green: 0.4, blue: 0.85), Color(red: 0.5, green: 0.3, blue: 0.75)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-
-                    if event.isSpecial {
+                    Text(event.date, format: .dateTime.month(.abbreviated).year())
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.9))
+                        .textCase(.uppercase)
+                }
+                .frame(width: 70, height: 70)
+                .background(
+                    ZStack {
                         RoundedRectangle(cornerRadius: 18)
-                            .strokeBorder(Color.white.opacity(0.3), lineWidth: 2)
-                    }
-                }
-            )
-            .shadow(color: event.isSpecial ? Color.purple.opacity(0.4) : Color.black.opacity(0.15),
-                    radius: 10, x: 0, y: 4)
+                            .fill(
+                                LinearGradient(
+                                    colors: event.isSpecial ?
+                                        [Color(red: 0.85, green: 0.35, blue: 0.75), Color(red: 0.65, green: 0.25, blue: 0.9)] :
+                                        [Color(red: 0.6, green: 0.4, blue: 0.85), Color(red: 0.5, green: 0.3, blue: 0.75)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
 
-            VStack(alignment: .leading, spacing: 8) {
-                // Title row
-                HStack(spacing: 8) {
-                    Text(event.title)
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
-
-                    if event.isSpecial {
-                        Image(systemName: "star.fill")
-                            .font(.caption)
-                            .foregroundColor(Color(red: 0.8, green: 0.5, blue: 0.95))
-                    }
-
-                    Spacer()
-
-                    if !event.photoURLs.isEmpty {
-                        HStack(spacing: 2) {
-                            Image(systemName: "photo.fill")
-                                .font(.caption2)
-                            Text("\(event.photoURLs.count)")
-                                .font(.caption2)
-                                .fontWeight(.medium)
+                        if event.isSpecial {
+                            RoundedRectangle(cornerRadius: 18)
+                                .strokeBorder(Color.white.opacity(0.3), lineWidth: 2)
                         }
-                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                     }
-                }
+                )
+                .shadow(color: event.isSpecial ? Color.purple.opacity(0.4) : Color.black.opacity(0.15),
+                        radius: 10, x: 0, y: 4)
 
-                // Time
-                HStack(spacing: 6) {
-                    Image(systemName: "clock")
-                        .font(.caption)
-                    Text(event.date, format: .dateTime.hour().minute())
-                        .font(.system(size: 14))
-                }
-                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                VStack(alignment: .leading, spacing: 8) {
+                    // Title row
+                    HStack(spacing: 8) {
+                        Text(event.title)
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
 
-                // Description
-                if !event.description.isEmpty {
-                    Text(event.description)
-                        .font(.system(size: 14))
-                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
-                        .lineLimit(2)
-                }
+                        if event.isSpecial {
+                            Image(systemName: "star.fill")
+                                .font(.caption)
+                                .foregroundColor(Color(red: 0.8, green: 0.5, blue: 0.95))
+                        }
 
-                // Location
-                if !event.location.isEmpty {
+                        Spacer()
+                    }
+
+                    // Time
                     HStack(spacing: 6) {
-                        Image(systemName: "mappin.circle.fill")
+                        Image(systemName: "clock")
                             .font(.caption)
-                        Text(event.location)
-                            .font(.system(size: 13))
-                            .lineLimit(1)
+                        Text(event.date, format: .dateTime.hour().minute())
+                            .font(.system(size: 14))
                     }
-                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+
+                    // Hint text when collapsed
+                    if !isExpanded {
+                        Text("Tap for details")
+                            .font(.caption)
+                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                            .italic()
+                    }
                 }
 
-                // Weather indicator for upcoming events
-                if let weather = event.weatherForecast, !weather.isEmpty, event.date > Date() {
-                    HStack(spacing: 6) {
-                        Image(systemName: "cloud.sun.fill")
-                            .font(.caption)
-                        Text(weather)
-                            .font(.system(size: 13))
-                            .lineLimit(1)
-                    }
-                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                }
+                Spacer()
             }
+            .padding(20)
 
-            Spacer()
+            // EXPANDED SECTION (show when expanded)
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 12) {
+                    Divider()
+                        .padding(.horizontal, 20)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        // Description
+                        if !event.description.isEmpty {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "text.alignleft")
+                                    .font(.caption)
+                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                    .frame(width: 20)
+
+                                Text(event.description)
+                                    .font(.system(size: 14))
+                                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+                            }
+                        }
+
+                        // Location
+                        if !event.location.isEmpty {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "mappin.circle.fill")
+                                    .font(.caption)
+                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                    .frame(width: 20)
+
+                                Text(event.location)
+                                    .font(.system(size: 14))
+                                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+                            }
+                        }
+
+                        // Weather
+                        if let weather = event.weatherForecast, !weather.isEmpty, event.date > Date() {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "cloud.sun.fill")
+                                    .font(.caption)
+                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                    .frame(width: 20)
+
+                                Text(weather)
+                                    .font(.system(size: 14))
+                                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+                            }
+                        }
+
+                        // Tap for full view hint
+                        if !event.photoURLs.isEmpty {
+                            Text("Tap card again for photos & full view")
+                                .font(.caption)
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                .italic()
+                                .padding(.top, 4)
+                        } else {
+                            Text("Tap card again for full view")
+                                .font(.caption)
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                .italic()
+                                .padding(.top, 4)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 16)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
-        .padding(20)
         .background(
             ZStack {
                 // Glassmorphism card
@@ -898,7 +917,15 @@ struct ModernEventCard: View {
                 radius: 15, x: 0, y: 4)
         .contentShape(Rectangle())
         .onTapGesture {
-            onTap()
+            if isExpanded {
+                // If already expanded, open full detail view
+                onTap()
+            } else {
+                // First tap: expand inline
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    expandedCardId = event.id
+                }
+            }
         }
     }
 }
@@ -2983,6 +3010,132 @@ struct FilterTagsView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Tool Drawer
+struct ToolDrawerView: View {
+    @Binding var showingSearch: Bool
+    @Binding var showingFilterSheet: Bool
+    let onNewPlan: () -> Void
+    let onRefresh: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Drag handle
+            Capsule()
+                .fill(Color.white.opacity(0.5))
+                .frame(width: 40, height: 5)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+
+            VStack(spacing: 16) {
+                // NEW PLAN BUTTON (top priority)
+                Button(action: onNewPlan) {
+                    HStack {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title2)
+                        Text("New Plan")
+                            .font(.headline)
+                        Spacer()
+                    }
+                    .foregroundColor(.white)
+                    .padding()
+                    .background(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.7, green: 0.4, blue: 0.95),
+                                Color(red: 0.55, green: 0.3, blue: 0.85)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .cornerRadius(16)
+                }
+
+                Divider()
+                    .background(Color.white.opacity(0.3))
+
+                // SEARCH BAR
+                Button(action: {
+                    onClose()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        showingSearch = true
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                        Text("Search events...")
+                            .foregroundColor(.white.opacity(0.7))
+                        Spacer()
+                    }
+                    .foregroundColor(.white)
+                    .padding()
+                    .background(Color.white.opacity(0.15))
+                    .cornerRadius(12)
+                }
+
+                // QUICK ACTIONS
+                HStack(spacing: 12) {
+                    // Filter button
+                    Button(action: {
+                        onClose()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showingFilterSheet = true
+                        }
+                    }) {
+                        HStack {
+                            Image(systemName: "line.3.horizontal.decrease.circle")
+                            Text("Filters")
+                                .font(.subheadline)
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.white.opacity(0.15))
+                        .cornerRadius(12)
+                    }
+
+                    // Refresh button
+                    Button(action: {
+                        onRefresh()
+                    }) {
+                        HStack {
+                            Image(systemName: "arrow.clockwise.circle")
+                            Text("Refresh")
+                                .font(.subheadline)
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.white.opacity(0.15))
+                        .cornerRadius(12)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
+        }
+        .background(
+            ZStack {
+                // Frosted glass effect
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.95),
+                                Color(red: 0.5, green: 0.3, blue: 0.75).opacity(0.95)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .shadow(color: Color.black.opacity(0.3), radius: 20, x: 0, y: 10)
+            }
+        )
+        .padding(.horizontal, 16)
     }
 }
 
