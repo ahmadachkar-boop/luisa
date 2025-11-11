@@ -87,9 +87,8 @@ class GoogleCalendarManager: ObservableObject {
             throw GoogleCalendarError.noViewController
         }
 
-        // IMPORTANT: Replace YOUR_CLIENT_ID with your actual Google Cloud OAuth Client ID
-        // Example: 123456789-abcdefghijklmnopqrstuvwxyz.apps.googleusercontent.com
-        let clientID = "YOUR_CLIENT_ID"
+        // Google Cloud OAuth Client ID
+        let clientID = "147528790359-oj9snngdl2msc8p6qtpkte5u21ausvh0.apps.googleusercontent.com"
 
         let signInConfig = GIDConfiguration(clientID: clientID)
         GIDSignIn.sharedInstance.configuration = signInConfig
