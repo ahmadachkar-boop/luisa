@@ -192,6 +192,18 @@ class FirebaseManager: ObservableObject {
     func deleteCalendarEvent(_ event: CalendarEvent) async throws {
         guard let id = event.id else { return }
 
+        // Delete from Google Calendar if synced
+        if let googleCalendarId = event.googleCalendarId {
+            do {
+                print("🔵 [GOOGLE SYNC] Deleting event from Google Calendar: \(googleCalendarId)")
+                try await GoogleCalendarManager.shared.deleteEventFromGoogle(googleCalendarId)
+                print("✅ [GOOGLE SYNC] Event deleted from Google Calendar")
+            } catch {
+                print("⚠️ [GOOGLE SYNC] Failed to delete from Google Calendar: \(error.localizedDescription)")
+                // Continue with local deletion even if Google deletion fails
+            }
+        }
+
         // Delete event photos from storage
         for photoURL in event.photoURLs {
             do {
