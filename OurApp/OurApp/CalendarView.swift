@@ -270,35 +270,6 @@ struct CalendarView: View {
                                 }
                         )
 
-                        // Countdown Banner - Swipeable (below calendar)
-                        if !viewModel.upcomingEvents.isEmpty {
-                            let upcomingToShow = Array(viewModel.upcomingEvents.prefix(5))
-
-                            TabView(selection: $countdownBannerIndex) {
-                                ForEach(Array(upcomingToShow.enumerated()), id: \.element.id) { index, event in
-                                    ModernCountdownBanner(event: event, onTap: {
-                                        selectedEventForDetail = event
-                                    })
-                                    .tag(index)
-                                }
-                            }
-                            .tabViewStyle(.page(indexDisplayMode: .never))
-                            .frame(height: 50)
-                            .padding(.horizontal)
-                            .padding(.bottom, 16)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                            .onChange(of: countdownBannerIndex) { oldValue, newValue in
-                                // Reset timer when user manually swipes
-                                resetCountdownTimer()
-                            }
-                            .onAppear {
-                                startCountdownResetTimer()
-                            }
-                            .onDisappear {
-                                TimerManager.shared.invalidate(id: "countdownReset")
-                            }
-                        }
-
                         // Month Summary Card (only for past months)
                         if isMonthInPast(currentMonth) {
                             MonthSummaryCard(
@@ -433,7 +404,81 @@ struct CalendarView: View {
                     }
                 }
             }
-            .navigationBarHidden(true)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    if !viewModel.upcomingEvents.isEmpty {
+                        let upcomingToShow = Array(viewModel.upcomingEvents.prefix(5))
+
+                        TabView(selection: $countdownBannerIndex) {
+                            ForEach(Array(upcomingToShow.enumerated()), id: \.element.id) { index, event in
+                                Button(action: {
+                                    selectedEventForDetail = event
+                                }) {
+                                    HStack(spacing: 8) {
+                                        // Icon (smaller)
+                                        ZStack {
+                                            Circle()
+                                                .fill(Color.white.opacity(0.2))
+                                                .frame(width: 24, height: 24)
+
+                                            Image(systemName: event.isSpecial ? "star.fill" : "clock.fill")
+                                                .font(.system(size: 11))
+                                                .foregroundColor(.white)
+                                        }
+
+                                        // Single line: event name + countdown
+                                        HStack(spacing: 4) {
+                                            Text(event.title)
+                                                .font(.system(size: 13, weight: .semibold))
+                                                .foregroundColor(.white)
+                                                .lineLimit(1)
+
+                                            Text("•")
+                                                .foregroundColor(.white.opacity(0.6))
+                                                .font(.system(size: 10))
+
+                                            Text(countdownText(for: event))
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundColor(.white.opacity(0.9))
+                                        }
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        LinearGradient(
+                                            colors: event.isSpecial ?
+                                                [Color(red: 0.85, green: 0.35, blue: 0.75), Color(red: 0.65, green: 0.25, blue: 0.9)] :
+                                                [Color(red: 0.6, green: 0.4, blue: 0.85), Color(red: 0.5, green: 0.3, blue: 0.75)],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .cornerRadius(12)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .tag(index)
+                            }
+                        }
+                        .tabViewStyle(.page(indexDisplayMode: .never))
+                        .frame(height: 40)
+                        .frame(maxWidth: 280)
+                        .onChange(of: countdownBannerIndex) { oldValue, newValue in
+                            resetCountdownTimer()
+                        }
+                        .onAppear {
+                            startCountdownResetTimer()
+                        }
+                        .onDisappear {
+                            TimerManager.shared.invalidate(id: "countdownReset")
+                        }
+                    } else {
+                        Text("Our Plans")
+                            .font(.headline)
+                            .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
+                    }
+                }
+            }
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView(initialDate: selectedDate) { event in
                     do {
@@ -529,6 +574,28 @@ struct CalendarView: View {
         let currentMonthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: now))!
         let selectedMonthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: date))!
         return selectedMonthStart < currentMonthStart
+    }
+
+    func countdownText(for event: CalendarEvent) -> String {
+        let now = Date()
+        let components = Calendar.current.dateComponents([.day, .hour, .minute], from: now, to: event.date)
+
+        if let days = components.day, let hours = components.hour, let minutes = components.minute {
+            if days > 1 {
+                // More than 1 day: show only days
+                return "\(days)d"
+            } else if days == 1 {
+                // Exactly 1 day: show days only
+                return "1d"
+            } else if hours > 0 {
+                // Less than 1 day: show hours and minutes
+                return "\(hours)h \(minutes)m"
+            } else {
+                // Less than 1 hour: show minutes only
+                return "\(minutes)m"
+            }
+        }
+        return ""
     }
 
     func startCountdownResetTimer() {
