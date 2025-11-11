@@ -1,15 +1,26 @@
 import SwiftUI
 import PhotosUI
 
+// Wrapper to make Int work with .fullScreenCover(item:)
+struct PhotoIndex: Identifiable {
+    let id = UUID()
+    let value: Int
+}
+
 struct PhotoGalleryView: View {
     @StateObject private var viewModel = PhotoGalleryViewModel()
-    @State private var selectedItem: PhotosPickerItem?
+    @State private var selectedItems: [PhotosPickerItem] = []
     @State private var showingAddPhoto = false
     @State private var isUploading = false
     @State private var showError = false
     @State private var errorMessage = ""
-    @State private var showingPhotoViewer = false
-    @State private var selectedPhotoIndex = 0
+    @State private var selectedPhotoIndex: PhotoIndex?
+    @State private var selectionMode = false
+    @State private var selectedPhotoIndices: Set<Int> = []
+    @State private var showingSaveSuccess = false
+    @State private var showingSaveError = false
+    @State private var saveErrorMessage = ""
+    @State private var savedPhotoCount = 0
 
     let columns = [
         GridItem(.flexible(), spacing: 2),
@@ -50,10 +61,7 @@ struct PhotoGalleryView: View {
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: 2) {
                             ForEach(Array(viewModel.photos.enumerated()), id: \.element.id) { index, photo in
-                                Button(action: {
-                                    selectedPhotoIndex = index
-                                    showingPhotoViewer = true
-                                }) {
+                                ZStack(alignment: .topTrailing) {
                                     CachedAsyncImage(url: URL(string: photo.imageURL)) { image in
                                         image
                                             .resizable()
@@ -67,8 +75,41 @@ struct PhotoGalleryView: View {
                                     }
                                     .frame(width: UIScreen.main.bounds.width / 3 - 2, height: UIScreen.main.bounds.width / 3 - 2)
                                     .clipped()
+                                    .overlay(
+                                        selectionMode ?
+                                            RoundedRectangle(cornerRadius: 0)
+                                                .stroke(selectedPhotoIndices.contains(index) ? Color.blue : Color.clear, lineWidth: 3)
+                                        : nil
+                                    )
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        if selectionMode {
+                                            if selectedPhotoIndices.contains(index) {
+                                                selectedPhotoIndices.remove(index)
+                                            } else {
+                                                selectedPhotoIndices.insert(index)
+                                            }
+                                        } else {
+                                            selectedPhotoIndex = PhotoIndex(value: index)
+                                        }
+                                    }
+                                    .onLongPressGesture(minimumDuration: 0.5) {
+                                        if !selectionMode {
+                                            selectionMode = true
+                                            selectedPhotoIndices.insert(index)
+                                        }
+                                    }
+
+                                    // Checkmark overlay
+                                    if selectionMode {
+                                        Image(systemName: selectedPhotoIndices.contains(index) ? "checkmark.circle.fill" : "circle")
+                                            .font(.title2)
+                                            .foregroundColor(selectedPhotoIndices.contains(index) ? .blue : .white)
+                                            .shadow(radius: 2)
+                                            .padding(8)
+                                            .allowsHitTesting(false)
+                                    }
                                 }
-                                .buttonStyle(PlainButtonStyle())
                             }
                         }
                         .padding(.top, 2)
@@ -77,42 +118,76 @@ struct PhotoGalleryView: View {
             }
             .navigationTitle("Our Photos 💜")
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    if isUploading {
-                        ProgressView()
-                            .tint(Color(red: 0.8, green: 0.7, blue: 1.0))
-                    } else {
-                        PhotosPicker(selection: $selectedItem, matching: .images) {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.title2)
-                                .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
+                if selectionMode {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button("Cancel") {
+                            selectionMode = false
+                            selectedPhotoIndices.removeAll()
+                        }
+                        .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
+                    }
+
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        HStack(spacing: 16) {
+                            Button(action: saveSelectedPhotos) {
+                                Image(systemName: "square.and.arrow.down")
+                                    .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
+                            }
+                            .disabled(selectedPhotoIndices.isEmpty)
+
+                            Button(action: deleteSelectedPhotos) {
+                                Image(systemName: "trash")
+                                    .foregroundColor(.red)
+                            }
+                            .disabled(selectedPhotoIndices.isEmpty)
+                        }
+                    }
+                } else {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        if isUploading {
+                            ProgressView()
+                                .tint(Color(red: 0.8, green: 0.7, blue: 1.0))
+                        } else {
+                            PhotosPicker(selection: $selectedItems, maxSelectionCount: 10, matching: .images) {
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.title2)
+                                    .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
+                            }
                         }
                     }
                 }
             }
-            .onChange(of: selectedItem) { newItem in
+            .onChange(of: selectedItems) { oldItems, newItems in
                 Task {
-                    guard let item = newItem else { return }
+                    guard !newItems.isEmpty else { return }
                     isUploading = true
 
-                    do {
-                        if let data = try await item.loadTransferable(type: Data.self),
-                           let uiImage = UIImage(data: data) {
-                            // Resize and compress the image before upload
-                            let resized = uiImage.resized(toMaxDimension: 1920)
-                            if let compressedData = resized.compressed(toMaxBytes: 1_000_000) {
-                                try await viewModel.uploadPhoto(imageData: compressedData)
-                            } else {
-                                throw NSError(domain: "PhotoUpload", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to compress image"])
+                    var uploadErrors: [String] = []
+
+                    for (index, item) in newItems.enumerated() {
+                        do {
+                            if let data = try await item.loadTransferable(type: Data.self),
+                               let uiImage = UIImage(data: data) {
+                                // Resize and compress the image before upload
+                                let resized = uiImage.resized(toMaxDimension: 1920)
+                                if let compressedData = resized.compressed(toMaxBytes: 1_000_000) {
+                                    try await viewModel.uploadPhoto(imageData: compressedData)
+                                } else {
+                                    uploadErrors.append("Failed to compress image \(index + 1)")
+                                }
                             }
+                        } catch {
+                            uploadErrors.append("Failed to upload photo \(index + 1): \(error.localizedDescription)")
                         }
-                    } catch {
-                        errorMessage = "Failed to upload photo: \(error.localizedDescription)"
+                    }
+
+                    if !uploadErrors.isEmpty {
+                        errorMessage = uploadErrors.joined(separator: "\n")
                         showError = true
                     }
 
                     isUploading = false
-                    selectedItem = nil
+                    selectedItems = []
                 }
             }
             .alert("Error", isPresented: $showError) {
@@ -120,12 +195,115 @@ struct PhotoGalleryView: View {
             } message: {
                 Text(errorMessage)
             }
-            .fullScreenCover(isPresented: $showingPhotoViewer) {
+            .alert("Saved!", isPresented: $showingSaveSuccess) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("\(savedPhotoCount) photo\(savedPhotoCount == 1 ? "" : "s") saved to your library")
+            }
+            .alert("Error", isPresented: $showingSaveError) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(saveErrorMessage)
+            }
+            .fullScreenCover(item: $selectedPhotoIndex) { photoIndex in
                 FullScreenPhotoViewer(
                     photoURLs: viewModel.photos.map { $0.imageURL },
-                    initialIndex: selectedPhotoIndex,
-                    onDismiss: { showingPhotoViewer = false }
+                    initialIndex: photoIndex.value,
+                    onDismiss: { selectedPhotoIndex = nil },
+                    onDelete: { indexToDelete in
+                        if indexToDelete < viewModel.photos.count {
+                            let photoToDelete = viewModel.photos[indexToDelete]
+                            Task {
+                                try? await viewModel.deletePhoto(photoToDelete)
+                            }
+                        }
+                    }
                 )
+            }
+        }
+    }
+
+    private func saveSelectedPhotos() {
+        guard !selectedPhotoIndices.isEmpty else { return }
+
+        let totalCount = selectedPhotoIndices.count
+
+        Task {
+            var savedCount = 0
+            var errorOccurred = false
+
+            for index in selectedPhotoIndices.sorted() {
+                guard index < viewModel.photos.count else { continue }
+                let photo = viewModel.photos[index]
+
+                // Load image
+                if let cachedImage = ImageCache.shared.get(forKey: photo.imageURL) {
+                    let imageSaver = ImageSaver()
+                    imageSaver.successHandler = {
+                        savedCount += 1
+                        if savedCount == totalCount {
+                            Task { @MainActor in
+                                savedPhotoCount = totalCount
+                                showingSaveSuccess = true
+                                selectionMode = false
+                                selectedPhotoIndices.removeAll()
+                            }
+                        }
+                    }
+                    imageSaver.errorHandler = { error in
+                        if !errorOccurred {
+                            errorOccurred = true
+                            Task { @MainActor in
+                                saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
+                                showingSaveError = true
+                            }
+                        }
+                    }
+                    imageSaver.writeToPhotoAlbum(image: cachedImage)
+                } else if let url = URL(string: photo.imageURL),
+                          let data = try? Data(contentsOf: url),
+                          let image = UIImage(data: data) {
+                    ImageCache.shared.set(image, forKey: photo.imageURL)
+                    let imageSaver = ImageSaver()
+                    imageSaver.successHandler = {
+                        savedCount += 1
+                        if savedCount == totalCount {
+                            Task { @MainActor in
+                                savedPhotoCount = totalCount
+                                showingSaveSuccess = true
+                                selectionMode = false
+                                selectedPhotoIndices.removeAll()
+                            }
+                        }
+                    }
+                    imageSaver.errorHandler = { error in
+                        if !errorOccurred {
+                            errorOccurred = true
+                            Task { @MainActor in
+                                saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
+                                showingSaveError = true
+                            }
+                        }
+                    }
+                    imageSaver.writeToPhotoAlbum(image: image)
+                }
+            }
+        }
+    }
+
+    private func deleteSelectedPhotos() {
+        guard !selectedPhotoIndices.isEmpty else { return }
+
+        Task {
+            for index in selectedPhotoIndices.sorted().reversed() {
+                guard index < viewModel.photos.count else { continue }
+                let photo = viewModel.photos[index]
+                try? await viewModel.deletePhoto(photo)
+            }
+
+            await MainActor.run {
+                selectionMode = false
+                selectedPhotoIndices.removeAll()
             }
         }
     }

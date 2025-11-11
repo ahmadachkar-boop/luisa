@@ -72,7 +72,7 @@ struct VoiceMessagesView: View {
                 }
                 .sheet(isPresented: $showingRecorder) {
                     VoiceRecorderView { audioData, duration, title in
-                        await viewModel.uploadVoiceMessage(
+                        try? await viewModel.uploadVoiceMessage(
                             audioData: audioData,
                             title: title,
                             duration: duration

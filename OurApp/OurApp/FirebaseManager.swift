@@ -160,6 +160,24 @@ class FirebaseManager: ObservableObject {
         }
     }
 
+    func fetchAllEvents() async throws -> [CalendarEvent] {
+        let snapshot = try await db.collection("calendarEvents")
+            .order(by: "date")
+            .getDocuments()
+
+        return snapshot.documents.compactMap { doc -> CalendarEvent? in
+            try? doc.data(as: CalendarEvent.self)
+        }
+    }
+
+    func updateEvent(_ event: CalendarEvent) async throws {
+        guard let id = event.id else {
+            print("🔴 [FIREBASE ERROR] Event has no ID!")
+            return
+        }
+        try db.collection("calendarEvents").document(id).setData(from: event)
+    }
+
     func updateCalendarEvent(_ event: CalendarEvent) async throws {
         print("🔵 [FIREBASE] updateCalendarEvent called")
         guard let id = event.id else {
@@ -173,6 +191,18 @@ class FirebaseManager: ObservableObject {
 
     func deleteCalendarEvent(_ event: CalendarEvent) async throws {
         guard let id = event.id else { return }
+
+        // Delete from Google Calendar if synced
+        if let googleCalendarId = event.googleCalendarId {
+            do {
+                print("🔵 [GOOGLE SYNC] Deleting event from Google Calendar: \(googleCalendarId)")
+                try await GoogleCalendarManager.shared.deleteEventFromGoogle(googleCalendarId)
+                print("✅ [GOOGLE SYNC] Event deleted from Google Calendar")
+            } catch {
+                print("⚠️ [GOOGLE SYNC] Failed to delete from Google Calendar: \(error.localizedDescription)")
+                // Continue with local deletion even if Google deletion fails
+            }
+        }
 
         // Delete event photos from storage
         for photoURL in event.photoURLs {

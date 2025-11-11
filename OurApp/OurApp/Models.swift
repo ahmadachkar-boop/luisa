@@ -47,6 +47,12 @@ struct CalendarEvent: Identifiable, Codable {
     var createdBy: String
     var isSpecial: Bool // For marking special dates
     var photoURLs: [String] // Photos attached to this event
+    var googleCalendarId: String? // Google Calendar event ID for synced events
+    var lastSyncedAt: Date? // Last time this event was synced with Google Calendar
+    var backgroundImageURL: String? // Custom background image for event card
+    var backgroundOffsetX: Double? // X offset for background positioning
+    var backgroundOffsetY: Double? // Y offset for background positioning
+    var backgroundScale: Double? // Scale factor for background image
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -57,6 +63,12 @@ struct CalendarEvent: Identifiable, Codable {
         case createdBy
         case isSpecial
         case photoURLs
+        case googleCalendarId
+        case lastSyncedAt
+        case backgroundImageURL
+        case backgroundOffsetX
+        case backgroundOffsetY
+        case backgroundScale
     }
 }
 
