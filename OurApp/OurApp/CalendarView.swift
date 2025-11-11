@@ -718,14 +718,20 @@ struct EventDetailView: View {
         event.date < Date()
     }
 
+    var backgroundColors: [Color] {
+        if event.isSpecial {
+            return [Color(red: 0.98, green: 0.9, blue: 1.0), Color.white]
+        } else {
+            return [Color(red: 0.95, green: 0.9, blue: 1.0), Color.white]
+        }
+    }
+
     var body: some View {
         NavigationView {
             ZStack {
                 // Background gradient
                 LinearGradient(
-                    colors: event.isSpecial ?
-                        [Color(red: 0.98, green: 0.9, blue: 1.0), Color.white] :
-                        [Color(red: 0.95, green: 0.9, blue: 1.0), Color.white],
+                    colors: backgroundColors,
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -1396,172 +1402,197 @@ struct EditEventView: View {
     var body: some View {
         NavigationView {
             Form {
-                Section("Details") {
-                    TextField("Title", text: $title)
-                    TextField("Description (optional)", text: $description, axis: .vertical)
-                        .lineLimit(3...6)
-                }
-
-                Section("When & Where") {
-                    DatePicker("Date & Time", selection: $date)
-                    TextField("Location (optional)", text: $location)
-                }
-
-                Section {
-                    Toggle("Special Event 💜", isOn: $isSpecial)
-                }
-
-                Section("Event Card Background") {
-                    // Preview of current background
-                    VStack(spacing: 8) {
-                        Text("Preview")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-
-                        // Mini preview of the event card
-                        ZStack {
-                            if let backgroundURL = backgroundImageURL {
-                                CachedAsyncImage(url: URL(string: backgroundURL)) { phase in
-                                    if let image = phase.image {
-                                        image
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                            .scaleEffect(backgroundScale)
-                                            .offset(x: backgroundOffsetX, y: backgroundOffsetY)
-                                    } else {
-                                        defaultBackground
-                                    }
-                                }
-                            } else {
-                                defaultBackground
-                            }
-
-                            // Event info overlay
-                            VStack(spacing: 4) {
-                                Text(date, format: .dateTime.day())
-                                    .font(.system(size: 40, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-
-                                Text(date, format: .dateTime.month(.wide).year())
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.white)
-                                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-                            }
-                        }
-                        .frame(height: 120)
-                        .frame(maxWidth: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: 15))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 15)
-                                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                        )
-                    }
-
-                    // Background options
-                    Button(action: {
-                        showingBackgroundPicker = true
-                    }) {
-                        HStack {
-                            Image(systemName: backgroundImageURL == nil ? "photo.badge.plus" : "photo")
-                            Text(backgroundImageURL == nil ? "Add Background Image" : "Change Background Image")
-                        }
-                    }
-
-                    if backgroundImageURL != nil {
-                        Button(role: .destructive, action: {
-                            backgroundImageURL = nil
-                            backgroundOffsetX = 0
-                            backgroundOffsetY = 0
-                            backgroundScale = 1.0
-                        }) {
-                            HStack {
-                                Image(systemName: "trash")
-                                Text("Remove Background Image")
-                            }
-                        }
-                    }
-
-                    // Image positioning controls (only show if image exists)
-                    if backgroundImageURL != nil {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Image Position")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Text("Horizontal")
-                                        .font(.caption2)
-                                        .frame(width: 70, alignment: .leading)
-                                    Slider(value: $backgroundOffsetX, in: -100...100)
-                                    Text("\(Int(backgroundOffsetX))")
-                                        .font(.caption2)
-                                        .frame(width: 30)
-                                }
-
-                                HStack {
-                                    Text("Vertical")
-                                        .font(.caption2)
-                                        .frame(width: 70, alignment: .leading)
-                                    Slider(value: $backgroundOffsetY, in: -100...100)
-                                    Text("\(Int(backgroundOffsetY))")
-                                        .font(.caption2)
-                                        .frame(width: 30)
-                                }
-
-                                HStack {
-                                    Text("Scale")
-                                        .font(.caption2)
-                                        .frame(width: 70, alignment: .leading)
-                                    Slider(value: $backgroundScale, in: 0.5...3.0)
-                                    Text(String(format: "%.1f", backgroundScale))
-                                        .font(.caption2)
-                                        .frame(width: 30)
-                                }
-                            }
-
-                            Button("Reset Position") {
-                                withAnimation {
-                                    backgroundOffsetX = 0
-                                    backgroundOffsetY = 0
-                                    backgroundScale = 1.0
-                                }
-                            }
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                        }
-                    }
-                }
+                detailsSection
+                whenWhereSection
+                specialEventSection
+                backgroundSection
             }
             .navigationTitle("Edit Event")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    if isSaving || isUploadingBackground {
-                        ProgressView()
-                    } else {
-                        Button("Save") {
-                            Task {
-                                await saveEvent()
-                            }
-                        }
-                        .disabled(title.isEmpty)
-                    }
-                }
+                toolbarContent
             }
             .photosPicker(isPresented: $showingBackgroundPicker, selection: $backgroundImageItem, matching: .images)
             .onChange(of: backgroundImageItem) { oldValue, newValue in
                 Task {
                     await loadBackgroundImage()
                 }
+            }
+        }
+    }
+
+    var detailsSection: some View {
+        Section("Details") {
+            TextField("Title", text: $title)
+            TextField("Description (optional)", text: $description, axis: .vertical)
+                .lineLimit(3...6)
+        }
+    }
+
+    var whenWhereSection: some View {
+        Section("When & Where") {
+            DatePicker("Date & Time", selection: $date)
+            TextField("Location (optional)", text: $location)
+        }
+    }
+
+    var specialEventSection: some View {
+        Section {
+            Toggle("Special Event 💜", isOn: $isSpecial)
+        }
+    }
+
+    var backgroundSection: some View {
+        Section("Event Card Background") {
+            backgroundPreview
+            backgroundButtons
+
+            if backgroundImageURL != nil {
+                positioningControls
+            }
+        }
+    }
+
+    var backgroundPreview: some View {
+        VStack(spacing: 8) {
+            Text("Preview")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            ZStack {
+                if let backgroundURL = backgroundImageURL {
+                    CachedAsyncImage(url: URL(string: backgroundURL)) { phase in
+                        if let image = phase.image {
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .scaleEffect(backgroundScale)
+                                .offset(x: backgroundOffsetX, y: backgroundOffsetY)
+                        } else {
+                            defaultBackground
+                        }
+                    }
+                } else {
+                    defaultBackground
+                }
+
+                VStack(spacing: 4) {
+                    Text(date, format: .dateTime.day())
+                        .font(.system(size: 40, weight: .bold))
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+
+                    Text(date, format: .dateTime.month(.wide).year())
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                }
+            }
+            .frame(height: 120)
+            .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 15))
+            .overlay(
+                RoundedRectangle(cornerRadius: 15)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+            )
+        }
+    }
+
+    @ViewBuilder
+    var backgroundButtons: some View {
+        Button(action: {
+            showingBackgroundPicker = true
+        }) {
+            HStack {
+                Image(systemName: backgroundImageURL == nil ? "photo.badge.plus" : "photo")
+                Text(backgroundImageURL == nil ? "Add Background Image" : "Change Background Image")
+            }
+        }
+
+        if backgroundImageURL != nil {
+            Button(role: .destructive, action: {
+                backgroundImageURL = nil
+                backgroundOffsetX = 0
+                backgroundOffsetY = 0
+                backgroundScale = 1.0
+            }) {
+                HStack {
+                    Image(systemName: "trash")
+                    Text("Remove Background Image")
+                }
+            }
+        }
+    }
+
+    var positioningControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Image Position")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Horizontal")
+                        .font(.caption2)
+                        .frame(width: 70, alignment: .leading)
+                    Slider(value: $backgroundOffsetX, in: -100...100)
+                    Text("\(Int(backgroundOffsetX))")
+                        .font(.caption2)
+                        .frame(width: 30)
+                }
+
+                HStack {
+                    Text("Vertical")
+                        .font(.caption2)
+                        .frame(width: 70, alignment: .leading)
+                    Slider(value: $backgroundOffsetY, in: -100...100)
+                    Text("\(Int(backgroundOffsetY))")
+                        .font(.caption2)
+                        .frame(width: 30)
+                }
+
+                HStack {
+                    Text("Scale")
+                        .font(.caption2)
+                        .frame(width: 70, alignment: .leading)
+                    Slider(value: $backgroundScale, in: 0.5...3.0)
+                    Text(String(format: "%.1f", backgroundScale))
+                        .font(.caption2)
+                        .frame(width: 30)
+                }
+            }
+
+            Button("Reset Position") {
+                withAnimation {
+                    backgroundOffsetX = 0
+                    backgroundOffsetY = 0
+                    backgroundScale = 1.0
+                }
+            }
+            .font(.caption)
+            .foregroundColor(.blue)
+        }
+    }
+
+    @ToolbarContentBuilder
+    var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .navigationBarLeading) {
+            Button("Cancel") {
+                dismiss()
+            }
+        }
+
+        ToolbarItem(placement: .navigationBarTrailing) {
+            if isSaving || isUploadingBackground {
+                ProgressView()
+            } else {
+                Button("Save") {
+                    Task {
+                        await saveEvent()
+                    }
+                }
+                .disabled(title.isEmpty)
             }
         }
     }
