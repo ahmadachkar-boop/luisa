@@ -1625,7 +1625,7 @@ struct MonthSummaryCard: View {
             .buttonStyle(PlainButtonStyle())
 
             // Expandable content
-            if isExpanded && !displayedPhotoURLs.isEmpty {
+            if isExpanded && !allPhotoURLs.isEmpty {
                 VStack(spacing: 12) {
                     Divider()
                         .padding(.horizontal, 16)
@@ -1676,10 +1676,6 @@ struct MonthSummaryCard: View {
                     shuffleTimer?.invalidate()
                     shuffleTimer = nil
                 }
-                .onChange(of: allPhotoURLs) { oldValue, newValue in
-                    // Reinitialize if photos changed
-                    initializePhotos()
-                }
             }
         }
         .background(
@@ -1705,6 +1701,12 @@ struct MonthSummaryCard: View {
             }
         )
         .shadow(color: Color.purple.opacity(0.08), radius: 12, x: 0, y: 4)
+        .onChange(of: isExpanded) { oldValue, newValue in
+            // Initialize photos when card is expanded
+            if newValue && displayedPhotoURLs.isEmpty {
+                initializePhotos()
+            }
+        }
     }
 
     // MARK: - Helper Functions
