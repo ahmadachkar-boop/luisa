@@ -8,6 +8,13 @@ struct CalendarPhotoIndex: Identifiable {
     let value: Int
 }
 
+// Wrapper for recap card photo viewing
+struct RecapPhotoData: Identifiable {
+    let id = UUID()
+    let photoURLs: [String]
+    let initialIndex: Int
+}
+
 struct CalendarView: View {
     @StateObject private var viewModel = CalendarViewModel()
     @State private var showingAddEvent = false
@@ -19,8 +26,7 @@ struct CalendarView: View {
     @State private var currentMonth = Date()
     @State private var selectedDay: Date? = nil // For filtering by specific day
     @State private var summaryCardExpanded = true // Start expanded
-    @State private var recapPhotoURLs: [String] = []
-    @State private var recapPhotoIndex: CalendarPhotoIndex?
+    @State private var recapPhotoData: RecapPhotoData?
 
     var body: some View {
         NavigationView {
@@ -87,6 +93,7 @@ struct CalendarView: View {
                                 ModernCountdownBanner(event: nextEvent, onTap: {
                                     selectedEventForDetail = nextEvent
                                 })
+                                    .id(nextEvent.id) // Force refresh when event changes
                                     .padding(.horizontal)
                                     .transition(.move(edge: .top).combined(with: .opacity))
                             }
@@ -111,8 +118,7 @@ struct CalendarView: View {
                                 events: eventsForCurrentMonth(),
                                 isExpanded: $summaryCardExpanded,
                                 onPhotoTap: { photoURLs, index in
-                                    recapPhotoURLs = photoURLs
-                                    recapPhotoIndex = CalendarPhotoIndex(value: index)
+                                    recapPhotoData = RecapPhotoData(photoURLs: photoURLs, initialIndex: index)
                                 }
                             )
                             .padding(.horizontal)
@@ -233,15 +239,17 @@ struct CalendarView: View {
                     }
                 })
             }
-            .fullScreenCover(item: $recapPhotoIndex) { photoIndex in
-                FullScreenPhotoViewer(
-                    photoURLs: recapPhotoURLs,
-                    initialIndex: photoIndex.value,
-                    onDismiss: { recapPhotoIndex = nil },
-                    onDelete: { _ in
-                        // Recap photos are read-only, no delete
-                    }
-                )
+            .fullScreenCover(item: $recapPhotoData) { photoData in
+                if !photoData.photoURLs.isEmpty {
+                    FullScreenPhotoViewer(
+                        photoURLs: photoData.photoURLs,
+                        initialIndex: photoData.initialIndex,
+                        onDismiss: { recapPhotoData = nil },
+                        onDelete: { _ in
+                            // Recap photos are read-only, no delete
+                        }
+                    )
+                }
             }
             .alert("Error", isPresented: $showError) {
                 Button("OK", role: .cancel) { }
@@ -1539,12 +1547,12 @@ struct MonthSummaryCard: View {
     @Binding var isExpanded: Bool
     let onPhotoTap: ([String], Int) -> Void
 
+    @State private var displayedPhotoURLs: [String] = []
+    @State private var shuffleTimer: Timer?
+
     var eventCount: Int { events.count }
     var photoCount: Int { events.flatMap { $0.photoURLs }.count }
     var specialEventCount: Int { events.filter { $0.isSpecial }.count }
-    var photoURLs: [String] {
-        Array(events.flatMap { $0.photoURLs }.prefix(4))
-    }
     var allPhotoURLs: [String] {
         events.flatMap { $0.photoURLs }
     }
@@ -1617,14 +1625,14 @@ struct MonthSummaryCard: View {
             .buttonStyle(PlainButtonStyle())
 
             // Expandable content
-            if isExpanded && !photoURLs.isEmpty {
+            if isExpanded && !displayedPhotoURLs.isEmpty {
                 VStack(spacing: 12) {
                     Divider()
                         .padding(.horizontal, 16)
 
                     // Photo collage
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                        ForEach(Array(photoURLs.prefix(4).enumerated()), id: \.element) { index, photoURL in
+                        ForEach(Array(displayedPhotoURLs.enumerated()), id: \.offset) { index, photoURL in
                             Button(action: {
                                 // Find the index in allPhotoURLs
                                 if let globalIndex = allPhotoURLs.firstIndex(of: photoURL) {
@@ -1635,22 +1643,43 @@ struct MonthSummaryCard: View {
                                     image
                                         .resizable()
                                         .scaledToFill()
+                                        .frame(maxWidth: .infinity)
                                         .frame(height: 100)
+                                        .clipped()
                                         .clipShape(RoundedRectangle(cornerRadius: 12))
                                 } placeholder: {
                                     RoundedRectangle(cornerRadius: 12)
                                         .fill(Color.gray.opacity(0.2))
+                                        .frame(maxWidth: .infinity)
                                         .frame(height: 100)
                                         .overlay(ProgressView())
                                 }
                             }
                             .buttonStyle(PlainButtonStyle())
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 100)
+                            .contentShape(Rectangle())
+                            .id(photoURL) // For animation
                         }
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
+                .onAppear {
+                    if displayedPhotoURLs.isEmpty {
+                        initializePhotos()
+                    }
+                    startShuffleTimer()
+                }
+                .onDisappear {
+                    shuffleTimer?.invalidate()
+                    shuffleTimer = nil
+                }
+                .onChange(of: allPhotoURLs) { oldValue, newValue in
+                    // Reinitialize if photos changed
+                    initializePhotos()
+                }
             }
         }
         .background(
@@ -1676,6 +1705,43 @@ struct MonthSummaryCard: View {
             }
         )
         .shadow(color: Color.purple.opacity(0.08), radius: 12, x: 0, y: 4)
+    }
+
+    // MARK: - Helper Functions
+
+    func initializePhotos() {
+        guard !allPhotoURLs.isEmpty else { return }
+
+        // Initialize with first 4 photos (or less if not enough)
+        displayedPhotoURLs = Array(allPhotoURLs.prefix(4))
+    }
+
+    func startShuffleTimer() {
+        guard allPhotoURLs.count > 4 else { return } // Only shuffle if we have more than 4 photos
+
+        shuffleTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
+            shuffleRandomPhoto()
+        }
+    }
+
+    func shuffleRandomPhoto() {
+        guard allPhotoURLs.count > 4, displayedPhotoURLs.count == 4 else { return }
+
+        withAnimation(.easeInOut(duration: 0.5)) {
+            // Pick a random position to replace (0-3)
+            let randomPosition = Int.random(in: 0..<4)
+
+            // Get photos not currently displayed
+            let availablePhotos = allPhotoURLs.filter { !displayedPhotoURLs.contains($0) }
+
+            guard !availablePhotos.isEmpty else { return }
+
+            // Pick a random photo from available ones
+            let newPhoto = availablePhotos.randomElement()!
+
+            // Replace the photo at random position
+            displayedPhotoURLs[randomPosition] = newPhoto
+        }
     }
 }
 
