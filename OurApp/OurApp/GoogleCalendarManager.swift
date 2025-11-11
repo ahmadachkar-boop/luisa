@@ -38,9 +38,9 @@ class GoogleCalendarManager: ObservableObject {
         didSet {
             UserDefaults.standard.set(autoSyncEnabled, forKey: "googleCalendarAutoSync")
             if autoSyncEnabled {
-                Task {
-                    try? await syncEvents()
-                }
+                startPeriodicSync()
+            } else {
+                stopPeriodicSync()
             }
         }
     }
@@ -59,6 +59,8 @@ class GoogleCalendarManager: ObservableObject {
 
     private let firebaseManager = FirebaseManager.shared
     private let ourAppCalendarName = "OurApp"
+    private var periodicSyncTimer: Timer?
+    private let syncInterval: TimeInterval = 30 * 60 // 30 minutes
 
     private init() {
         // Load saved preferences
@@ -98,6 +100,12 @@ class GoogleCalendarManager: ObservableObject {
                         if self.ourAppCalendarId != nil {
                             print("✅ [GOOGLE CALENDAR] Found existing OurApp calendar ID")
                         }
+
+                        // Start periodic sync if auto-sync is enabled
+                        if self.autoSyncEnabled {
+                            print("🔄 [GOOGLE SYNC] Auto-sync enabled, starting periodic sync")
+                            self.startPeriodicSync()
+                        }
                     } else {
                         print("⚠️ [GOOGLE SIGN-IN] Restored user but missing calendar scope")
                         self.isSignedIn = false
@@ -131,15 +139,101 @@ class GoogleCalendarManager: ObservableObject {
 
         // Find or create the OurApp calendar
         try await findOrCreateOurAppCalendar(user: result.user)
+
+        // Start periodic sync if auto-sync is enabled
+        if autoSyncEnabled {
+            startPeriodicSync()
+        }
     }
 
     func signOut() {
+        stopPeriodicSync()
         GIDSignIn.sharedInstance.signOut()
         isSignedIn = false
         lastSyncDate = nil
         ourAppCalendarId = nil
         UserDefaults.standard.removeObject(forKey: "lastSyncDate")
         UserDefaults.standard.removeObject(forKey: "ourAppCalendarId")
+    }
+
+    // MARK: - Periodic Sync
+
+    private func startPeriodicSync() {
+        // Stop any existing timer
+        stopPeriodicSync()
+
+        guard isSignedIn else {
+            print("⚠️ [GOOGLE SYNC] Cannot start periodic sync - not signed in")
+            return
+        }
+
+        print("🔄 [GOOGLE SYNC] Starting periodic sync (every \(Int(syncInterval / 60)) minutes)")
+
+        // Sync immediately on start
+        Task {
+            do {
+                try await syncEvents()
+                print("✅ [GOOGLE SYNC] Initial sync completed")
+            } catch {
+                print("⚠️ [GOOGLE SYNC] Initial sync failed: \(error.localizedDescription)")
+            }
+        }
+
+        // Start periodic timer
+        periodicSyncTimer = Timer.scheduledTimer(withTimeInterval: syncInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self = self, self.isSignedIn, self.autoSyncEnabled else { return }
+
+                do {
+                    print("🔄 [GOOGLE SYNC] Running periodic sync...")
+                    try await self.syncEvents()
+                    print("✅ [GOOGLE SYNC] Periodic sync completed")
+                } catch {
+                    print("⚠️ [GOOGLE SYNC] Periodic sync failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func stopPeriodicSync() {
+        periodicSyncTimer?.invalidate()
+        periodicSyncTimer = nil
+        print("⏹️ [GOOGLE SYNC] Stopped periodic sync")
+    }
+
+    // MARK: - App Lifecycle Handlers
+
+    func handleAppBecameActive() async {
+        guard isSignedIn, autoSyncEnabled else { return }
+
+        // Check if we should sync based on last sync time
+        let shouldSync: Bool
+        if let lastSync = lastSyncDate {
+            let timeSinceLastSync = Date().timeIntervalSince(lastSync)
+            // Sync if it's been more than 5 minutes since last sync
+            shouldSync = timeSinceLastSync > (5 * 60)
+        } else {
+            shouldSync = true
+        }
+
+        if shouldSync {
+            print("🔄 [GOOGLE SYNC] App became active, running sync...")
+            do {
+                try await syncEvents()
+                print("✅ [GOOGLE SYNC] App activation sync completed")
+            } catch {
+                print("⚠️ [GOOGLE SYNC] App activation sync failed: \(error.localizedDescription)")
+            }
+        } else {
+            print("⏭️ [GOOGLE SYNC] Skipping sync, recently synced")
+        }
+
+        // Restart the periodic timer
+        startPeriodicSync()
+    }
+
+    func handleAppEnteredBackground() {
+        stopPeriodicSync()
     }
 
     // MARK: - Calendar Management
