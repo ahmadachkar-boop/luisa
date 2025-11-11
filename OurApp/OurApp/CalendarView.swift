@@ -407,7 +407,7 @@ struct CalendarView: View {
                             }
                         }
 
-                    VStack {
+                    VStack(spacing: 0) {
                         ToolDrawerView(
                             showingSearch: $showingSearch,
                             showingFilterSheet: $showingFilterSheet,
@@ -426,11 +426,11 @@ struct CalendarView: View {
                                 }
                             }
                         )
+                        .padding(.top, 50)
                         .transition(.move(edge: .top).combined(with: .opacity))
 
                         Spacer()
                     }
-                    .ignoresSafeArea()
                 }
             }
             .navigationBarHidden(true)
