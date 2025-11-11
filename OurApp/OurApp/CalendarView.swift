@@ -9,6 +9,39 @@ extension CGFloat {
     static let cornerRadiusLarge: CGFloat = 24
 }
 
+// MARK: - Timer Manager
+class TimerManager: ObservableObject {
+    static let shared = TimerManager()
+
+    private var timers: [String: Timer] = [:]
+
+    private init() {}
+
+    func schedule(id: String, interval: TimeInterval, repeats: Bool = true, action: @escaping () -> Void) {
+        // Invalidate existing timer if any
+        invalidate(id: id)
+
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: repeats) { _ in
+            action()
+        }
+        timers[id] = timer
+    }
+
+    func invalidate(id: String) {
+        timers[id]?.invalidate()
+        timers[id] = nil
+    }
+
+    func invalidateAll() {
+        timers.values.forEach { $0.invalidate() }
+        timers.removeAll()
+    }
+
+    deinit {
+        invalidateAll()
+    }
+}
+
 // Wrapper to make Int work with .fullScreenCover(item:)
 struct CalendarPhotoIndex: Identifiable {
     let id = UUID()
@@ -36,7 +69,6 @@ struct CalendarView: View {
     @State private var summaryCardExpanded = true // Start expanded
     @State private var recapPhotoData: RecapPhotoData?
     @State private var countdownBannerIndex = 0
-    @State private var countdownResetTimer: Timer?
     @State private var searchText = ""
     @State private var selectedTags: Set<String> = []
     @State private var showingFilterSheet = false
@@ -181,8 +213,7 @@ struct CalendarView: View {
                                     startCountdownResetTimer()
                                 }
                                 .onDisappear {
-                                    countdownResetTimer?.invalidate()
-                                    countdownResetTimer = nil
+                                    TimerManager.shared.invalidate(id: "countdownReset")
                                 }
                             }
                         }
@@ -413,8 +444,7 @@ struct CalendarView: View {
     }
 
     func startCountdownResetTimer() {
-        countdownResetTimer?.invalidate()
-        countdownResetTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { _ in
+        TimerManager.shared.schedule(id: "countdownReset", interval: 10.0, repeats: false) {
             withAnimation(.easeInOut(duration: 0.5)) {
                 countdownBannerIndex = 0
             }
@@ -448,7 +478,6 @@ struct ModernCountdownBanner: View {
     let event: CalendarEvent
     let onTap: () -> Void
     @State private var timeRemaining: String = ""
-    @State private var timer: Timer?
 
     var body: some View {
         Button(action: onTap) {
@@ -508,12 +537,14 @@ struct ModernCountdownBanner: View {
         .buttonStyle(PlainButtonStyle())
         .onAppear {
             updateCountdown()
-            timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+            let timerId = "countdown_\(event.id ?? UUID().uuidString)"
+            TimerManager.shared.schedule(id: timerId, interval: 60, repeats: true) {
                 updateCountdown()
             }
         }
         .onDisappear {
-            timer?.invalidate()
+            let timerId = "countdown_\(event.id ?? UUID().uuidString)"
+            TimerManager.shared.invalidate(id: timerId)
         }
     }
 
@@ -675,6 +706,18 @@ struct ModernEventCard: View {
                             Image(systemName: "mappin.circle.fill")
                                 .font(.caption)
                             Text(event.location)
+                                .font(.system(size: 13))
+                                .lineLimit(1)
+                        }
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                    }
+
+                    // Weather indicator for upcoming events
+                    if let weather = event.weatherForecast, !weather.isEmpty, event.date > Date() {
+                        HStack(spacing: 6) {
+                            Image(systemName: "cloud.sun.fill")
+                                .font(.caption)
+                            Text(weather)
                                 .font(.system(size: 13))
                                 .lineLimit(1)
                         }
@@ -1161,6 +1204,19 @@ struct EventDetailView: View {
                     .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
             }
 
+            // Weather (if available and event is upcoming)
+            if let weather = event.weatherForecast, !weather.isEmpty, event.date > Date() {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Weather Forecast", systemImage: "cloud.sun.fill")
+                        .font(.headline)
+                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+
+                    Text(weather)
+                        .font(.body)
+                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                }
+            }
+
             Divider()
 
             // Creator
@@ -1454,6 +1510,7 @@ struct AddEventView: View {
     @State private var isSaving = false
     @State private var tags: [String] = []
     @State private var newTag = ""
+    @State private var showingLocationSearch = false
 
     init(initialDate: Date, onSave: @escaping (CalendarEvent) async -> Void) {
         self.initialDate = initialDate
@@ -1472,7 +1529,16 @@ struct AddEventView: View {
 
                 Section("When & Where") {
                     DatePicker("Date & Time", selection: $date)
-                    TextField("Location (optional)", text: $location)
+
+                    HStack {
+                        TextField("Location (optional)", text: $location)
+                        Button(action: {
+                            showingLocationSearch = true
+                        }) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                        }
+                    }
                 }
 
                 Section {
@@ -1523,6 +1589,9 @@ struct AddEventView: View {
             }
             .navigationTitle("New Plan")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showingLocationSearch) {
+                LocationSearchView(location: $location)
+            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
@@ -1597,6 +1666,7 @@ struct EditEventView: View {
     @State private var backgroundErrorMessage = ""
     @State private var tags: [String]
     @State private var newTag = ""
+    @State private var showingLocationSearch = false
 
     init(event: CalendarEvent, onSave: @escaping (CalendarEvent) async -> Void) {
         self.event = event
@@ -1638,6 +1708,9 @@ struct EditEventView: View {
             } message: {
                 Text(backgroundErrorMessage)
             }
+            .sheet(isPresented: $showingLocationSearch) {
+                LocationSearchView(location: $location)
+            }
         }
     }
 
@@ -1652,7 +1725,16 @@ struct EditEventView: View {
     var whenWhereSection: some View {
         Section("When & Where") {
             DatePicker("Date & Time", selection: $date)
-            TextField("Location (optional)", text: $location)
+
+            HStack {
+                TextField("Location (optional)", text: $location)
+                Button(action: {
+                    showingLocationSearch = true
+                }) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+            }
         }
     }
 
@@ -2211,9 +2293,11 @@ struct MonthSummaryCard: View {
     let onPhotoTap: ([String], Int) -> Void
 
     @State private var displayedPhotoURLs: [String] = []
-    @State private var shuffleTimer: Timer?
     @State private var shuffleCount = 0
     private let maxShuffles = 12 // Stop shuffling after 12 cycles (1 minute at 5s intervals)
+    private var shuffleTimerId: String {
+        "shuffle_\(month.timeIntervalSince1970)"
+    }
 
     var eventCount: Int { events.count }
     var photoCount: Int { events.flatMap { $0.photoURLs }.count }
@@ -2340,8 +2424,7 @@ struct MonthSummaryCard: View {
                     startShuffleTimer()
                 }
                 .onDisappear {
-                    shuffleTimer?.invalidate()
-                    shuffleTimer = nil
+                    TimerManager.shared.invalidate(id: shuffleTimerId)
                 }
             }
         }
@@ -2389,8 +2472,7 @@ struct MonthSummaryCard: View {
         guard allPhotoURLs.count > 4 else { return } // Only shuffle if we have more than 4 photos
 
         shuffleCount = 0
-        shuffleTimer?.invalidate() // Clean up any existing timer
-        shuffleTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [self] _ in
+        TimerManager.shared.schedule(id: shuffleTimerId, interval: 5.0, repeats: true) {
             shuffleRandomPhoto()
         }
     }
@@ -2401,8 +2483,7 @@ struct MonthSummaryCard: View {
         // Stop shuffling after max count to prevent memory leak
         shuffleCount += 1
         if shuffleCount >= maxShuffles {
-            shuffleTimer?.invalidate()
-            shuffleTimer = nil
+            TimerManager.shared.invalidate(id: shuffleTimerId)
             return
         }
 
@@ -2471,6 +2552,89 @@ struct FilterHeaderView: View {
                 .fill(Color.white)
                 .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 2)
         )
+    }
+}
+
+// MARK: - Location Search View
+struct LocationSearchView: View {
+    @Environment(\.dismiss) var dismiss
+    @Binding var location: String
+    @StateObject private var searchCompleter = LocationSearchCompleter()
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section {
+                    TextField("Search location", text: $searchCompleter.searchQuery)
+                        .textFieldStyle(.plain)
+                        .autocorrectionDisabled()
+                }
+
+                if !searchCompleter.results.isEmpty {
+                    Section("Suggestions") {
+                        ForEach(searchCompleter.results, id: \.self) { result in
+                            Button(action: {
+                                location = result.title + (result.subtitle.isEmpty ? "" : ", \(result.subtitle)")
+                                dismiss()
+                            }) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(result.title)
+                                        .foregroundColor(.primary)
+                                        .fontWeight(.medium)
+                                    if !result.subtitle.isEmpty {
+                                        Text(result.subtitle)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Search Location")
+            .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: searchCompleter.searchQuery) { oldValue, newValue in
+                searchCompleter.search()
+            }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Location Search Completer
+class LocationSearchCompleter: NSObject, ObservableObject {
+    @Published var searchQuery = ""
+    @Published var results: [MKLocalSearchCompletion] = []
+
+    private let completer = MKLocalSearchCompleter()
+
+    override init() {
+        super.init()
+        completer.delegate = self
+        completer.resultTypes = [.address, .pointOfInterest]
+    }
+
+    func search() {
+        completer.queryFragment = searchQuery
+    }
+}
+
+extension LocationSearchCompleter: MKLocalSearchCompleterDelegate {
+    func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        DispatchQueue.main.async {
+            self.results = completer.results
+        }
+    }
+
+    func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+        print("Location search error: \(error.localizedDescription)")
     }
 }
 
