@@ -160,6 +160,24 @@ class FirebaseManager: ObservableObject {
         }
     }
 
+    func fetchAllEvents() async throws -> [CalendarEvent] {
+        let snapshot = try await db.collection("calendarEvents")
+            .order(by: "date")
+            .getDocuments()
+
+        return snapshot.documents.compactMap { doc -> CalendarEvent? in
+            try? doc.data(as: CalendarEvent.self)
+        }
+    }
+
+    func updateEvent(_ event: CalendarEvent) async throws {
+        guard let id = event.id else {
+            print("🔴 [FIREBASE ERROR] Event has no ID!")
+            return
+        }
+        try db.collection("calendarEvents").document(id).setData(from: event)
+    }
+
     func updateCalendarEvent(_ event: CalendarEvent) async throws {
         print("🔵 [FIREBASE] updateCalendarEvent called")
         guard let id = event.id else {
