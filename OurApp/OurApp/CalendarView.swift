@@ -4,6 +4,26 @@ import MapKit
 import WeatherKit
 import CoreLocation
 
+// MARK: - Timeout Helper
+struct TimeoutError: Error {}
+
+func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            try await operation()
+        }
+
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            throw TimeoutError()
+        }
+
+        let result = try await group.next()!
+        group.cancelAll()
+        return result
+    }
+}
+
 // MARK: - Design Constants
 extension CGFloat {
     static let cornerRadiusSmall: CGFloat = 12
@@ -557,11 +577,21 @@ struct CalendarView: View {
         // Sync with Google Calendar if signed in
         if googleCalendarManager.isSignedIn {
             do {
-                try await googleCalendarManager.syncEvents()
-            } catch {
+                try await withTimeout(seconds: 30) {
+                    try await googleCalendarManager.syncEvents()
+                }
+            } catch is TimeoutError {
                 await MainActor.run {
-                    errorMessage = "Failed to sync with Google Calendar: \(error.localizedDescription)"
+                    errorMessage = "Google Calendar sync timed out. Please try again."
                     showError = true
+                }
+            } catch {
+                // Only show error if it's not a cancellation
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        errorMessage = "Failed to sync with Google Calendar: \(error.localizedDescription)"
+                        showError = true
+                    }
                 }
             }
         }
