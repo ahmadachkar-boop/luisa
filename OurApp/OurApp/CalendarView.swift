@@ -18,7 +18,9 @@ struct CalendarView: View {
     @State private var selectedTab = 0 // 0 = Upcoming, 1 = Memories
     @State private var currentMonth = Date()
     @State private var selectedDay: Date? = nil // For filtering by specific day
-    @State private var summaryCardExpanded = true
+    @State private var summaryCardExpanded = false // Start collapsed
+    @State private var recapPhotoURLs: [String] = []
+    @State private var recapPhotoIndex: CalendarPhotoIndex?
 
     var body: some View {
         NavigationView {
@@ -82,7 +84,9 @@ struct CalendarView: View {
 
                             // Countdown Banner
                             if let nextEvent = viewModel.upcomingEvents.first {
-                                ModernCountdownBanner(event: nextEvent)
+                                ModernCountdownBanner(event: nextEvent, onTap: {
+                                    selectedEventForDetail = nextEvent
+                                })
                                     .padding(.horizontal)
                                     .transition(.move(edge: .top).combined(with: .opacity))
                             }
@@ -94,7 +98,8 @@ struct CalendarView: View {
                         CalendarGridView(
                             currentMonth: currentMonth,
                             events: viewModel.events,
-                            selectedDay: $selectedDay
+                            selectedDay: $selectedDay,
+                            selectedTab: $selectedTab
                         )
                         .padding(.horizontal)
                         .padding(.bottom, 16)
@@ -104,7 +109,11 @@ struct CalendarView: View {
                             MonthSummaryCard(
                                 month: currentMonth,
                                 events: eventsForCurrentMonth(),
-                                isExpanded: $summaryCardExpanded
+                                isExpanded: $summaryCardExpanded,
+                                onPhotoTap: { photoURLs, index in
+                                    recapPhotoURLs = photoURLs
+                                    recapPhotoIndex = CalendarPhotoIndex(value: index)
+                                }
                             )
                             .padding(.horizontal)
                             .padding(.bottom, 16)
@@ -224,15 +233,26 @@ struct CalendarView: View {
                     }
                 })
             }
+            .fullScreenCover(item: $recapPhotoIndex) { photoIndex in
+                FullScreenPhotoViewer(
+                    photoURLs: recapPhotoURLs,
+                    initialIndex: photoIndex.value,
+                    onDismiss: { recapPhotoIndex = nil },
+                    onDelete: { _ in
+                        // Recap photos are read-only, no delete
+                    }
+                )
+            }
             .alert("Error", isPresented: $showError) {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text(errorMessage)
             }
             .onChange(of: currentMonth) { oldValue, newValue in
-                // Reset day filter when month changes
+                // Reset day filter and summary card when month changes
                 withAnimation(.spring(response: 0.3)) {
                     selectedDay = nil
+                    summaryCardExpanded = false
                 }
             }
             .onChange(of: selectedTab) { oldValue, newValue in
@@ -281,11 +301,13 @@ struct CalendarView: View {
 // MARK: - Modern Countdown Banner
 struct ModernCountdownBanner: View {
     let event: CalendarEvent
+    let onTap: () -> Void
     @State private var timeRemaining: String = ""
     @State private var timer: Timer?
 
     var body: some View {
-        HStack(spacing: 12) {
+        Button(action: onTap) {
+            HStack(spacing: 12) {
             // Icon
             ZStack {
                 Circle()
@@ -313,30 +335,32 @@ struct ModernCountdownBanner: View {
             Image(systemName: "chevron.right")
                 .font(.caption)
                 .foregroundColor(.white.opacity(0.7))
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-        .background(
-            ZStack {
-                // Glassmorphism effect
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(
-                        LinearGradient(
-                            colors: event.isSpecial ?
-                                [Color(red: 0.85, green: 0.35, blue: 0.75), Color(red: 0.65, green: 0.25, blue: 0.9)] :
-                                [Color(red: 0.6, green: 0.4, blue: 0.85), Color(red: 0.5, green: 0.3, blue: 0.75)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-
-                // Subtle glow
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
             }
-        )
-        .shadow(color: event.isSpecial ? Color.purple.opacity(0.3) : Color.black.opacity(0.1),
-                radius: 12, x: 0, y: 6)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .background(
+                ZStack {
+                    // Glassmorphism effect
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(
+                            LinearGradient(
+                                colors: event.isSpecial ?
+                                    [Color(red: 0.85, green: 0.35, blue: 0.75), Color(red: 0.65, green: 0.25, blue: 0.9)] :
+                                    [Color(red: 0.6, green: 0.4, blue: 0.85), Color(red: 0.5, green: 0.3, blue: 0.75)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+
+                    // Subtle glow
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                }
+            )
+            .shadow(color: event.isSpecial ? Color.purple.opacity(0.3) : Color.black.opacity(0.1),
+                    radius: 12, x: 0, y: 6)
+        }
+        .buttonStyle(PlainButtonStyle())
         .onAppear {
             updateCountdown()
             timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
@@ -1286,6 +1310,7 @@ struct CalendarGridView: View {
     let currentMonth: Date
     let events: [CalendarEvent]
     @Binding var selectedDay: Date?
+    @Binding var selectedTab: Int
     @State private var hoveredDay: Date?
 
     private let calendar = Calendar.current
@@ -1314,13 +1339,7 @@ struct CalendarGridView: View {
                             isSelected: selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!),
                             isToday: calendar.isDateInToday(date),
                             onTap: {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                    if selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!) {
-                                        selectedDay = nil // Deselect if tapping same day
-                                    } else {
-                                        selectedDay = date
-                                    }
-                                }
+                                handleDayTap(date: date)
                             }
                         )
                     } else {
@@ -1361,6 +1380,26 @@ struct CalendarGridView: View {
     func eventsForDay(_ date: Date) -> [CalendarEvent] {
         return events.filter { event in
             calendar.isDate(event.date, inSameDayAs: date)
+        }
+    }
+
+    func handleDayTap(date: Date) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            if selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!) {
+                selectedDay = nil // Deselect if tapping same day
+            } else {
+                selectedDay = date
+
+                // Auto-switch tabs based on date
+                let isPastDate = date < Date()
+                if isPastDate && selectedTab == 0 {
+                    // Switch to Memories tab for past dates
+                    selectedTab = 1
+                } else if !isPastDate && selectedTab == 1 {
+                    // Switch to Upcoming tab for future dates
+                    selectedTab = 0
+                }
+            }
         }
     }
 }
@@ -1505,12 +1544,16 @@ struct MonthSummaryCard: View {
     let month: Date
     let events: [CalendarEvent]
     @Binding var isExpanded: Bool
+    let onPhotoTap: ([String], Int) -> Void
 
     var eventCount: Int { events.count }
     var photoCount: Int { events.flatMap { $0.photoURLs }.count }
     var specialEventCount: Int { events.filter { $0.isSpecial }.count }
     var photoURLs: [String] {
         Array(events.flatMap { $0.photoURLs }.prefix(4))
+    }
+    var allPhotoURLs: [String] {
+        events.flatMap { $0.photoURLs }
     }
 
     var body: some View {
@@ -1588,19 +1631,27 @@ struct MonthSummaryCard: View {
 
                     // Photo collage
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                        ForEach(photoURLs.prefix(4), id: \.self) { photoURL in
-                            CachedAsyncImage(url: URL(string: photoURL)) { image in
-                                image
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(height: 100)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                            } placeholder: {
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color.gray.opacity(0.2))
-                                    .frame(height: 100)
-                                    .overlay(ProgressView())
+                        ForEach(Array(photoURLs.prefix(4).enumerated()), id: \.element) { index, photoURL in
+                            Button(action: {
+                                // Find the index in allPhotoURLs
+                                if let globalIndex = allPhotoURLs.firstIndex(of: photoURL) {
+                                    onPhotoTap(allPhotoURLs, globalIndex)
+                                }
+                            }) {
+                                CachedAsyncImage(url: URL(string: photoURL)) { image in
+                                    image
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(height: 100)
+                                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                                } placeholder: {
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color.gray.opacity(0.2))
+                                        .frame(height: 100)
+                                        .overlay(ProgressView())
+                                }
                             }
+                            .buttonStyle(PlainButtonStyle())
                         }
                     }
                     .padding(.horizontal, 16)
