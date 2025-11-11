@@ -2,6 +2,13 @@ import SwiftUI
 import PhotosUI
 import MapKit
 
+// MARK: - Design Constants
+extension CGFloat {
+    static let cornerRadiusSmall: CGFloat = 12
+    static let cornerRadiusMedium: CGFloat = 16
+    static let cornerRadiusLarge: CGFloat = 24
+}
+
 // Wrapper to make Int work with .fullScreenCover(item:)
 struct CalendarPhotoIndex: Identifiable {
     let id = UUID()
@@ -17,6 +24,7 @@ struct RecapPhotoData: Identifiable {
 
 struct CalendarView: View {
     @StateObject private var viewModel = CalendarViewModel()
+    @StateObject private var googleCalendarManager = GoogleCalendarManager.shared
     @State private var showingAddEvent = false
     @State private var selectedDate = Date()
     @State private var showError = false
@@ -47,6 +55,19 @@ struct CalendarView: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
+                        // Sync indicator
+                        if googleCalendarManager.isSyncing {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("Syncing with Google Calendar...")
+                                    .font(.caption)
+                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                            }
+                            .padding(.vertical, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+
                         // Header with month selector
                         VStack(spacing: 16) {
                             // Month navigation
@@ -192,12 +213,29 @@ struct CalendarView: View {
                                             }
                                         }
                                     )
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                        Button(role: .destructive) {
+                                            Task {
+                                                do {
+                                                    try await viewModel.deleteEvent(event)
+                                                } catch {
+                                                    errorMessage = "Failed to delete event: \(error.localizedDescription)"
+                                                    showError = true
+                                                }
+                                            }
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+                                    }
                                 }
                             }
                             .padding(.horizontal)
                             .padding(.bottom, 100)
                         }
                     }
+                }
+                .refreshable {
+                    await refreshCalendar()
                 }
 
                 // Floating action button
@@ -228,7 +266,7 @@ struct CalendarView: View {
                                     endPoint: .bottomTrailing
                                 )
                             )
-                            .cornerRadius(30)
+                            .cornerRadius(.cornerRadiusLarge)
                             .shadow(color: Color.purple.opacity(0.4), radius: 15, x: 0, y: 8)
                         }
                         .padding(.trailing, 24)
@@ -336,6 +374,23 @@ struct CalendarView: View {
 
     func resetCountdownTimer() {
         startCountdownResetTimer()
+    }
+
+    func refreshCalendar() async {
+        // Sync with Google Calendar if signed in
+        if googleCalendarManager.isSignedIn {
+            do {
+                try await googleCalendarManager.syncWithGoogleCalendar()
+            } catch {
+                await MainActor.run {
+                    errorMessage = "Failed to sync with Google Calendar: \(error.localizedDescription)"
+                    showError = true
+                }
+            }
+        }
+
+        // Reload local events
+        viewModel.loadEvents()
     }
 }
 
@@ -697,6 +752,9 @@ struct EventDetailView: View {
     @State private var showingEditView = false
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var isUploadingPhotos = false
+    @State private var uploadProgress: Double = 0.0
+    @State private var uploadedCount: Int = 0
+    @State private var totalUploadCount: Int = 0
     @State private var showingErrorAlert = false
     @State private var errorMessage = ""
     @State private var currentEvent: CalendarEvent
@@ -899,23 +957,40 @@ struct EventDetailView: View {
                             }
                             .padding(.horizontal)
 
+                            // Upload progress bar
+                            if isUploadingPhotos {
+                                VStack(spacing: 8) {
+                                    ProgressView(value: uploadProgress, total: 1.0)
+                                        .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                                    Text("Uploading \(uploadedCount) of \(totalUploadCount) photos...")
+                                        .font(.caption)
+                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                }
+                                .padding(.horizontal)
+                                .padding(.vertical, 8)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
+
                             if !currentEvent.photoURLs.isEmpty {
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack(spacing: 12) {
                                         ForEach(Array(currentEvent.photoURLs.enumerated()), id: \.offset) { index, photoURL in
                                             ZStack(alignment: .topTrailing) {
-                                                CachedAsyncImage(url: URL(string: photoURL)) { image in
-                                                    image
-                                                        .resizable()
-                                                        .scaledToFill()
-                                                        .frame(width: 250, height: 250)
-                                                        .clipShape(RoundedRectangle(cornerRadius: 15))
-                                                } placeholder: {
-                                                    RoundedRectangle(cornerRadius: 15)
-                                                        .fill(Color.gray.opacity(0.2))
-                                                        .frame(width: 250, height: 250)
-                                                        .overlay(ProgressView())
+                                                AsyncImage(url: URL(string: photoURL)) { phase in
+                                                    if let image = phase.image {
+                                                        image
+                                                            .resizable()
+                                                            .scaledToFill()
+                                                            .frame(width: 250, height: 250)
+                                                            .clipped()
+                                                    } else {
+                                                        Color.gray.opacity(0.2)
+                                                            .frame(width: 250, height: 250)
+                                                            .overlay(ProgressView())
+                                                    }
                                                 }
+                                                .clipShape(RoundedRectangle(cornerRadius: 15))
                                                 .overlay(
                                                     selectionMode ?
                                                         RoundedRectangle(cornerRadius: 15)
@@ -1122,8 +1197,38 @@ struct EventDetailView: View {
                 guard index < currentEvent.photoURLs.count else { continue }
                 let photoURL = currentEvent.photoURLs[index]
 
-                // Load image
+                // Load image from cache or download asynchronously
+                let image: UIImage?
                 if let cachedImage = ImageCache.shared.get(forKey: photoURL) {
+                    image = cachedImage
+                } else if let url = URL(string: photoURL) {
+                    // Asynchronous network call - no UI blocking
+                    do {
+                        let (data, _) = try await URLSession.shared.data(from: url)
+                        if let downloadedImage = UIImage(data: data) {
+                            ImageCache.shared.set(downloadedImage, forKey: photoURL)
+                            image = downloadedImage
+                        } else {
+                            image = nil
+                        }
+                    } catch {
+                        if !errorOccurred {
+                            errorOccurred = true
+                            await MainActor.run {
+                                saveErrorMessage = "Failed to download photo: \(error.localizedDescription)"
+                                showingSaveError = true
+                            }
+                        }
+                        continue
+                    }
+                } else {
+                    image = nil
+                }
+
+                guard let imageToSave = image else { continue }
+
+                // Save image to photo album
+                await withCheckedContinuation { continuation in
                     let imageSaver = ImageSaver()
                     imageSaver.successHandler = {
                         savedCount += 1
@@ -1135,6 +1240,7 @@ struct EventDetailView: View {
                                 selectedPhotoIndices.removeAll()
                             }
                         }
+                        continuation.resume()
                     }
                     imageSaver.errorHandler = { error in
                         if !errorOccurred {
@@ -1144,34 +1250,9 @@ struct EventDetailView: View {
                                 showingSaveError = true
                             }
                         }
+                        continuation.resume()
                     }
-                    imageSaver.writeToPhotoAlbum(image: cachedImage)
-                } else if let url = URL(string: photoURL),
-                          let data = try? Data(contentsOf: url),
-                          let image = UIImage(data: data) {
-                    ImageCache.shared.set(image, forKey: photoURL)
-                    let imageSaver = ImageSaver()
-                    imageSaver.successHandler = {
-                        savedCount += 1
-                        if savedCount == totalCount {
-                            Task { @MainActor in
-                                savedPhotoCount = totalCount
-                                showingSaveSuccess = true
-                                selectionMode = false
-                                selectedPhotoIndices.removeAll()
-                            }
-                        }
-                    }
-                    imageSaver.errorHandler = { error in
-                        if !errorOccurred {
-                            errorOccurred = true
-                            Task { @MainActor in
-                                saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
-                                showingSaveError = true
-                            }
-                        }
-                    }
-                    imageSaver.writeToPhotoAlbum(image: image)
+                    imageSaver.writeToPhotoAlbum(image: imageToSave)
                 }
             }
         }
@@ -1212,7 +1293,14 @@ struct EventDetailView: View {
 
     func uploadPhotos(_ items: [PhotosPickerItem]) async {
         print("🔵 [UPLOAD START] Beginning photo upload for \(items.count) items")
-        isUploadingPhotos = true
+
+        await MainActor.run {
+            isUploadingPhotos = true
+            totalUploadCount = items.count
+            uploadedCount = 0
+            uploadProgress = 0.0
+        }
+
         var newPhotoURLs: [String] = []
         var uploadErrors: [String] = []
 
@@ -1246,6 +1334,12 @@ struct EventDetailView: View {
                 let photoURL = try await FirebaseManager.shared.uploadEventPhoto(imageData: compressedData)
                 print("🟢 [UPLOAD SUCCESS] Photo \(index + 1) uploaded: \(photoURL)")
                 newPhotoURLs.append(photoURL)
+
+                // Update progress
+                await MainActor.run {
+                    uploadedCount = index + 1
+                    uploadProgress = Double(uploadedCount) / Double(totalUploadCount)
+                }
 
             } catch {
                 print("🔴 [UPLOAD ERROR] Failed to upload photo \(index + 1): \(error)")
@@ -1398,6 +1492,8 @@ struct EditEventView: View {
     @State private var backgroundOffsetY: Double
     @State private var backgroundScale: Double
     @State private var showingBackgroundPicker = false
+    @State private var showingBackgroundError = false
+    @State private var backgroundErrorMessage = ""
 
     init(event: CalendarEvent, onSave: @escaping (CalendarEvent) async -> Void) {
         self.event = event
@@ -1431,6 +1527,11 @@ struct EditEventView: View {
                 Task {
                     await loadBackgroundImage()
                 }
+            }
+            .alert("Background Upload Error", isPresented: $showingBackgroundError) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(backgroundErrorMessage)
             }
         }
     }
@@ -1628,19 +1729,31 @@ struct EditEventView: View {
 
         do {
             guard let data = try await item.loadTransferable(type: Data.self) else {
-                isUploadingBackground = false
+                await MainActor.run {
+                    isUploadingBackground = false
+                    backgroundErrorMessage = "Failed to load image data. Please try a different image."
+                    showingBackgroundError = true
+                }
                 return
             }
 
             // Upload to Firebase Storage
             let url = try await FirebaseManager.shared.uploadEventPhoto(imageData: data)
-            backgroundImageURL = url
-            print("✅ Background image uploaded: \(url)")
+            await MainActor.run {
+                backgroundImageURL = url
+                print("✅ Background image uploaded: \(url)")
+            }
         } catch {
             print("❌ Failed to upload background image: \(error)")
+            await MainActor.run {
+                backgroundErrorMessage = "Failed to upload background image: \(error.localizedDescription)"
+                showingBackgroundError = true
+            }
         }
 
-        isUploadingBackground = false
+        await MainActor.run {
+            isUploadingBackground = false
+        }
     }
 
     func saveEvent() async {
@@ -1949,6 +2062,8 @@ struct MonthSummaryCard: View {
 
     @State private var displayedPhotoURLs: [String] = []
     @State private var shuffleTimer: Timer?
+    @State private var shuffleCount = 0
+    private let maxShuffles = 12 // Stop shuffling after 12 cycles (1 minute at 5s intervals)
 
     var eventCount: Int { events.count }
     var photoCount: Int { events.flatMap { $0.photoURLs }.count }
@@ -2039,21 +2154,23 @@ struct MonthSummaryCard: View {
                                     onPhotoTap(allPhotoURLs, globalIndex)
                                 }
                             }) {
-                                CachedAsyncImage(url: URL(string: photoURL)) { image in
-                                    image
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(maxWidth: .infinity)
-                                        .frame(height: 140)
-                                        .clipped()
-                                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                                } placeholder: {
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(Color.gray.opacity(0.2))
-                                        .frame(maxWidth: .infinity)
-                                        .frame(height: 140)
-                                        .overlay(ProgressView())
+                                AsyncImage(url: URL(string: photoURL)) { phase in
+                                    if let image = phase.image {
+                                        image
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(maxWidth: .infinity)
+                                            .frame(height: 140)
+                                            .clipped()
+                                    } else {
+                                        Color.gray.opacity(0.2)
+                                            .frame(maxWidth: .infinity)
+                                            .frame(height: 140)
+                                            .overlay(ProgressView())
+                                    }
                                 }
+                                .aspectRatio(1, contentMode: .fill)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                             .buttonStyle(PlainButtonStyle())
                             .frame(maxWidth: .infinity)
@@ -2121,13 +2238,23 @@ struct MonthSummaryCard: View {
     func startShuffleTimer() {
         guard allPhotoURLs.count > 4 else { return } // Only shuffle if we have more than 4 photos
 
-        shuffleTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
+        shuffleCount = 0
+        shuffleTimer?.invalidate() // Clean up any existing timer
+        shuffleTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [self] _ in
             shuffleRandomPhoto()
         }
     }
 
     func shuffleRandomPhoto() {
         guard allPhotoURLs.count > 4, displayedPhotoURLs.count == 4 else { return }
+
+        // Stop shuffling after max count to prevent memory leak
+        shuffleCount += 1
+        if shuffleCount >= maxShuffles {
+            shuffleTimer?.invalidate()
+            shuffleTimer = nil
+            return
+        }
 
         withAnimation(.easeInOut(duration: 0.5)) {
             // Pick a random position to replace (0-3)
