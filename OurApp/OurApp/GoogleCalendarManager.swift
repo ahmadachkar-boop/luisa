@@ -77,10 +77,35 @@ class GoogleCalendarManager: ObservableObject {
     // MARK: - Authentication
 
     func checkSignInStatus() {
-        if let user = GIDSignIn.sharedInstance.currentUser {
-            isSignedIn = user.grantedScopes?.contains("https://www.googleapis.com/auth/calendar") ?? false
-        } else {
-            isSignedIn = false
+        // Try to restore previous sign-in
+        GIDSignIn.sharedInstance.restorePreviousSignIn { [weak self] user, error in
+            Task { @MainActor in
+                guard let self = self else { return }
+
+                if let error = error {
+                    print("⚠️ [GOOGLE SIGN-IN] Failed to restore previous sign-in: \(error.localizedDescription)")
+                    self.isSignedIn = false
+                    return
+                }
+
+                if let user = user {
+                    let hasCalendarScope = user.grantedScopes?.contains("https://www.googleapis.com/auth/calendar") ?? false
+                    self.isSignedIn = hasCalendarScope
+
+                    if hasCalendarScope {
+                        print("✅ [GOOGLE SIGN-IN] Restored previous sign-in session")
+                        // Verify we still have the calendar ID
+                        if self.ourAppCalendarId != nil {
+                            print("✅ [GOOGLE CALENDAR] Found existing OurApp calendar ID")
+                        }
+                    } else {
+                        print("⚠️ [GOOGLE SIGN-IN] Restored user but missing calendar scope")
+                        self.isSignedIn = false
+                    }
+                } else {
+                    self.isSignedIn = false
+                }
+            }
         }
     }
 
