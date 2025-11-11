@@ -352,7 +352,7 @@ class GoogleCalendarManager: ObservableObject {
         }
 
         // Fetch events from Google Calendar
-        let googleEvents = try await fetchGoogleCalendarEvents(
+        _ = try await fetchGoogleCalendarEvents(
             user: user,
             calendarId: calendarId,
             startDate: startDate,

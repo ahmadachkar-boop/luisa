@@ -459,7 +459,7 @@ class PhotoGalleryViewModel: ObservableObject {
     }
 
     func uploadPhoto(imageData: Data) async throws {
-        try await firebaseManager.uploadPhoto(
+        _ = try await firebaseManager.uploadPhoto(
             imageData: imageData,
             caption: "",
             uploadedBy: "You"

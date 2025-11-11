@@ -1,6 +1,142 @@
 import SwiftUI
 import PhotosUI
 import MapKit
+import WeatherKit
+import CoreLocation
+
+// MARK: - Timeout Helper
+struct TimeoutError: Error {}
+
+func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            try await operation()
+        }
+
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            throw TimeoutError()
+        }
+
+        let result = try await group.next()!
+        group.cancelAll()
+        return result
+    }
+}
+
+// MARK: - Design Constants
+extension CGFloat {
+    static let cornerRadiusSmall: CGFloat = 12
+    static let cornerRadiusMedium: CGFloat = 16
+    static let cornerRadiusLarge: CGFloat = 24
+}
+
+// MARK: - Timer Manager
+class TimerManager: ObservableObject {
+    static let shared = TimerManager()
+
+    private var timers: [String: Timer] = [:]
+
+    private init() {}
+
+    func schedule(id: String, interval: TimeInterval, repeats: Bool = true, action: @escaping () -> Void) {
+        // Invalidate existing timer if any
+        invalidate(id: id)
+
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: repeats) { _ in
+            action()
+        }
+        timers[id] = timer
+    }
+
+    func invalidate(id: String) {
+        timers[id]?.invalidate()
+        timers[id] = nil
+    }
+
+    func invalidateAll() {
+        timers.values.forEach { $0.invalidate() }
+        timers.removeAll()
+    }
+
+    deinit {
+        invalidateAll()
+    }
+}
+
+// MARK: - Weather Service
+class WeatherService {
+    static let shared = WeatherService()
+    private let weatherService = WeatherKit.WeatherService.shared
+    private let geocoder = CLGeocoder()
+
+    private init() {}
+
+    func fetchWeatherForEvent(location: String, date: Date) async -> String? {
+        // Only fetch weather for future events within the next 10 days
+        guard date > Date(),
+              date.timeIntervalSinceNow < 10 * 24 * 60 * 60 else {
+            return nil
+        }
+
+        do {
+            // Geocode the location to get coordinates
+            let placemarks = try await geocoder.geocodeAddressString(location)
+            guard let coordinate = placemarks.first?.location?.coordinate else {
+                return nil
+            }
+
+            // Fetch weather forecast using WeatherKit
+            let weather = try await weatherService.weather(
+                for: .init(latitude: coordinate.latitude, longitude: coordinate.longitude),
+                including: .daily
+            )
+
+            // Find the forecast for the event date
+            let calendar = Calendar.current
+            let eventDay = calendar.startOfDay(for: date)
+
+            if let dayForecast = weather.first(where: { forecast in
+                calendar.isDate(forecast.date, inSameDayAs: eventDay)
+            }) {
+                // Format weather description
+                let temp = Int(dayForecast.highTemperature.converted(to: .fahrenheit).value)
+                let condition = dayForecast.condition.description
+                let symbol = weatherSymbol(for: dayForecast.condition)
+
+                return "\(symbol) \(condition), \(temp)°F"
+            }
+
+            return nil
+        } catch {
+            print("⚠️ Weather fetch failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func weatherSymbol(for condition: WeatherCondition) -> String {
+        switch condition {
+        case .clear, .mostlyClear:
+            return "☀️"
+        case .partlyCloudy:
+            return "⛅️"
+        case .cloudy, .mostlyCloudy:
+            return "☁️"
+        case .rain, .drizzle, .heavyRain:
+            return "🌧"
+        case .snow, .sleet, .heavySnow:
+            return "❄️"
+        case .thunderstorms:
+            return "⛈"
+        case .windy, .breezy:
+            return "💨"
+        case .foggy, .haze:
+            return "🌫"
+        default:
+            return "🌤"
+        }
+    }
+}
 
 // Wrapper to make Int work with .fullScreenCover(item:)
 struct CalendarPhotoIndex: Identifiable {
@@ -17,6 +153,7 @@ struct RecapPhotoData: Identifiable {
 
 struct CalendarView: View {
     @StateObject private var viewModel = CalendarViewModel()
+    @StateObject private var googleCalendarManager = GoogleCalendarManager.shared
     @State private var showingAddEvent = false
     @State private var selectedDate = Date()
     @State private var showError = false
@@ -28,7 +165,41 @@ struct CalendarView: View {
     @State private var summaryCardExpanded = true // Start expanded
     @State private var recapPhotoData: RecapPhotoData?
     @State private var countdownBannerIndex = 0
-    @State private var countdownResetTimer: Timer?
+    @State private var searchText = ""
+    @State private var selectedTags: Set<String> = []
+    @State private var showingFilterSheet = false
+    @State private var showingSearch = false
+
+    // Memoized filtered events - computed only when dependencies change
+    private var filteredEvents: [CalendarEvent] {
+        let baseEvents = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
+
+        var filtered = baseEvents
+
+        // Only filter by selected day if one is selected
+        if let selectedDay = selectedDay {
+            filtered = filtered.filter { event in
+                Calendar.current.isDate(event.date, equalTo: selectedDay, toGranularity: .day)
+            }
+        }
+
+        // Filter by tags
+        if !selectedTags.isEmpty {
+            filtered = filtered.filter { event in
+                guard let tags = event.tags else { return false }
+                return !selectedTags.isDisjoint(with: tags)
+            }
+        }
+
+        return filtered
+    }
+
+    // Get all unique tags from events
+    private var allTags: [String] {
+        let allEvents = viewModel.events
+        let tags = allEvents.compactMap { $0.tags }.flatMap { $0 }
+        return Array(Set(tags)).sorted()
+    }
 
     var body: some View {
         NavigationView {
@@ -47,6 +218,19 @@ struct CalendarView: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
+                        // Sync indicator
+                        if googleCalendarManager.isSyncing {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("Syncing with Google Calendar...")
+                                    .font(.caption)
+                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                            }
+                            .padding(.vertical, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+
                         // Header with month selector
                         VStack(spacing: 16) {
                             // Month navigation
@@ -114,8 +298,7 @@ struct CalendarView: View {
                                     startCountdownResetTimer()
                                 }
                                 .onDisappear {
-                                    countdownResetTimer?.invalidate()
-                                    countdownResetTimer = nil
+                                    TimerManager.shared.invalidate(id: "countdownReset")
                                 }
                             }
                         }
@@ -155,7 +338,7 @@ struct CalendarView: View {
                         if let selectedDay = selectedDay {
                             FilterHeaderView(
                                 selectedDay: selectedDay,
-                                eventCount: filteredEvents().count,
+                                eventCount: filteredEvents.count,
                                 onClear: {
                                     withAnimation(.spring(response: 0.3)) {
                                         self.selectedDay = nil
@@ -168,13 +351,13 @@ struct CalendarView: View {
                         }
 
                         // Events list
-                        let eventsToShow = filteredEvents()
+                        let eventsToShow = filteredEvents
 
                         if eventsToShow.isEmpty {
                             EmptyStateView(isUpcoming: selectedTab == 0)
                                 .padding(.top, 60)
                         } else {
-                            LazyVStack(spacing: 16) {
+                            LazyVStack(spacing: 12) {
                                 ForEach(eventsToShow) { event in
                                     ModernEventCard(
                                         event: event,
@@ -192,12 +375,29 @@ struct CalendarView: View {
                                             }
                                         }
                                     )
+                                    .contextMenu {
+                                        Button(role: .destructive) {
+                                            Task {
+                                                do {
+                                                    try await viewModel.deleteEvent(event)
+                                                } catch {
+                                                    errorMessage = "Failed to delete event: \(error.localizedDescription)"
+                                                    showError = true
+                                                }
+                                            }
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+                                    }
                                 }
                             }
                             .padding(.horizontal)
                             .padding(.bottom, 100)
                         }
                     }
+                }
+                .refreshable {
+                    await refreshCalendar()
                 }
 
                 // Floating action button
@@ -228,7 +428,7 @@ struct CalendarView: View {
                                     endPoint: .bottomTrailing
                                 )
                             )
-                            .cornerRadius(30)
+                            .cornerRadius(.cornerRadiusLarge)
                             .shadow(color: Color.purple.opacity(0.4), radius: 15, x: 0, y: 8)
                         }
                         .padding(.trailing, 24)
@@ -238,6 +438,32 @@ struct CalendarView: View {
             }
             .navigationTitle("Our Plans")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    HStack(spacing: 16) {
+                        Button(action: {
+                            showingSearch = true
+                        }) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                        }
+
+                        Button(action: {
+                            showingFilterSheet = true
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: selectedTags.isEmpty ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                                if !selectedTags.isEmpty {
+                                    Text("\(selectedTags.count)")
+                                        .font(.caption2)
+                                        .fontWeight(.bold)
+                                }
+                            }
+                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                        }
+                    }
+                }
+            }
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView(initialDate: selectedDate) { event in
                     do {
@@ -277,6 +503,30 @@ struct CalendarView: View {
             } message: {
                 Text(errorMessage)
             }
+            .sheet(isPresented: $showingFilterSheet) {
+                FilterTagsView(allTags: allTags, selectedTags: $selectedTags)
+            }
+            .sheet(isPresented: $showingSearch) {
+                SearchEventsView(
+                    events: viewModel.events,
+                    onEventTap: { event in
+                        showingSearch = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            selectedEventForDetail = event
+                        }
+                    },
+                    onEventDelete: { event in
+                        Task {
+                            do {
+                                try await viewModel.deleteEvent(event)
+                            } catch {
+                                errorMessage = "Failed to delete event: \(error.localizedDescription)"
+                                showError = true
+                            }
+                        }
+                    }
+                )
+            }
             .onChange(of: currentMonth) { oldValue, newValue in
                 // Reset day filter when month changes
                 withAnimation(.spring(response: 0.3)) {
@@ -289,28 +539,14 @@ struct CalendarView: View {
                     countdownBannerIndex = 0
                 }
             }
+            .task {
+                // Fetch weather for existing events when view appears
+                await viewModel.fetchWeatherForEvents()
+            }
         }
     }
 
     // MARK: - Helper Functions
-
-    func filteredEvents() -> [CalendarEvent] {
-        let baseEvents = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
-
-        // Filter by selected month
-        let monthFiltered = baseEvents.filter { event in
-            Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
-        }
-
-        // Further filter by selected day if one is selected
-        if let selectedDay = selectedDay {
-            return monthFiltered.filter { event in
-                Calendar.current.isDate(event.date, equalTo: selectedDay, toGranularity: .day)
-            }
-        }
-
-        return monthFiltered
-    }
 
     func eventsForCurrentMonth() -> [CalendarEvent] {
         return viewModel.events.filter { event in
@@ -326,8 +562,7 @@ struct CalendarView: View {
     }
 
     func startCountdownResetTimer() {
-        countdownResetTimer?.invalidate()
-        countdownResetTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { _ in
+        TimerManager.shared.schedule(id: "countdownReset", interval: 10.0, repeats: false) {
             withAnimation(.easeInOut(duration: 0.5)) {
                 countdownBannerIndex = 0
             }
@@ -337,6 +572,36 @@ struct CalendarView: View {
     func resetCountdownTimer() {
         startCountdownResetTimer()
     }
+
+    func refreshCalendar() async {
+        // Sync with Google Calendar if signed in
+        if googleCalendarManager.isSignedIn {
+            do {
+                try await withTimeout(seconds: 30) {
+                    try await googleCalendarManager.syncEvents()
+                }
+            } catch is TimeoutError {
+                await MainActor.run {
+                    errorMessage = "Google Calendar sync timed out. Please try again."
+                    showError = true
+                }
+            } catch {
+                // Only show error if it's not a cancellation
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        errorMessage = "Failed to sync with Google Calendar: \(error.localizedDescription)"
+                        showError = true
+                    }
+                }
+            }
+        }
+
+        // Reload local events
+        viewModel.loadEvents()
+
+        // Fetch weather for events
+        await viewModel.fetchWeatherForEvents()
+    }
 }
 
 // MARK: - Modern Countdown Banner
@@ -344,7 +609,6 @@ struct ModernCountdownBanner: View {
     let event: CalendarEvent
     let onTap: () -> Void
     @State private var timeRemaining: String = ""
-    @State private var timer: Timer?
 
     var body: some View {
         Button(action: onTap) {
@@ -404,12 +668,14 @@ struct ModernCountdownBanner: View {
         .buttonStyle(PlainButtonStyle())
         .onAppear {
             updateCountdown()
-            timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+            let timerId = "countdown_\(event.id ?? UUID().uuidString)"
+            TimerManager.shared.schedule(id: timerId, interval: 60, repeats: true) {
                 updateCountdown()
             }
         }
         .onDisappear {
-            timer?.invalidate()
+            let timerId = "countdown_\(event.id ?? UUID().uuidString)"
+            TimerManager.shared.invalidate(id: timerId)
         }
     }
 
@@ -482,119 +748,115 @@ struct ModernEventCard: View {
     let event: CalendarEvent
     let onTap: () -> Void
     let onDelete: () -> Void
-    @State private var showingDeleteAlert = false
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(alignment: .top, spacing: 16) {
-                // Date badge
-                VStack(spacing: 4) {
-                    Text(event.date, format: .dateTime.day())
-                        .font(.system(size: 26, weight: .bold))
-                        .foregroundColor(.white)
+        HStack(alignment: .top, spacing: 16) {
+            // Date badge
+            VStack(spacing: 4) {
+                Text(event.date, format: .dateTime.day())
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundColor(.white)
 
-                    Text(event.date, format: .dateTime.month(.abbreviated).year())
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.9))
-                        .textCase(.uppercase)
-                }
-                .frame(width: 70, height: 70)
-                .background(
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 18)
-                            .fill(
-                                LinearGradient(
-                                    colors: event.isSpecial ?
-                                        [Color(red: 0.85, green: 0.35, blue: 0.75), Color(red: 0.65, green: 0.25, blue: 0.9)] :
-                                        [Color(red: 0.6, green: 0.4, blue: 0.85), Color(red: 0.5, green: 0.3, blue: 0.75)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
+                Text(event.date, format: .dateTime.month(.abbreviated).year())
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.9))
+                    .textCase(.uppercase)
+            }
+            .frame(width: 70, height: 70)
+            .background(
+                ZStack {
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(
+                            LinearGradient(
+                                colors: event.isSpecial ?
+                                    [Color(red: 0.85, green: 0.35, blue: 0.75), Color(red: 0.65, green: 0.25, blue: 0.9)] :
+                                    [Color(red: 0.6, green: 0.4, blue: 0.85), Color(red: 0.5, green: 0.3, blue: 0.75)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
                             )
+                        )
 
-                        if event.isSpecial {
-                            RoundedRectangle(cornerRadius: 18)
-                                .strokeBorder(Color.white.opacity(0.3), lineWidth: 2)
-                        }
+                    if event.isSpecial {
+                        RoundedRectangle(cornerRadius: 18)
+                            .strokeBorder(Color.white.opacity(0.3), lineWidth: 2)
                     }
-                )
-                .shadow(color: event.isSpecial ? Color.purple.opacity(0.4) : Color.black.opacity(0.15),
-                        radius: 10, x: 0, y: 4)
+                }
+            )
+            .shadow(color: event.isSpecial ? Color.purple.opacity(0.4) : Color.black.opacity(0.15),
+                    radius: 10, x: 0, y: 4)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    // Title row
-                    HStack(spacing: 8) {
-                        Text(event.title)
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
+            VStack(alignment: .leading, spacing: 8) {
+                // Title row
+                HStack(spacing: 8) {
+                    Text(event.title)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
 
-                        if event.isSpecial {
-                            Image(systemName: "star.fill")
-                                .font(.caption)
-                                .foregroundColor(Color(red: 0.8, green: 0.5, blue: 0.95))
-                        }
-
-                        Spacer()
-
-                        if !event.photoURLs.isEmpty {
-                            HStack(spacing: 2) {
-                                Image(systemName: "photo.fill")
-                                    .font(.caption2)
-                                Text("\(event.photoURLs.count)")
-                                    .font(.caption2)
-                                    .fontWeight(.medium)
-                            }
-                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                        }
-                    }
-
-                    // Time
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock")
+                    if event.isSpecial {
+                        Image(systemName: "star.fill")
                             .font(.caption)
-                        Text(event.date, format: .dateTime.hour().minute())
-                            .font(.system(size: 14))
-                    }
-                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-
-                    // Description
-                    if !event.description.isEmpty {
-                        Text(event.description)
-                            .font(.system(size: 14))
-                            .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
-                            .lineLimit(2)
+                            .foregroundColor(Color(red: 0.8, green: 0.5, blue: 0.95))
                     }
 
-                    // Location
-                    if !event.location.isEmpty {
-                        HStack(spacing: 6) {
-                            Image(systemName: "mappin.circle.fill")
-                                .font(.caption)
-                            Text(event.location)
-                                .font(.system(size: 13))
-                                .lineLimit(1)
+                    Spacer()
+
+                    if !event.photoURLs.isEmpty {
+                        HStack(spacing: 2) {
+                            Image(systemName: "photo.fill")
+                                .font(.caption2)
+                            Text("\(event.photoURLs.count)")
+                                .font(.caption2)
+                                .fontWeight(.medium)
                         }
                         .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                     }
                 }
 
-                VStack(spacing: 12) {
-                    Button(action: {
-                        showingDeleteAlert = true
-                    }) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 15))
-                            .foregroundColor(.red.opacity(0.7))
-                            .frame(width: 32, height: 32)
-                            .background(Color.red.opacity(0.1))
-                            .clipShape(Circle())
+                // Time
+                HStack(spacing: 6) {
+                    Image(systemName: "clock")
+                        .font(.caption)
+                    Text(event.date, format: .dateTime.hour().minute())
+                        .font(.system(size: 14))
+                }
+                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+
+                // Description
+                if !event.description.isEmpty {
+                    Text(event.description)
+                        .font(.system(size: 14))
+                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+                        .lineLimit(2)
+                }
+
+                // Location
+                if !event.location.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "mappin.circle.fill")
+                            .font(.caption)
+                        Text(event.location)
+                            .font(.system(size: 13))
+                            .lineLimit(1)
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+
+                // Weather indicator for upcoming events
+                if let weather = event.weatherForecast, !weather.isEmpty, event.date > Date() {
+                    HStack(spacing: 6) {
+                        Image(systemName: "cloud.sun.fill")
+                            .font(.caption)
+                        Text(weather)
+                            .font(.system(size: 13))
+                            .lineLimit(1)
+                    }
+                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                 }
             }
-            .padding(20)
+
+            Spacer()
         }
-        .buttonStyle(PlainButtonStyle())
+        .padding(20)
         .background(
             ZStack {
                 // Glassmorphism card
@@ -634,11 +896,9 @@ struct ModernEventCard: View {
         )
         .shadow(color: event.isSpecial ? Color.purple.opacity(0.15) : Color.black.opacity(0.06),
                 radius: 15, x: 0, y: 4)
-        .alert("Delete Event?", isPresented: $showingDeleteAlert) {
-            Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive, action: onDelete)
-        } message: {
-            Text("This will remove '\(event.title)' from your plans")
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onTap()
         }
     }
 }
@@ -697,6 +957,9 @@ struct EventDetailView: View {
     @State private var showingEditView = false
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var isUploadingPhotos = false
+    @State private var uploadProgress: Double = 0.0
+    @State private var uploadedCount: Int = 0
+    @State private var totalUploadCount: Int = 0
     @State private var showingErrorAlert = false
     @State private var errorMessage = ""
     @State private var currentEvent: CalendarEvent
@@ -899,23 +1162,40 @@ struct EventDetailView: View {
                             }
                             .padding(.horizontal)
 
+                            // Upload progress bar
+                            if isUploadingPhotos {
+                                VStack(spacing: 8) {
+                                    ProgressView(value: uploadProgress, total: 1.0)
+                                        .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                                    Text("Uploading \(uploadedCount) of \(totalUploadCount) photos...")
+                                        .font(.caption)
+                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                }
+                                .padding(.horizontal)
+                                .padding(.vertical, 8)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
+
                             if !currentEvent.photoURLs.isEmpty {
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack(spacing: 12) {
                                         ForEach(Array(currentEvent.photoURLs.enumerated()), id: \.offset) { index, photoURL in
                                             ZStack(alignment: .topTrailing) {
-                                                CachedAsyncImage(url: URL(string: photoURL)) { image in
-                                                    image
-                                                        .resizable()
-                                                        .scaledToFill()
-                                                        .frame(width: 250, height: 250)
-                                                        .clipShape(RoundedRectangle(cornerRadius: 15))
-                                                } placeholder: {
-                                                    RoundedRectangle(cornerRadius: 15)
-                                                        .fill(Color.gray.opacity(0.2))
-                                                        .frame(width: 250, height: 250)
-                                                        .overlay(ProgressView())
+                                                AsyncImage(url: URL(string: photoURL)) { phase in
+                                                    if let image = phase.image {
+                                                        image
+                                                            .resizable()
+                                                            .scaledToFill()
+                                                            .frame(width: 250, height: 250)
+                                                            .clipped()
+                                                    } else {
+                                                        Color.gray.opacity(0.2)
+                                                            .frame(width: 250, height: 250)
+                                                            .overlay(ProgressView())
+                                                    }
                                                 }
+                                                .clipShape(RoundedRectangle(cornerRadius: 15))
                                                 .overlay(
                                                     selectionMode ?
                                                         RoundedRectangle(cornerRadius: 15)
@@ -1037,6 +1317,19 @@ struct EventDetailView: View {
                     .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
             }
 
+            // Weather (if available and event is upcoming)
+            if let weather = event.weatherForecast, !weather.isEmpty, event.date > Date() {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Weather Forecast", systemImage: "cloud.sun.fill")
+                        .font(.headline)
+                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+
+                    Text(weather)
+                        .font(.body)
+                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                }
+            }
+
             Divider()
 
             // Creator
@@ -1122,8 +1415,38 @@ struct EventDetailView: View {
                 guard index < currentEvent.photoURLs.count else { continue }
                 let photoURL = currentEvent.photoURLs[index]
 
-                // Load image
+                // Load image from cache or download asynchronously
+                let image: UIImage?
                 if let cachedImage = ImageCache.shared.get(forKey: photoURL) {
+                    image = cachedImage
+                } else if let url = URL(string: photoURL) {
+                    // Asynchronous network call - no UI blocking
+                    do {
+                        let (data, _) = try await URLSession.shared.data(from: url)
+                        if let downloadedImage = UIImage(data: data) {
+                            ImageCache.shared.set(downloadedImage, forKey: photoURL)
+                            image = downloadedImage
+                        } else {
+                            image = nil
+                        }
+                    } catch {
+                        if !errorOccurred {
+                            errorOccurred = true
+                            await MainActor.run {
+                                saveErrorMessage = "Failed to download photo: \(error.localizedDescription)"
+                                showingSaveError = true
+                            }
+                        }
+                        continue
+                    }
+                } else {
+                    image = nil
+                }
+
+                guard let imageToSave = image else { continue }
+
+                // Save image to photo album
+                await withCheckedContinuation { continuation in
                     let imageSaver = ImageSaver()
                     imageSaver.successHandler = {
                         savedCount += 1
@@ -1135,6 +1458,7 @@ struct EventDetailView: View {
                                 selectedPhotoIndices.removeAll()
                             }
                         }
+                        continuation.resume()
                     }
                     imageSaver.errorHandler = { error in
                         if !errorOccurred {
@@ -1144,34 +1468,9 @@ struct EventDetailView: View {
                                 showingSaveError = true
                             }
                         }
+                        continuation.resume()
                     }
-                    imageSaver.writeToPhotoAlbum(image: cachedImage)
-                } else if let url = URL(string: photoURL),
-                          let data = try? Data(contentsOf: url),
-                          let image = UIImage(data: data) {
-                    ImageCache.shared.set(image, forKey: photoURL)
-                    let imageSaver = ImageSaver()
-                    imageSaver.successHandler = {
-                        savedCount += 1
-                        if savedCount == totalCount {
-                            Task { @MainActor in
-                                savedPhotoCount = totalCount
-                                showingSaveSuccess = true
-                                selectionMode = false
-                                selectedPhotoIndices.removeAll()
-                            }
-                        }
-                    }
-                    imageSaver.errorHandler = { error in
-                        if !errorOccurred {
-                            errorOccurred = true
-                            Task { @MainActor in
-                                saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
-                                showingSaveError = true
-                            }
-                        }
-                    }
-                    imageSaver.writeToPhotoAlbum(image: image)
+                    imageSaver.writeToPhotoAlbum(image: imageToSave)
                 }
             }
         }
@@ -1212,7 +1511,14 @@ struct EventDetailView: View {
 
     func uploadPhotos(_ items: [PhotosPickerItem]) async {
         print("🔵 [UPLOAD START] Beginning photo upload for \(items.count) items")
-        isUploadingPhotos = true
+
+        await MainActor.run {
+            isUploadingPhotos = true
+            totalUploadCount = items.count
+            uploadedCount = 0
+            uploadProgress = 0.0
+        }
+
         var newPhotoURLs: [String] = []
         var uploadErrors: [String] = []
 
@@ -1246,6 +1552,12 @@ struct EventDetailView: View {
                 let photoURL = try await FirebaseManager.shared.uploadEventPhoto(imageData: compressedData)
                 print("🟢 [UPLOAD SUCCESS] Photo \(index + 1) uploaded: \(photoURL)")
                 newPhotoURLs.append(photoURL)
+
+                // Update progress
+                await MainActor.run {
+                    uploadedCount = index + 1
+                    uploadProgress = Double(uploadedCount) / Double(totalUploadCount)
+                }
 
             } catch {
                 print("🔴 [UPLOAD ERROR] Failed to upload photo \(index + 1): \(error)")
@@ -1309,6 +1621,9 @@ struct AddEventView: View {
     @State private var date: Date
     @State private var isSpecial = false
     @State private var isSaving = false
+    @State private var tags: [String] = []
+    @State private var newTag = ""
+    @State private var showingLocationSearch = false
 
     init(initialDate: Date, onSave: @escaping (CalendarEvent) async -> Void) {
         self.initialDate = initialDate
@@ -1327,15 +1642,69 @@ struct AddEventView: View {
 
                 Section("When & Where") {
                     DatePicker("Date & Time", selection: $date)
-                    TextField("Location (optional)", text: $location)
+
+                    HStack {
+                        TextField("Location (optional)", text: $location)
+                        Button(action: {
+                            showingLocationSearch = true
+                        }) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                        }
+                    }
                 }
 
                 Section {
                     Toggle("Special Event 💜", isOn: $isSpecial)
                 }
+
+                Section("Tags") {
+                    HStack {
+                        TextField("Add tag", text: $newTag)
+                        Button(action: {
+                            let trimmedTag = newTag.trimmingCharacters(in: .whitespaces)
+                            if !trimmedTag.isEmpty && !tags.contains(trimmedTag) {
+                                tags.append(trimmedTag)
+                                newTag = ""
+                            }
+                        }) {
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                        }
+                        .disabled(newTag.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+
+                    if !tags.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(tags, id: \.self) { tag in
+                                    HStack(spacing: 4) {
+                                        Text(tag)
+                                            .font(.caption)
+                                            .foregroundColor(.white)
+                                        Button(action: {
+                                            tags.removeAll { $0 == tag }
+                                        }) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.caption2)
+                                                .foregroundColor(.white.opacity(0.8))
+                                        }
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                    .cornerRadius(12)
+                                }
+                            }
+                        }
+                    }
+                }
             }
             .navigationTitle("New Plan")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showingLocationSearch) {
+                LocationSearchView(location: $location)
+            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
@@ -1362,6 +1731,12 @@ struct AddEventView: View {
     func saveEvent() async {
         isSaving = true
 
+        // Fetch weather if location is provided
+        var weather: String? = nil
+        if !location.isEmpty {
+            weather = await WeatherService.shared.fetchWeatherForEvent(location: location, date: date)
+        }
+
         let event = CalendarEvent(
             id: UUID().uuidString,
             title: title,
@@ -1370,7 +1745,15 @@ struct AddEventView: View {
             location: location,
             createdBy: "You",
             isSpecial: isSpecial,
-            photoURLs: []
+            photoURLs: [],
+            googleCalendarId: nil,
+            lastSyncedAt: nil,
+            backgroundImageURL: nil,
+            backgroundOffsetX: nil,
+            backgroundOffsetY: nil,
+            backgroundScale: nil,
+            tags: tags.isEmpty ? nil : tags,
+            weatherForecast: weather
         )
 
         await onSave(event)
@@ -1398,6 +1781,11 @@ struct EditEventView: View {
     @State private var backgroundOffsetY: Double
     @State private var backgroundScale: Double
     @State private var showingBackgroundPicker = false
+    @State private var showingBackgroundError = false
+    @State private var backgroundErrorMessage = ""
+    @State private var tags: [String]
+    @State private var newTag = ""
+    @State private var showingLocationSearch = false
 
     init(event: CalendarEvent, onSave: @escaping (CalendarEvent) async -> Void) {
         self.event = event
@@ -1411,6 +1799,7 @@ struct EditEventView: View {
         _backgroundOffsetX = State(initialValue: event.backgroundOffsetX ?? 0.0)
         _backgroundOffsetY = State(initialValue: event.backgroundOffsetY ?? 0.0)
         _backgroundScale = State(initialValue: event.backgroundScale ?? 1.0)
+        _tags = State(initialValue: event.tags ?? [])
     }
 
     var body: some View {
@@ -1419,6 +1808,7 @@ struct EditEventView: View {
                 detailsSection
                 whenWhereSection
                 specialEventSection
+                tagsSection
                 backgroundSection
             }
             .navigationTitle("Edit Event")
@@ -1431,6 +1821,14 @@ struct EditEventView: View {
                 Task {
                     await loadBackgroundImage()
                 }
+            }
+            .alert("Background Upload Error", isPresented: $showingBackgroundError) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(backgroundErrorMessage)
+            }
+            .sheet(isPresented: $showingLocationSearch) {
+                LocationSearchView(location: $location)
             }
         }
     }
@@ -1446,13 +1844,66 @@ struct EditEventView: View {
     var whenWhereSection: some View {
         Section("When & Where") {
             DatePicker("Date & Time", selection: $date)
-            TextField("Location (optional)", text: $location)
+
+            HStack {
+                TextField("Location (optional)", text: $location)
+                Button(action: {
+                    showingLocationSearch = true
+                }) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+            }
         }
     }
 
     var specialEventSection: some View {
         Section {
             Toggle("Special Event 💜", isOn: $isSpecial)
+        }
+    }
+
+    var tagsSection: some View {
+        Section("Tags") {
+            HStack {
+                TextField("Add tag", text: $newTag)
+                Button(action: {
+                    let trimmedTag = newTag.trimmingCharacters(in: .whitespaces)
+                    if !trimmedTag.isEmpty && !tags.contains(trimmedTag) {
+                        tags.append(trimmedTag)
+                        newTag = ""
+                    }
+                }) {
+                    Image(systemName: "plus.circle.fill")
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+                .disabled(newTag.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+
+            if !tags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(tags, id: \.self) { tag in
+                            HStack(spacing: 4) {
+                                Text(tag)
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                                Button(action: {
+                                    tags.removeAll { $0 == tag }
+                                }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.caption2)
+                                        .foregroundColor(.white.opacity(0.8))
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color(red: 0.6, green: 0.4, blue: 0.85))
+                            .cornerRadius(12)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1628,23 +2079,41 @@ struct EditEventView: View {
 
         do {
             guard let data = try await item.loadTransferable(type: Data.self) else {
-                isUploadingBackground = false
+                await MainActor.run {
+                    isUploadingBackground = false
+                    backgroundErrorMessage = "Failed to load image data. Please try a different image."
+                    showingBackgroundError = true
+                }
                 return
             }
 
             // Upload to Firebase Storage
             let url = try await FirebaseManager.shared.uploadEventPhoto(imageData: data)
-            backgroundImageURL = url
-            print("✅ Background image uploaded: \(url)")
+            await MainActor.run {
+                backgroundImageURL = url
+                print("✅ Background image uploaded: \(url)")
+            }
         } catch {
             print("❌ Failed to upload background image: \(error)")
+            await MainActor.run {
+                backgroundErrorMessage = "Failed to upload background image: \(error.localizedDescription)"
+                showingBackgroundError = true
+            }
         }
 
-        isUploadingBackground = false
+        await MainActor.run {
+            isUploadingBackground = false
+        }
     }
 
     func saveEvent() async {
         isSaving = true
+
+        // Fetch weather if location is provided and date is in the future
+        var weather: String? = event.weatherForecast
+        if !location.isEmpty && date > Date() {
+            weather = await WeatherService.shared.fetchWeatherForEvent(location: location, date: date)
+        }
 
         var updatedEvent = event
         updatedEvent.title = title
@@ -1656,6 +2125,8 @@ struct EditEventView: View {
         updatedEvent.backgroundOffsetX = backgroundOffsetX
         updatedEvent.backgroundOffsetY = backgroundOffsetY
         updatedEvent.backgroundScale = backgroundScale
+        updatedEvent.tags = tags.isEmpty ? nil : tags
+        updatedEvent.weatherForecast = weather
 
         await onSave(updatedEvent)
         isSaving = false
@@ -1703,6 +2174,23 @@ class CalendarViewModel: ObservableObject {
 
     func deleteEvent(_ event: CalendarEvent) async throws {
         try await firebaseManager.deleteCalendarEvent(event)
+    }
+
+    func fetchWeatherForEvents() async {
+        // Fetch weather for upcoming events that have location but no weather cached
+        let eventsNeedingWeather = upcomingEvents.filter { event in
+            !event.location.isEmpty &&
+            event.weatherForecast == nil &&
+            event.date.timeIntervalSinceNow < 10 * 24 * 60 * 60 // Within 10 days
+        }
+
+        for event in eventsNeedingWeather {
+            if let weather = await WeatherService.shared.fetchWeatherForEvent(location: event.location, date: event.date) {
+                var updatedEvent = event
+                updatedEvent.weatherForecast = weather
+                try? await firebaseManager.updateEvent(updatedEvent)
+            }
+        }
     }
 }
 
@@ -1948,7 +2436,11 @@ struct MonthSummaryCard: View {
     let onPhotoTap: ([String], Int) -> Void
 
     @State private var displayedPhotoURLs: [String] = []
-    @State private var shuffleTimer: Timer?
+    @State private var shuffleCount = 0
+    private let maxShuffles = 12 // Stop shuffling after 12 cycles (1 minute at 5s intervals)
+    private var shuffleTimerId: String {
+        "shuffle_\(month.timeIntervalSince1970)"
+    }
 
     var eventCount: Int { events.count }
     var photoCount: Int { events.flatMap { $0.photoURLs }.count }
@@ -2039,21 +2531,23 @@ struct MonthSummaryCard: View {
                                     onPhotoTap(allPhotoURLs, globalIndex)
                                 }
                             }) {
-                                CachedAsyncImage(url: URL(string: photoURL)) { image in
-                                    image
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(maxWidth: .infinity)
-                                        .frame(height: 140)
-                                        .clipped()
-                                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                                } placeholder: {
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(Color.gray.opacity(0.2))
-                                        .frame(maxWidth: .infinity)
-                                        .frame(height: 140)
-                                        .overlay(ProgressView())
+                                AsyncImage(url: URL(string: photoURL)) { phase in
+                                    if let image = phase.image {
+                                        image
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(maxWidth: .infinity)
+                                            .frame(height: 140)
+                                            .clipped()
+                                    } else {
+                                        Color.gray.opacity(0.2)
+                                            .frame(maxWidth: .infinity)
+                                            .frame(height: 140)
+                                            .overlay(ProgressView())
+                                    }
                                 }
+                                .aspectRatio(1, contentMode: .fill)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                             .buttonStyle(PlainButtonStyle())
                             .frame(maxWidth: .infinity)
@@ -2073,8 +2567,7 @@ struct MonthSummaryCard: View {
                     startShuffleTimer()
                 }
                 .onDisappear {
-                    shuffleTimer?.invalidate()
-                    shuffleTimer = nil
+                    TimerManager.shared.invalidate(id: shuffleTimerId)
                 }
             }
         }
@@ -2121,13 +2614,21 @@ struct MonthSummaryCard: View {
     func startShuffleTimer() {
         guard allPhotoURLs.count > 4 else { return } // Only shuffle if we have more than 4 photos
 
-        shuffleTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
+        shuffleCount = 0
+        TimerManager.shared.schedule(id: shuffleTimerId, interval: 5.0, repeats: true) {
             shuffleRandomPhoto()
         }
     }
 
     func shuffleRandomPhoto() {
         guard allPhotoURLs.count > 4, displayedPhotoURLs.count == 4 else { return }
+
+        // Stop shuffling after max count to prevent memory leak
+        shuffleCount += 1
+        if shuffleCount >= maxShuffles {
+            TimerManager.shared.invalidate(id: shuffleTimerId)
+            return
+        }
 
         withAnimation(.easeInOut(duration: 0.5)) {
             // Pick a random position to replace (0-3)
@@ -2194,6 +2695,294 @@ struct FilterHeaderView: View {
                 .fill(Color.white)
                 .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 2)
         )
+    }
+}
+
+// MARK: - Location Search View
+struct LocationSearchView: View {
+    @Environment(\.dismiss) var dismiss
+    @Binding var location: String
+    @StateObject private var searchCompleter = LocationSearchCompleter()
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section {
+                    TextField("Search location", text: $searchCompleter.searchQuery)
+                        .textFieldStyle(.plain)
+                        .autocorrectionDisabled()
+                }
+
+                if !searchCompleter.results.isEmpty {
+                    Section("Suggestions") {
+                        ForEach(searchCompleter.results, id: \.self) { result in
+                            Button(action: {
+                                location = result.title + (result.subtitle.isEmpty ? "" : ", \(result.subtitle)")
+                                dismiss()
+                            }) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(result.title)
+                                        .foregroundColor(.primary)
+                                        .fontWeight(.medium)
+                                    if !result.subtitle.isEmpty {
+                                        Text(result.subtitle)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Search Location")
+            .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: searchCompleter.searchQuery) { oldValue, newValue in
+                searchCompleter.search()
+            }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Location Search Completer
+class LocationSearchCompleter: NSObject, ObservableObject {
+    @Published var searchQuery = ""
+    @Published var results: [MKLocalSearchCompletion] = []
+
+    private let completer = MKLocalSearchCompleter()
+
+    override init() {
+        super.init()
+        completer.delegate = self
+        completer.resultTypes = [.address, .pointOfInterest]
+    }
+
+    func search() {
+        completer.queryFragment = searchQuery
+    }
+}
+
+extension LocationSearchCompleter: MKLocalSearchCompleterDelegate {
+    func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        DispatchQueue.main.async {
+            self.results = completer.results
+        }
+    }
+
+    func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+        print("Location search error: \(error.localizedDescription)")
+    }
+}
+
+// MARK: - Search Events View
+struct SearchEventsView: View {
+    @Environment(\.dismiss) var dismiss
+    let events: [CalendarEvent]
+    let onEventTap: (CalendarEvent) -> Void
+    let onEventDelete: (CalendarEvent) -> Void
+
+    @State private var searchText = ""
+
+    private var searchResults: [CalendarEvent] {
+        if searchText.isEmpty {
+            return events.sorted { $0.date > $1.date }
+        }
+
+        return events.filter { event in
+            event.title.localizedCaseInsensitiveContains(searchText) ||
+            event.description.localizedCaseInsensitiveContains(searchText) ||
+            event.location.localizedCaseInsensitiveContains(searchText) ||
+            (event.tags?.contains { $0.localizedCaseInsensitiveContains(searchText) } ?? false)
+        }.sorted { $0.date > $1.date }
+    }
+
+    var body: some View {
+        NavigationView {
+            List {
+                if searchResults.isEmpty {
+                    Section {
+                        VStack(spacing: 12) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 48))
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.5))
+
+                            Text(searchText.isEmpty ? "Start typing to search" : "No events found")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+
+                            if !searchText.isEmpty {
+                                Text("Try searching by title, description, location, or tags")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
+                    }
+                    .listRowBackground(Color.clear)
+                } else {
+                    ForEach(searchResults) { event in
+                        Button(action: {
+                            onEventTap(event)
+                        }) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(event.title)
+                                            .font(.headline)
+                                            .foregroundColor(.primary)
+
+                                        Text(event.date, format: .dateTime.month().day().year())
+                                            .font(.subheadline)
+                                            .foregroundColor(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    VStack(alignment: .trailing, spacing: 4) {
+                                        if event.date > Date() {
+                                            Text("Upcoming")
+                                                .font(.caption)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(Color.blue.opacity(0.2))
+                                                .foregroundColor(.blue)
+                                                .cornerRadius(8)
+                                        } else {
+                                            Text("Memory")
+                                                .font(.caption)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(Color.purple.opacity(0.2))
+                                                .foregroundColor(.purple)
+                                                .cornerRadius(8)
+                                        }
+
+                                        if event.isSpecial {
+                                            Image(systemName: "star.fill")
+                                                .foregroundColor(Color(red: 0.7, green: 0.4, blue: 0.9))
+                                                .font(.caption)
+                                        }
+                                    }
+                                }
+
+                                if !event.location.isEmpty {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "mappin.circle.fill")
+                                            .font(.caption)
+                                        Text(event.location)
+                                            .font(.caption)
+                                    }
+                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                }
+
+                                if let tags = event.tags, !tags.isEmpty {
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 6) {
+                                            ForEach(tags, id: \.self) { tag in
+                                                Text(tag)
+                                                    .font(.caption2)
+                                                    .padding(.horizontal, 8)
+                                                    .padding(.vertical, 4)
+                                                    .background(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.2))
+                                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                                    .cornerRadius(8)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                onEventDelete(event)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search all events...")
+            .navigationTitle("Search Events")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Filter Tags View
+struct FilterTagsView: View {
+    @Environment(\.dismiss) var dismiss
+    let allTags: [String]
+    @Binding var selectedTags: Set<String>
+
+    var body: some View {
+        NavigationView {
+            List {
+                if allTags.isEmpty {
+                    Section {
+                        Text("No tags available")
+                            .foregroundColor(.secondary)
+                            .font(.subheadline)
+                    }
+                } else {
+                    Section("Filter by Tags") {
+                        ForEach(allTags, id: \.self) { tag in
+                            Button(action: {
+                                if selectedTags.contains(tag) {
+                                    selectedTags.remove(tag)
+                                } else {
+                                    selectedTags.insert(tag)
+                                }
+                            }) {
+                                HStack {
+                                    Text(tag)
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    if selectedTags.contains(tag) {
+                                        Image(systemName: "checkmark")
+                                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Filter Events")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Clear All") {
+                        selectedTags.removeAll()
+                    }
+                    .disabled(selectedTags.isEmpty)
+                }
+
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
     }
 }
 
