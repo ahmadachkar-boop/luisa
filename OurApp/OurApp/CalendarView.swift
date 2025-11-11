@@ -148,6 +148,7 @@ struct CalendarView: View {
     @State private var searchText = ""
     @State private var selectedTags: Set<String> = []
     @State private var showingFilterSheet = false
+    @State private var showingSearch = false
 
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
@@ -162,15 +163,6 @@ struct CalendarView: View {
         if let selectedDay = selectedDay {
             filtered = filtered.filter { event in
                 Calendar.current.isDate(event.date, equalTo: selectedDay, toGranularity: .day)
-            }
-        }
-
-        // Filter by search text
-        if !searchText.isEmpty {
-            filtered = filtered.filter { event in
-                event.title.localizedCaseInsensitiveContains(searchText) ||
-                event.description.localizedCaseInsensitiveContains(searchText) ||
-                event.location.localizedCaseInsensitiveContains(searchText)
             }
         }
 
@@ -348,7 +340,7 @@ struct CalendarView: View {
                             EmptyStateView(isUpcoming: selectedTab == 0)
                                 .padding(.top, 60)
                         } else {
-                            LazyVStack(spacing: 16) {
+                            List {
                                 ForEach(eventsToShow) { event in
                                     ModernEventCard(
                                         event: event,
@@ -366,6 +358,9 @@ struct CalendarView: View {
                                             }
                                         }
                                     )
+                                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
                                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                         Button(role: .destructive) {
                                             Task {
@@ -382,7 +377,8 @@ struct CalendarView: View {
                                     }
                                 }
                             }
-                            .padding(.horizontal)
+                            .listStyle(.plain)
+                            .scrollContentBackground(.hidden)
                             .padding(.bottom, 100)
                         }
                     }
@@ -431,22 +427,30 @@ struct CalendarView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        showingFilterSheet = true
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: selectedTags.isEmpty ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
-                            if !selectedTags.isEmpty {
-                                Text("\(selectedTags.count)")
-                                    .font(.caption2)
-                                    .fontWeight(.bold)
-                            }
+                    HStack(spacing: 16) {
+                        Button(action: {
+                            showingSearch = true
+                        }) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                         }
-                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                        Button(action: {
+                            showingFilterSheet = true
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: selectedTags.isEmpty ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                                if !selectedTags.isEmpty {
+                                    Text("\(selectedTags.count)")
+                                        .font(.caption2)
+                                        .fontWeight(.bold)
+                                }
+                            }
+                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                        }
                     }
                 }
             }
-            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search events...")
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView(initialDate: selectedDate) { event in
                     do {
@@ -488,6 +492,27 @@ struct CalendarView: View {
             }
             .sheet(isPresented: $showingFilterSheet) {
                 FilterTagsView(allTags: allTags, selectedTags: $selectedTags)
+            }
+            .sheet(isPresented: $showingSearch) {
+                SearchEventsView(
+                    events: viewModel.events,
+                    onEventTap: { event in
+                        showingSearch = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            selectedEventForDetail = event
+                        }
+                    },
+                    onEventDelete: { event in
+                        Task {
+                            do {
+                                try await viewModel.deleteEvent(event)
+                            } catch {
+                                errorMessage = "Failed to delete event: \(error.localizedDescription)"
+                                showError = true
+                            }
+                        }
+                    }
+                )
             }
             .onChange(of: currentMonth) { oldValue, newValue in
                 // Reset day filter when month changes
@@ -2724,6 +2749,152 @@ extension LocationSearchCompleter: MKLocalSearchCompleterDelegate {
 
     func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
         print("Location search error: \(error.localizedDescription)")
+    }
+}
+
+// MARK: - Search Events View
+struct SearchEventsView: View {
+    @Environment(\.dismiss) var dismiss
+    let events: [CalendarEvent]
+    let onEventTap: (CalendarEvent) -> Void
+    let onEventDelete: (CalendarEvent) -> Void
+
+    @State private var searchText = ""
+
+    private var searchResults: [CalendarEvent] {
+        if searchText.isEmpty {
+            return events.sorted { $0.date > $1.date }
+        }
+
+        return events.filter { event in
+            event.title.localizedCaseInsensitiveContains(searchText) ||
+            event.description.localizedCaseInsensitiveContains(searchText) ||
+            event.location.localizedCaseInsensitiveContains(searchText) ||
+            (event.tags?.contains { $0.localizedCaseInsensitiveContains(searchText) } ?? false)
+        }.sorted { $0.date > $1.date }
+    }
+
+    var body: some View {
+        NavigationView {
+            List {
+                if searchResults.isEmpty {
+                    Section {
+                        VStack(spacing: 12) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 48))
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.5))
+
+                            Text(searchText.isEmpty ? "Start typing to search" : "No events found")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+
+                            if !searchText.isEmpty {
+                                Text("Try searching by title, description, location, or tags")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
+                    }
+                    .listRowBackground(Color.clear)
+                } else {
+                    ForEach(searchResults) { event in
+                        Button(action: {
+                            onEventTap(event)
+                        }) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(event.title)
+                                            .font(.headline)
+                                            .foregroundColor(.primary)
+
+                                        Text(event.date, format: .dateTime.month().day().year())
+                                            .font(.subheadline)
+                                            .foregroundColor(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    VStack(alignment: .trailing, spacing: 4) {
+                                        if event.date > Date() {
+                                            Text("Upcoming")
+                                                .font(.caption)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(Color.blue.opacity(0.2))
+                                                .foregroundColor(.blue)
+                                                .cornerRadius(8)
+                                        } else {
+                                            Text("Memory")
+                                                .font(.caption)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(Color.purple.opacity(0.2))
+                                                .foregroundColor(.purple)
+                                                .cornerRadius(8)
+                                        }
+
+                                        if event.isSpecial {
+                                            Image(systemName: "star.fill")
+                                                .foregroundColor(Color(red: 0.7, green: 0.4, blue: 0.9))
+                                                .font(.caption)
+                                        }
+                                    }
+                                }
+
+                                if !event.location.isEmpty {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "mappin.circle.fill")
+                                            .font(.caption)
+                                        Text(event.location)
+                                            .font(.caption)
+                                    }
+                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                }
+
+                                if let tags = event.tags, !tags.isEmpty {
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 6) {
+                                            ForEach(tags, id: \.self) { tag in
+                                                Text(tag)
+                                                    .font(.caption2)
+                                                    .padding(.horizontal, 8)
+                                                    .padding(.vertical, 4)
+                                                    .background(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.2))
+                                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                                    .cornerRadius(8)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                onEventDelete(event)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search all events...")
+            .navigationTitle("Search Events")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
     }
 }
 
