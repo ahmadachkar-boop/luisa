@@ -170,7 +170,7 @@ struct CalendarView: View {
     @State private var showingFilterSheet = false
     @State private var showingSearch = false
     @State private var showingToolDrawer = false
-    @State private var expandedCardId: UUID? = nil
+    @State private var expandedCardId: String? = nil
 
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
@@ -733,7 +733,7 @@ struct ModernEventCard: View {
     let event: CalendarEvent
     let onTap: () -> Void
     let onDelete: () -> Void
-    @Binding var expandedCardId: UUID?
+    @Binding var expandedCardId: String?
 
     private var isExpanded: Bool {
         expandedCardId == event.id
