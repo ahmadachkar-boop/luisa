@@ -35,103 +35,103 @@ struct CalendarView: View {
                 )
                 .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    // Header with month selector
-                    VStack(spacing: 16) {
-                        // Month navigation
-                        HStack {
-                            Button(action: {
-                                withAnimation(.spring(response: 0.3)) {
-                                    currentMonth = Calendar.current.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        // Header with month selector
+                        VStack(spacing: 16) {
+                            // Month navigation
+                            HStack {
+                                Button(action: {
+                                    withAnimation(.spring(response: 0.3)) {
+                                        currentMonth = Calendar.current.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
+                                    }
+                                }) {
+                                    Image(systemName: "chevron.left")
+                                        .font(.title3)
+                                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                        .frame(width: 44, height: 44)
                                 }
-                            }) {
-                                Image(systemName: "chevron.left")
-                                    .font(.title3)
-                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                                    .frame(width: 44, height: 44)
-                            }
 
-                            Spacer()
+                                Spacer()
 
-                            VStack(spacing: 2) {
-                                Text(currentMonth, format: .dateTime.month(.wide))
-                                    .font(.title2)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
+                                VStack(spacing: 2) {
+                                    Text(currentMonth, format: .dateTime.month(.wide))
+                                        .font(.title2)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
 
-                                Text(currentMonth, format: .dateTime.year())
-                                    .font(.caption)
-                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                            }
-
-                            Spacer()
-
-                            Button(action: {
-                                withAnimation(.spring(response: 0.3)) {
-                                    currentMonth = Calendar.current.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
+                                    Text(currentMonth, format: .dateTime.year())
+                                        .font(.caption)
+                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
                                 }
-                            }) {
-                                Image(systemName: "chevron.right")
-                                    .font(.title3)
-                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                                    .frame(width: 44, height: 44)
+
+                                Spacer()
+
+                                Button(action: {
+                                    withAnimation(.spring(response: 0.3)) {
+                                        currentMonth = Calendar.current.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
+                                    }
+                                }) {
+                                    Image(systemName: "chevron.right")
+                                        .font(.title3)
+                                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                        .frame(width: 44, height: 44)
+                                }
+                            }
+                            .padding(.horizontal)
+
+                            // Countdown Banner
+                            if let nextEvent = viewModel.upcomingEvents.first {
+                                ModernCountdownBanner(event: nextEvent)
+                                    .padding(.horizontal)
+                                    .transition(.move(edge: .top).combined(with: .opacity))
                             }
                         }
-                        .padding(.horizontal)
+                        .padding(.top, 8)
+                        .padding(.bottom, 16)
 
-                        // Countdown Banner
-                        if let nextEvent = viewModel.upcomingEvents.first {
-                            ModernCountdownBanner(event: nextEvent)
-                                .padding(.horizontal)
-                                .transition(.move(edge: .top).combined(with: .opacity))
-                        }
-                    }
-                    .padding(.top, 8)
-                    .padding(.bottom, 16)
-
-                    // Calendar Grid
-                    CalendarGridView(
-                        currentMonth: currentMonth,
-                        events: viewModel.events,
-                        selectedDay: $selectedDay
-                    )
-                    .padding(.horizontal)
-                    .padding(.bottom, 16)
-
-                    // Month Summary Card (only for past months)
-                    if isMonthInPast(currentMonth) {
-                        MonthSummaryCard(
-                            month: currentMonth,
-                            events: eventsForCurrentMonth(),
-                            isExpanded: $summaryCardExpanded
+                        // Calendar Grid
+                        CalendarGridView(
+                            currentMonth: currentMonth,
+                            events: viewModel.events,
+                            selectedDay: $selectedDay
                         )
                         .padding(.horizontal)
                         .padding(.bottom, 16)
-                    }
 
-                    // Custom Tab Selector
-                    ModernTabSelector(selectedTab: $selectedTab)
-                        .padding(.horizontal)
-                        .padding(.bottom, 12)
+                        // Month Summary Card (only for past months)
+                        if isMonthInPast(currentMonth) {
+                            MonthSummaryCard(
+                                month: currentMonth,
+                                events: eventsForCurrentMonth(),
+                                isExpanded: $summaryCardExpanded
+                            )
+                            .padding(.horizontal)
+                            .padding(.bottom, 16)
+                        }
 
-                    // Filter indicator
-                    if let selectedDay = selectedDay {
-                        FilterHeaderView(
-                            selectedDay: selectedDay,
-                            eventCount: filteredEvents().count,
-                            onClear: {
-                                withAnimation(.spring(response: 0.3)) {
-                                    self.selectedDay = nil
+                        // Custom Tab Selector
+                        ModernTabSelector(selectedTab: $selectedTab)
+                            .padding(.horizontal)
+                            .padding(.bottom, 12)
+
+                        // Filter indicator
+                        if let selectedDay = selectedDay {
+                            FilterHeaderView(
+                                selectedDay: selectedDay,
+                                eventCount: filteredEvents().count,
+                                onClear: {
+                                    withAnimation(.spring(response: 0.3)) {
+                                        self.selectedDay = nil
+                                    }
                                 }
-                            }
-                        )
-                        .padding(.horizontal)
-                        .padding(.bottom, 12)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    }
+                            )
+                            .padding(.horizontal)
+                            .padding(.bottom, 12)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
 
-                    // Events list
-                    ScrollView(showsIndicators: false) {
+                        // Events list
                         let eventsToShow = filteredEvents()
 
                         if eventsToShow.isEmpty {
