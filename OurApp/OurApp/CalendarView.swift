@@ -1,7 +1,6 @@
 import SwiftUI
 import PhotosUI
 import MapKit
-import WeatherKit
 import CoreLocation
 
 // MARK: - Design Constants
@@ -47,15 +46,14 @@ class TimerManager: ObservableObject {
 // MARK: - Weather Service
 class WeatherService {
     static let shared = WeatherService()
-    private let weatherService = WeatherKit.WeatherService.shared
     private let geocoder = CLGeocoder()
 
     private init() {}
 
     func fetchWeatherForEvent(location: String, date: Date) async -> String? {
-        // Only fetch weather for future events within the next 10 days
+        // Only fetch weather for future events within the next 7 days
         guard date > Date(),
-              date.timeIntervalSinceNow < 10 * 24 * 60 * 60 else {
+              date.timeIntervalSinceNow < 7 * 24 * 60 * 60 else {
             return nil
         }
 
@@ -63,30 +61,44 @@ class WeatherService {
             // Geocode the location to get coordinates
             let placemarks = try await geocoder.geocodeAddressString(location)
             guard let coordinate = placemarks.first?.location?.coordinate else {
+                print("⚠️ Weather: Could not geocode location")
                 return nil
             }
 
-            // Fetch weather forecast
-            let weather = try await weatherService.weather(
-                for: .init(latitude: coordinate.latitude, longitude: coordinate.longitude),
-                including: .daily
-            )
+            // Use Open-Meteo API (free, no authentication required)
+            let lat = coordinate.latitude
+            let lon = coordinate.longitude
 
-            // Find the forecast for the event date
-            let calendar = Calendar.current
-            let eventDay = calendar.startOfDay(for: date)
+            let urlString = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&daily=temperature_2m_max,weathercode&temperature_unit=fahrenheit&timezone=auto"
 
-            if let dayForecast = weather.first(where: { forecast in
-                calendar.isDate(forecast.date, inSameDayAs: eventDay)
-            }) {
-                // Format weather description
-                let temp = dayForecast.highTemperature.value
-                let condition = dayForecast.condition.description
-                let symbol = weatherSymbol(for: dayForecast.condition)
+            guard let url = URL(string: urlString) else { return nil }
 
-                return "\(symbol) \(condition), \(Int(temp))°"
+            let (data, _) = try await URLSession.shared.data(from: url)
+
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let daily = json["daily"] as? [String: Any],
+                  let dates = daily["time"] as? [String],
+                  let temps = daily["temperature_2m_max"] as? [Double],
+                  let weatherCodes = daily["weathercode"] as? [Int] else {
+                print("⚠️ Weather: Failed to parse response")
+                return nil
             }
 
+            // Find the forecast for the event date
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd"
+            let eventDateString = dateFormatter.string(from: date)
+
+            if let index = dates.firstIndex(of: eventDateString) {
+                let temp = temps[index]
+                let weatherCode = weatherCodes[index]
+                let symbol = weatherSymbol(for: weatherCode)
+                let condition = weatherDescription(for: weatherCode)
+
+                return "\(symbol) \(condition), \(Int(temp))°F"
+            }
+
+            print("⚠️ Weather: Date not found in forecast")
             return nil
         } catch {
             print("⚠️ Weather fetch failed: \(error.localizedDescription)")
@@ -94,26 +106,67 @@ class WeatherService {
         }
     }
 
-    private func weatherSymbol(for condition: WeatherCondition) -> String {
-        switch condition {
-        case .clear, .mostlyClear:
-            return "☀️"
-        case .partlyCloudy:
-            return "⛅️"
-        case .cloudy, .mostlyCloudy:
-            return "☁️"
-        case .rain, .drizzle, .heavyRain:
-            return "🌧"
-        case .snow, .sleet, .heavySnow:
-            return "❄️"
-        case .thunderstorms:
-            return "⛈"
-        case .windy, .breezy:
-            return "💨"
-        case .foggy, .haze:
-            return "🌫"
+    private func weatherSymbol(for code: Int) -> String {
+        switch code {
+        case 0:
+            return "☀️"  // Clear sky
+        case 1, 2:
+            return "🌤"  // Mainly clear, partly cloudy
+        case 3:
+            return "☁️"  // Overcast
+        case 45, 48:
+            return "🌫"  // Fog
+        case 51, 53, 55:
+            return "🌦"  // Drizzle
+        case 61, 63, 65:
+            return "🌧"  // Rain
+        case 71, 73, 75:
+            return "❄️"  // Snow
+        case 77:
+            return "🌨"  // Snow grains
+        case 80, 81, 82:
+            return "🌧"  // Rain showers
+        case 85, 86:
+            return "🌨"  // Snow showers
+        case 95:
+            return "⛈"  // Thunderstorm
+        case 96, 99:
+            return "⛈"  // Thunderstorm with hail
         default:
             return "🌤"
+        }
+    }
+
+    private func weatherDescription(for code: Int) -> String {
+        switch code {
+        case 0:
+            return "Clear"
+        case 1:
+            return "Mostly Clear"
+        case 2:
+            return "Partly Cloudy"
+        case 3:
+            return "Cloudy"
+        case 45, 48:
+            return "Foggy"
+        case 51, 53, 55:
+            return "Drizzle"
+        case 61, 63, 65:
+            return "Rain"
+        case 71, 73, 75:
+            return "Snow"
+        case 77:
+            return "Snow"
+        case 80, 81, 82:
+            return "Showers"
+        case 85, 86:
+            return "Snow Showers"
+        case 95:
+            return "Thunderstorm"
+        case 96, 99:
+            return "Thunderstorm"
+        default:
+            return "Partly Cloudy"
         }
     }
 }
