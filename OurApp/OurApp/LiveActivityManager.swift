@@ -45,12 +45,35 @@ class LiveActivityManager: ObservableObject {
             let attributes = EventActivityAttributes(eventId: event.id ?? UUID().uuidString)
 
             do {
+                // Check if activities are enabled
+                let authorizationInfo = ActivityAuthorizationInfo()
+                print("🔍 Live Activity Debug:")
+                print("  - Activities enabled: \(authorizationInfo.areActivitiesEnabled)")
+                print("  - Frequent pushes enabled: \(authorizationInfo.frequentPushesEnabled)")
+
                 let activity = try Activity<EventActivityAttributes>.request(
                     attributes: attributes,
                     contentState: contentState,
                     pushType: nil
                 )
                 currentActivity = activity
+                print("✅ Live Activity started successfully!")
+            } catch let error as NSError {
+                print("❌ Failed to start Live Activity:")
+                print("  - Error: \(error)")
+                print("  - Code: \(error.code)")
+                print("  - Domain: \(error.domain)")
+                print("  - Description: \(error.localizedDescription)")
+
+                if error.domain == "ActivityKitErrorDomain" {
+                    switch error.code {
+                    case -10:
+                        print("  ⚠️ This error means the Widget Extension can't find EventLiveActivity")
+                        print("  ⚠️ Make sure EventLiveActivity.swift is in the OurAppWidgets target!")
+                    default:
+                        print("  ⚠️ Unknown ActivityKit error code")
+                    }
+                }
             } catch {
                 print("❌ Failed to start Live Activity: \(error)")
             }
