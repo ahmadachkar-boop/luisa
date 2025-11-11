@@ -1,6 +1,8 @@
 import SwiftUI
 import PhotosUI
 import MapKit
+import WeatherKit
+import CoreLocation
 
 // MARK: - Design Constants
 extension CGFloat {
@@ -39,6 +41,80 @@ class TimerManager: ObservableObject {
 
     deinit {
         invalidateAll()
+    }
+}
+
+// MARK: - Weather Service
+class WeatherService {
+    static let shared = WeatherService()
+    private let weatherService = WeatherKit.WeatherService.shared
+    private let geocoder = CLGeocoder()
+
+    private init() {}
+
+    func fetchWeatherForEvent(location: String, date: Date) async -> String? {
+        // Only fetch weather for future events within the next 10 days
+        guard date > Date(),
+              date.timeIntervalSinceNow < 10 * 24 * 60 * 60 else {
+            return nil
+        }
+
+        do {
+            // Geocode the location to get coordinates
+            let placemarks = try await geocoder.geocodeAddressString(location)
+            guard let coordinate = placemarks.first?.location?.coordinate else {
+                return nil
+            }
+
+            // Fetch weather forecast
+            let weather = try await weatherService.weather(
+                for: .init(latitude: coordinate.latitude, longitude: coordinate.longitude),
+                including: .daily
+            )
+
+            // Find the forecast for the event date
+            let calendar = Calendar.current
+            let eventDay = calendar.startOfDay(for: date)
+
+            if let dayForecast = weather.first(where: { forecast in
+                calendar.isDate(forecast.date, inSameDayAs: eventDay)
+            }) {
+                // Format weather description
+                let temp = dayForecast.highTemperature.value
+                let condition = dayForecast.condition.description
+                let symbol = weatherSymbol(for: dayForecast.condition)
+
+                return "\(symbol) \(condition), \(Int(temp))°"
+            }
+
+            return nil
+        } catch {
+            print("⚠️ Weather fetch failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func weatherSymbol(for condition: WeatherCondition) -> String {
+        switch condition {
+        case .clear, .mostlyClear:
+            return "☀️"
+        case .partlyCloudy:
+            return "⛅️"
+        case .cloudy, .mostlyCloudy:
+            return "☁️"
+        case .rain, .drizzle, .heavyRain:
+            return "🌧"
+        case .snow, .sleet, .heavySnow:
+            return "❄️"
+        case .thunderstorms:
+            return "⛈"
+        case .windy, .breezy:
+            return "💨"
+        case .foggy, .haze:
+            return "🌫"
+        default:
+            return "🌤"
+        }
     }
 }
 
@@ -1618,6 +1694,12 @@ struct AddEventView: View {
     func saveEvent() async {
         isSaving = true
 
+        // Fetch weather if location is provided
+        var weather: String? = nil
+        if !location.isEmpty {
+            weather = await WeatherService.shared.fetchWeatherForEvent(location: location, date: date)
+        }
+
         let event = CalendarEvent(
             id: UUID().uuidString,
             title: title,
@@ -1634,7 +1716,7 @@ struct AddEventView: View {
             backgroundOffsetY: nil,
             backgroundScale: nil,
             tags: tags.isEmpty ? nil : tags,
-            weatherForecast: nil
+            weatherForecast: weather
         )
 
         await onSave(event)
@@ -1990,6 +2072,12 @@ struct EditEventView: View {
     func saveEvent() async {
         isSaving = true
 
+        // Fetch weather if location is provided and date is in the future
+        var weather: String? = event.weatherForecast
+        if !location.isEmpty && date > Date() {
+            weather = await WeatherService.shared.fetchWeatherForEvent(location: location, date: date)
+        }
+
         var updatedEvent = event
         updatedEvent.title = title
         updatedEvent.description = description
@@ -2001,6 +2089,7 @@ struct EditEventView: View {
         updatedEvent.backgroundOffsetY = backgroundOffsetY
         updatedEvent.backgroundScale = backgroundScale
         updatedEvent.tags = tags.isEmpty ? nil : tags
+        updatedEvent.weatherForecast = weather
 
         await onSave(updatedEvent)
         isSaving = false
