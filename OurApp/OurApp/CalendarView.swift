@@ -171,7 +171,6 @@ struct CalendarView: View {
     @State private var showingSearch = false
     @State private var showingToolDrawer = false
     @State private var expandedCardId: String? = nil
-    @State private var dynamicIslandIndex = 0
 
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
@@ -403,23 +402,6 @@ struct CalendarView: View {
 
                         Spacer()
                     }
-                }
-
-                // DYNAMIC ISLAND OVERLAY (stays visible when scrolling)
-                VStack {
-                    DynamicIslandBanner(
-                        events: viewModel.upcomingEvents,
-                        selectedIndex: $dynamicIslandIndex,
-                        onEventTap: { event in
-                            selectedEventForDetail = event
-                        },
-                        countdownText: { event in
-                            countdownText(for: event)
-                        }
-                    )
-                    .padding(.top, 8)
-
-                    Spacer()
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -3355,101 +3337,6 @@ struct ToolDrawerView: View {
             }
         )
         .padding(.horizontal, 16)
-    }
-}
-
-// MARK: - Dynamic Island Banner
-struct DynamicIslandBanner: View {
-    let events: [CalendarEvent]
-    @Binding var selectedIndex: Int
-    let onEventTap: (CalendarEvent) -> Void
-    let countdownText: (CalendarEvent) -> String
-
-    var body: some View {
-        if !events.isEmpty {
-            let eventsToShow = Array(events.prefix(5))
-
-            TabView(selection: $selectedIndex) {
-                ForEach(Array(eventsToShow.enumerated()), id: \.element.id) { index, event in
-                    Button(action: {
-                        onEventTap(event)
-                    }) {
-                        HStack(spacing: 0) {
-                            // Left side: Event name with icon
-                            HStack(spacing: 8) {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color.white.opacity(0.15))
-                                        .frame(width: 28, height: 28)
-
-                                    Image(systemName: event.isSpecial ? "star.fill" : "calendar")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundColor(.white)
-                                }
-
-                                Text(event.title)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(.white)
-                                    .lineLimit(1)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-
-                            Spacer(minLength: 12)
-
-                            // Right side: Countdown
-                            Text(countdownText(event))
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.white.opacity(0.9))
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-                        }
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 12)
-                        .frame(maxWidth: .infinity)
-                        .background(
-                            Capsule()
-                                .fill(
-                                    LinearGradient(
-                                        colors: event.isSpecial ?
-                                            [Color.black.opacity(0.85), Color(red: 0.15, green: 0.1, blue: 0.2)] :
-                                            [Color.black.opacity(0.75), Color(red: 0.1, green: 0.1, blue: 0.15)],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
-                                .shadow(color: Color.black.opacity(0.4), radius: 12, x: 0, y: 6)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .tag(index)
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .frame(height: 52)
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 20)
-            .onChange(of: selectedIndex) { oldValue, newValue in
-                resetAutoSwipeTimer()
-            }
-            .onAppear {
-                startAutoSwipeTimer()
-            }
-            .onDisappear {
-                TimerManager.shared.invalidate(id: "dynamicIslandAutoSwipe")
-            }
-        }
-    }
-
-    private func startAutoSwipeTimer() {
-        TimerManager.shared.schedule(id: "dynamicIslandAutoSwipe", interval: 10.0, repeats: false) {
-            withAnimation(.easeInOut(duration: 0.5)) {
-                selectedIndex = 0
-            }
-        }
-    }
-
-    private func resetAutoSwipeTimer() {
-        startAutoSwipeTimer()
     }
 }
 
