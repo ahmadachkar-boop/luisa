@@ -30,6 +30,12 @@ struct ContentView: View {
                         Label("Wish List", systemImage: "star.circle.fill")
                     }
                     .tag(3)
+
+                SettingsView()
+                    .tabItem {
+                        Label("Settings", systemImage: "gearshape.circle.fill")
+                    }
+                    .tag(4)
             }
             .accentColor(Color(red: 0.8, green: 0.7, blue: 1.0)) // Light purple
 
