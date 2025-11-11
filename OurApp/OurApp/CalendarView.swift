@@ -729,68 +729,146 @@ struct EventDetailView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                // Background gradient
-                LinearGradient(
-                    colors: backgroundColors,
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
+                backgroundGradient
 
                 ScrollView {
                     VStack(spacing: 24) {
-                        // Date display
-                        ZStack {
-                            // Background (either custom image or gradient)
-                            if let backgroundURL = currentEvent.backgroundImageURL {
-                                CachedAsyncImage(url: URL(string: backgroundURL)) { phase in
-                                    if let image = phase.image {
-                                        image
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                            .scaleEffect(currentEvent.backgroundScale ?? 1.0)
-                                            .offset(
-                                                x: CGFloat(currentEvent.backgroundOffsetX ?? 0.0),
-                                                y: CGFloat(currentEvent.backgroundOffsetY ?? 0.0)
-                                            )
-                                    } else {
-                                        defaultGradientBackground(isSpecial: currentEvent.isSpecial)
-                                    }
+                        dateDisplayCard
+                        photosSection
+                        eventDetailsSection
+                        Spacer()
+                    }
+                    .padding(.top)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                toolbarContent
+            }
+            .alert("Delete Event?", isPresented: $showingDeleteAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    onDelete()
+                    dismiss()
+                }
+            } message: {
+                Text("This will remove '\(event.title)' from your plans")
+            }
+            .alert("Upload Error", isPresented: $showingErrorAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(errorMessage)
+            }
+            .alert("Saved!", isPresented: $showingSaveSuccess) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("\(savedPhotoCount) photo\(savedPhotoCount == 1 ? "" : "s") saved to your library")
+            }
+            .alert("Error", isPresented: $showingSaveError) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(saveErrorMessage)
+            }
+            .fullScreenCover(item: $selectedPhotoIndex) { photoIndex in
+                FullScreenPhotoViewer(
+                    photoURLs: currentEvent.photoURLs,
+                    initialIndex: photoIndex.value,
+                    onDismiss: { selectedPhotoIndex = nil },
+                    onDelete: { indexToDelete in
+                        if indexToDelete < currentEvent.photoURLs.count {
+                            var updatedPhotoURLs = currentEvent.photoURLs
+                            updatedPhotoURLs.remove(at: indexToDelete)
+                            Task {
+                                var updatedEvent = currentEvent
+                                updatedEvent.photoURLs = updatedPhotoURLs
+                                try? await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
+                                await MainActor.run {
+                                    currentEvent.photoURLs = updatedPhotoURLs
                                 }
-                            } else {
-                                defaultGradientBackground(isSpecial: currentEvent.isSpecial)
                             }
-
-                            // Date text overlay
-                            VStack(spacing: 8) {
-                                Text(currentEvent.date, format: .dateTime.day())
-                                    .font(.system(size: 60, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
-
-                                Text(currentEvent.date, format: .dateTime.month(.wide).year())
-                                    .font(.title3)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.white)
-                                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
-
-                                Text(currentEvent.date, format: .dateTime.weekday(.wide))
-                                    .font(.subheadline)
-                                    .foregroundColor(.white)
-                                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
-                            }
-                            .padding(.vertical, 30)
                         }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 150)
-                        .clipShape(RoundedRectangle(cornerRadius: 20))
-                        .shadow(color: currentEvent.isSpecial ? Color.purple.opacity(0.4) : Color.black.opacity(0.2),
-                                radius: 15, x: 0, y: 5)
-                        .padding(.horizontal)
+                    }
+                )
+            }
+            .sheet(isPresented: $showingEditView) {
+                EditEventView(event: currentEvent) { updatedEvent in
+                    Task {
+                        do {
+                            try await FirebaseManager.shared.updateEvent(updatedEvent)
+                            await MainActor.run {
+                                currentEvent = updatedEvent
+                            }
+                        } catch {
+                            print("❌ Failed to update event: \(error)")
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-                        // Photos
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
+    var backgroundGradient: some View {
+        LinearGradient(
+            colors: backgroundColors,
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
+    }
+
+    var dateDisplayCard: some View {
+        ZStack {
+            // Background (either custom image or gradient)
+            if let backgroundURL = currentEvent.backgroundImageURL {
+                AsyncImage(url: URL(string: backgroundURL)) { phase in
+                    if let image = phase.image {
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .scaleEffect(currentEvent.backgroundScale ?? 1.0)
+                            .offset(
+                                x: CGFloat(currentEvent.backgroundOffsetX ?? 0.0),
+                                y: CGFloat(currentEvent.backgroundOffsetY ?? 0.0)
+                            )
+                    } else {
+                        defaultGradientBackground(isSpecial: currentEvent.isSpecial)
+                    }
+                }
+            } else {
+                defaultGradientBackground(isSpecial: currentEvent.isSpecial)
+            }
+
+            // Date text overlay
+            VStack(spacing: 8) {
+                Text(currentEvent.date, format: .dateTime.day())
+                    .font(.system(size: 60, weight: .bold))
+                    .foregroundColor(.white)
+                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+
+                Text(currentEvent.date, format: .dateTime.month(.wide).year())
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.white)
+                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+
+                Text(currentEvent.date, format: .dateTime.weekday(.wide))
+                    .font(.subheadline)
+                    .foregroundColor(.white)
+                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+            }
+            .padding(.vertical, 30)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 150)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .shadow(color: currentEvent.isSpecial ? Color.purple.opacity(0.4) : Color.black.opacity(0.2),
+                radius: 15, x: 0, y: 5)
+        .padding(.horizontal)
+    }
+
+    var photosSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
                                 Text("Photos 📸")
                                     .font(.headline)
                                     .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
@@ -884,211 +962,147 @@ struct EventDetailView: View {
                                     .italic()
                                     .padding(.horizontal)
                             }
-                        }
-                        .onChange(of: photoPickerItems) { oldItems, newItems in
-                            Task {
-                                await uploadPhotos(newItems)
-                            }
-                        }
+        }
+        .onChange(of: photoPickerItems) { oldItems, newItems in
+            Task {
+                await uploadPhotos(newItems)
+            }
+        }
+    }
 
-                        // Event details
-                        VStack(alignment: .leading, spacing: 20) {
-                            // Title
-                            HStack {
-                                Text(event.title)
-                                    .font(.title)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
+    var eventDetailsSection: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Title
+            HStack {
+                Text(event.title)
+                    .font(.title)
+                    .fontWeight(.bold)
+                    .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
 
-                                if event.isSpecial {
-                                    HStack(spacing: 4) {
-                                        Text("✨")
-                                        Text("💜")
-                                        Text("✨")
-                                    }
-                                }
-                            }
-
-                            Divider()
-
-                            // Description
-                            if !event.description.isEmpty {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Label("Details", systemImage: "text.alignleft")
-                                        .font(.headline)
-                                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
-
-                                    Text(event.description)
-                                        .font(.body)
-                                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-                                }
-                            }
-
-                            // Location
-                            if !event.location.isEmpty {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Label("Location", systemImage: "mappin.circle.fill")
-                                        .font(.headline)
-                                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
-
-                                    Button {
-                                        openInMaps()
-                                    } label: {
-                                        HStack {
-                                            Text(event.location)
-                                                .font(.body)
-                                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-                                            Spacer()
-                                            Image(systemName: "arrow.up.right.square")
-                                                .font(.caption)
-                                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.8))
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Time
-                            VStack(alignment: .leading, spacing: 8) {
-                                Label("Time", systemImage: "clock.fill")
-                                    .font(.headline)
-                                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
-
-                                Text(event.date, format: .dateTime.hour().minute())
-                                    .font(.body)
-                                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-                            }
-
-                            Divider()
-
-                            // Creator
-                            HStack(spacing: 8) {
-                                Image(systemName: "heart.fill")
-                                    .foregroundColor(Color(red: 0.7, green: 0.4, blue: 0.9))
-                                Text("Added by \(event.createdBy)")
-                                    .font(.subheadline)
-                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                            }
-                        }
-                        .padding()
-                        .background(Color.white)
-                        .cornerRadius(20)
-                        .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 4)
-                        .padding(.horizontal)
-
-                        Spacer()
+                if event.isSpecial {
+                    HStack(spacing: 4) {
+                        Text("✨")
+                        Text("💜")
+                        Text("✨")
                     }
-                    .padding(.top)
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if selectionMode {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Cancel") {
-                            selectionMode = false
-                            selectedPhotoIndices.removeAll()
-                        }
-                        .foregroundColor(Color(red: 0.6, green: 0.3, blue: 0.8))
-                    }
 
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        HStack(spacing: 16) {
-                            Button(action: saveSelectedPhotos) {
-                                Image(systemName: "square.and.arrow.down")
-                                    .foregroundColor(Color(red: 0.6, green: 0.3, blue: 0.8))
-                            }
-                            .disabled(selectedPhotoIndices.isEmpty)
+            Divider()
 
-                            Button(action: deleteSelectedPhotos) {
-                                Image(systemName: "trash")
-                                    .foregroundColor(.red)
-                            }
-                            .disabled(selectedPhotoIndices.isEmpty)
-                        }
-                    }
-                } else {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Done") {
-                            dismiss()
-                        }
-                        .foregroundColor(Color(red: 0.6, green: 0.3, blue: 0.8))
-                    }
+            // Description
+            if !event.description.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Details", systemImage: "text.alignleft")
+                        .font(.headline)
+                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
 
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        HStack(spacing: 16) {
-                            Button {
-                                showingEditView = true
-                            } label: {
-                                Image(systemName: "pencil")
-                                    .foregroundColor(Color(red: 0.6, green: 0.3, blue: 0.8))
-                            }
+                    Text(event.description)
+                        .font(.body)
+                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                }
+            }
 
-                            Button(role: .destructive) {
-                                showingDeleteAlert = true
-                            } label: {
-                                Image(systemName: "trash")
-                                    .foregroundColor(.red)
-                            }
+            // Location
+            if !event.location.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Location", systemImage: "mappin.circle.fill")
+                        .font(.headline)
+                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+
+                    Button {
+                        openInMaps()
+                    } label: {
+                        HStack {
+                            Text(event.location)
+                                .font(.body)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                            Spacer()
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.caption)
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.8))
                         }
                     }
                 }
             }
-            .alert("Delete Event?", isPresented: $showingDeleteAlert) {
-                Button("Cancel", role: .cancel) { }
-                Button("Delete", role: .destructive) {
-                    onDelete()
+
+            // Time
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Time", systemImage: "clock.fill")
+                    .font(.headline)
+                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+
+                Text(event.date, format: .dateTime.hour().minute())
+                    .font(.body)
+                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+            }
+
+            Divider()
+
+            // Creator
+            HStack(spacing: 8) {
+                Image(systemName: "heart.fill")
+                    .foregroundColor(Color(red: 0.7, green: 0.4, blue: 0.9))
+                Text("Added by \(event.createdBy)")
+                    .font(.subheadline)
+                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+            }
+        }
+        .padding()
+        .background(Color.white)
+        .cornerRadius(20)
+        .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 4)
+        .padding(.horizontal)
+    }
+
+    @ToolbarContentBuilder
+    var toolbarContent: some ToolbarContent {
+        if selectionMode {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Cancel") {
+                    selectionMode = false
+                    selectedPhotoIndices.removeAll()
+                }
+                .foregroundColor(Color(red: 0.6, green: 0.3, blue: 0.8))
+            }
+
+            ToolbarItem(placement: .navigationBarTrailing) {
+                HStack(spacing: 16) {
+                    Button(action: saveSelectedPhotos) {
+                        Image(systemName: "square.and.arrow.down")
+                            .foregroundColor(Color(red: 0.6, green: 0.3, blue: 0.8))
+                    }
+                    .disabled(selectedPhotoIndices.isEmpty)
+
+                    Button(action: deleteSelectedPhotos) {
+                        Image(systemName: "trash")
+                            .foregroundColor(.red)
+                    }
+                    .disabled(selectedPhotoIndices.isEmpty)
+                }
+            }
+        } else {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Done") {
                     dismiss()
                 }
-            } message: {
-                Text("This will remove '\(event.title)' from your plans")
+                .foregroundColor(Color(red: 0.6, green: 0.3, blue: 0.8))
             }
-            .alert("Upload Error", isPresented: $showingErrorAlert) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text(errorMessage)
-            }
-            .alert("Saved!", isPresented: $showingSaveSuccess) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text("\(savedPhotoCount) photo\(savedPhotoCount == 1 ? "" : "s") saved to your library")
-            }
-            .alert("Error", isPresented: $showingSaveError) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text(saveErrorMessage)
-            }
-            .fullScreenCover(item: $selectedPhotoIndex) { photoIndex in
-                FullScreenPhotoViewer(
-                    photoURLs: currentEvent.photoURLs,
-                    initialIndex: photoIndex.value,
-                    onDismiss: { selectedPhotoIndex = nil },
-                    onDelete: { indexToDelete in
-                        if indexToDelete < currentEvent.photoURLs.count {
-                            var updatedPhotoURLs = currentEvent.photoURLs
-                            updatedPhotoURLs.remove(at: indexToDelete)
-                            Task {
-                                var updatedEvent = currentEvent
-                                updatedEvent.photoURLs = updatedPhotoURLs
-                                try? await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
-                                await MainActor.run {
-                                    currentEvent.photoURLs = updatedPhotoURLs
-                                }
-                            }
-                        }
+
+            ToolbarItem(placement: .navigationBarTrailing) {
+                HStack(spacing: 16) {
+                    Button {
+                        showingEditView = true
+                    } label: {
+                        Image(systemName: "pencil")
+                            .foregroundColor(Color(red: 0.6, green: 0.3, blue: 0.8))
                     }
-                )
-            }
-            .sheet(isPresented: $showingEditView) {
-                EditEventView(event: currentEvent) { updatedEvent in
-                    Task {
-                        do {
-                            try await FirebaseManager.shared.updateEvent(updatedEvent)
-                            await MainActor.run {
-                                currentEvent = updatedEvent
-                            }
-                        } catch {
-                            print("❌ Failed to update event: \(error)")
-                        }
+
+                    Button(role: .destructive) {
+                        showingDeleteAlert = true
+                    } label: {
+                        Image(systemName: "trash")
+                            .foregroundColor(.red)
                     }
                 }
             }
@@ -1461,7 +1475,7 @@ struct EditEventView: View {
 
             ZStack {
                 if let backgroundURL = backgroundImageURL {
-                    CachedAsyncImage(url: URL(string: backgroundURL)) { phase in
+                    AsyncImage(url: URL(string: backgroundURL)) { phase in
                         if let image = phase.image {
                             image
                                 .resizable()
