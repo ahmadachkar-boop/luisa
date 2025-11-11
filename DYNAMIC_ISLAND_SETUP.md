@@ -27,23 +27,39 @@ This guide will help you set up the Live Activities feature to display your upco
 
 ### 2. Add Files to Widget Extension Target
 
-The following files have been created and need to be added to your Widget Extension target:
+**CRITICAL STEP** - This is the most common cause of the "unsupportedTarget" error!
 
-1. **EventActivityAttributes.swift** - Already in main app
-2. **EventLiveActivity.swift** - Needs to be moved/added to widget extension
-3. **LiveActivityManager.swift** - Already in main app
+The following files MUST be added to your Widget Extension target:
+
+1. **EventActivityAttributes.swift** - Must be in BOTH targets
+2. **EventLiveActivity.swift** - Must be in BOTH targets
+3. **LiveActivityManager.swift** - Only needs to be in main app target
 
 #### How to add files to the Widget Extension:
 
-1. In Xcode's Project Navigator, locate these files:
+1. In Xcode's **Project Navigator** (left sidebar), locate these files:
    - `EventActivityAttributes.swift`
    - `EventLiveActivity.swift`
 
-2. For each file:
-   - Click on the file in the Project Navigator
-   - Open the **File Inspector** (right sidebar, first tab)
-   - Under **Target Membership**, check the box next to **OurAppWidgets**
-   - Make sure the main app target is also checked
+2. **For EventActivityAttributes.swift**:
+   - Click on the file
+   - Open **File Inspector** (View → Inspectors → Show File Inspector, or right sidebar first tab)
+   - Find **Target Membership** section
+   - ✅ Check **OurApp** (should already be checked)
+   - ✅ Check **OurAppWidgets** (THIS IS CRITICAL!)
+
+3. **For EventLiveActivity.swift**:
+   - Click on the file
+   - Open **File Inspector**
+   - Find **Target Membership** section
+   - ✅ Check **OurApp** (should already be checked)
+   - ✅ Check **OurAppWidgets** (THIS IS CRITICAL!)
+
+4. **Verify the checkmarks**:
+   - Both files should have TWO checkmarks ✅✅
+   - One for OurApp, one for OurAppWidgets
+
+**Screenshot guidance**: You should see both checkboxes selected for each file!
 
 ### 3. Configure App Groups (Optional but Recommended)
 
@@ -97,12 +113,37 @@ Once running on a device:
 
 ## Troubleshooting
 
+### Error: "unsupportedTarget" or "Failed to start Live Activity"
+
+This is the #1 most common error! It means the files aren't properly added to the Widget Extension.
+
+**Fix:**
+
+1. **Open Xcode File Inspector** for these files:
+   - `EventActivityAttributes.swift`
+   - `EventLiveActivity.swift`
+
+2. **For EACH file above:**
+   - Select the file in Project Navigator
+   - Open File Inspector (⌥⌘1 or View → Inspectors → File)
+   - Scroll to **Target Membership**
+   - **BOTH boxes must be checked:**
+     - ✅ OurApp
+     - ✅ OurAppWidgets (or whatever you named your widget extension)
+
+3. **After fixing:**
+   - Clean build folder: **Product → Clean Build Folder** (⌘⇧K)
+   - Rebuild: **Product → Build** (⌘B)
+   - Run on device
+
+**Still not working?** Make sure you created the Widget Extension target (Step 1 above).
+
 ### Live Activity Not Appearing
 
 1. **Check device**: Make sure you're using iPhone 14 Pro or newer
 2. **Check iOS version**: Must be iOS 16.1 or later
 3. **Check Info.plist**: Verify `NSSupportsLiveActivities` is set to `YES`
-4. **Check target membership**: Ensure all necessary files are in both targets
+4. **Check target membership**: Ensure EventActivityAttributes.swift and EventLiveActivity.swift are in BOTH targets
 5. **Rebuild**: Clean build folder (Cmd + Shift + K) then rebuild (Cmd + B)
 
 ### Compilation Errors
