@@ -519,6 +519,10 @@ struct CalendarView: View {
                     countdownBannerIndex = 0
                 }
             }
+            .task {
+                // Fetch weather for existing events when view appears
+                await viewModel.fetchWeatherForEvents()
+            }
         }
     }
 
@@ -564,6 +568,9 @@ struct CalendarView: View {
 
         // Reload local events
         viewModel.loadEvents()
+
+        // Fetch weather for events
+        await viewModel.fetchWeatherForEvents()
     }
 }
 
@@ -2137,6 +2144,23 @@ class CalendarViewModel: ObservableObject {
 
     func deleteEvent(_ event: CalendarEvent) async throws {
         try await firebaseManager.deleteCalendarEvent(event)
+    }
+
+    func fetchWeatherForEvents() async {
+        // Fetch weather for upcoming events that have location but no weather cached
+        let eventsNeedingWeather = upcomingEvents.filter { event in
+            !event.location.isEmpty &&
+            event.weatherForecast == nil &&
+            event.date.timeIntervalSinceNow < 10 * 24 * 60 * 60 // Within 10 days
+        }
+
+        for event in eventsNeedingWeather {
+            if let weather = await WeatherService.shared.fetchWeatherForEvent(location: event.location, date: event.date) {
+                var updatedEvent = event
+                updatedEvent.weatherForecast = weather
+                try? await firebaseManager.updateEvent(updatedEvent)
+            }
+        }
     }
 }
 
