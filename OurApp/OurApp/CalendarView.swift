@@ -154,12 +154,9 @@ struct CalendarView: View {
     private var filteredEvents: [CalendarEvent] {
         let baseEvents = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
 
-        // Filter by selected month
-        var filtered = baseEvents.filter { event in
-            Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
-        }
+        var filtered = baseEvents
 
-        // Further filter by selected day if one is selected
+        // Only filter by selected day if one is selected
         if let selectedDay = selectedDay {
             filtered = filtered.filter { event in
                 Calendar.current.isDate(event.date, equalTo: selectedDay, toGranularity: .day)
