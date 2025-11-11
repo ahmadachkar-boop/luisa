@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSWeatherUsageDescription</key>
+	<string>We use your location to show weather forecasts for your upcoming events</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.147528790359-oj9snngdl2msc8p6qtpkte5u21ausvh0</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
