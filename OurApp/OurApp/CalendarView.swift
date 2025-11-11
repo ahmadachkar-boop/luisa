@@ -18,7 +18,7 @@ struct CalendarView: View {
     @State private var selectedTab = 0 // 0 = Upcoming, 1 = Memories
     @State private var currentMonth = Date()
     @State private var selectedDay: Date? = nil // For filtering by specific day
-    @State private var summaryCardExpanded = false // Start collapsed
+    @State private var summaryCardExpanded = true // Start expanded
     @State private var recapPhotoURLs: [String] = []
     @State private var recapPhotoIndex: CalendarPhotoIndex?
 
@@ -249,14 +249,7 @@ struct CalendarView: View {
                 Text(errorMessage)
             }
             .onChange(of: currentMonth) { oldValue, newValue in
-                // Reset day filter and summary card when month changes
-                withAnimation(.spring(response: 0.3)) {
-                    selectedDay = nil
-                    summaryCardExpanded = false
-                }
-            }
-            .onChange(of: selectedTab) { oldValue, newValue in
-                // Reset day filter when switching tabs
+                // Reset day filter when month changes
                 withAnimation(.spring(response: 0.3)) {
                     selectedDay = nil
                 }
