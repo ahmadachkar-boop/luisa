@@ -233,45 +233,43 @@ struct CalendarView: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                         }
 
-                        // Header with month selector
-                        VStack(spacing: 16) {
-                            // Month label (always visible, swipe calendar to navigate)
-                            Text(currentMonth, format: .dateTime.month(.wide).year())
-                                .font(.title2)
-                                .fontWeight(.bold)
-                                .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
-                                .padding(.horizontal)
+                        // Countdown Banner - Swipeable (at top)
+                        if !viewModel.upcomingEvents.isEmpty {
+                            let upcomingToShow = Array(viewModel.upcomingEvents.prefix(5))
 
-                            // Countdown Banner - Swipeable
-                            if !viewModel.upcomingEvents.isEmpty {
-                                let upcomingToShow = Array(viewModel.upcomingEvents.prefix(5))
-
-                                TabView(selection: $countdownBannerIndex) {
-                                    ForEach(Array(upcomingToShow.enumerated()), id: \.element.id) { index, event in
-                                        ModernCountdownBanner(event: event, onTap: {
-                                            selectedEventForDetail = event
-                                        })
-                                        .tag(index)
-                                    }
-                                }
-                                .tabViewStyle(.page(indexDisplayMode: .never))
-                                .frame(height: 80)
-                                .padding(.horizontal)
-                                .transition(.move(edge: .top).combined(with: .opacity))
-                                .onChange(of: countdownBannerIndex) { oldValue, newValue in
-                                    // Reset timer when user manually swipes
-                                    resetCountdownTimer()
-                                }
-                                .onAppear {
-                                    startCountdownResetTimer()
-                                }
-                                .onDisappear {
-                                    TimerManager.shared.invalidate(id: "countdownReset")
+                            TabView(selection: $countdownBannerIndex) {
+                                ForEach(Array(upcomingToShow.enumerated()), id: \.element.id) { index, event in
+                                    ModernCountdownBanner(event: event, onTap: {
+                                        selectedEventForDetail = event
+                                    })
+                                    .tag(index)
                                 }
                             }
+                            .tabViewStyle(.page(indexDisplayMode: .never))
+                            .frame(height: 50)
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .onChange(of: countdownBannerIndex) { oldValue, newValue in
+                                // Reset timer when user manually swipes
+                                resetCountdownTimer()
+                            }
+                            .onAppear {
+                                startCountdownResetTimer()
+                            }
+                            .onDisappear {
+                                TimerManager.shared.invalidate(id: "countdownReset")
+                            }
                         }
-                        .padding(.top, 8)
-                        .padding(.bottom, 16)
+
+                        // Month label (always visible, swipe calendar to navigate)
+                        Text(currentMonth, format: .dateTime.month(.wide).year())
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
+                            .padding(.horizontal)
+                            .padding(.top, 12)
+                            .padding(.bottom, 16)
 
                         // Calendar Grid
                         CalendarGridView(
@@ -588,41 +586,46 @@ struct ModernCountdownBanner: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 12) {
-            // Icon
-            ZStack {
-                Circle()
-                    .fill(Color.white.opacity(0.2))
-                    .frame(width: 44, height: 44)
+            HStack(spacing: 10) {
+                // Icon (smaller)
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.2))
+                        .frame(width: 32, height: 32)
 
-                Image(systemName: event.isSpecial ? "star.fill" : "clock.fill")
-                    .font(.system(size: 18))
-                    .foregroundColor(.white)
+                    Image(systemName: event.isSpecial ? "star.fill" : "clock.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.white)
+                }
+
+                // Single line: event name + countdown
+                HStack(spacing: 6) {
+                    Text(event.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+
+                    Text("•")
+                        .foregroundColor(.white.opacity(0.6))
+                        .font(.system(size: 12))
+
+                    Text(timeRemaining)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.9))
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.6))
             }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(timeRemaining)
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundColor(.white)
-
-                Text(event.title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.9))
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundColor(.white.opacity(0.7))
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
             .background(
                 ZStack {
                     // Glassmorphism effect
-                    RoundedRectangle(cornerRadius: 20)
+                    RoundedRectangle(cornerRadius: 16)
                         .fill(
                             LinearGradient(
                                 colors: event.isSpecial ?
@@ -634,12 +637,12 @@ struct ModernCountdownBanner: View {
                         )
 
                     // Subtle glow
-                    RoundedRectangle(cornerRadius: 20)
+                    RoundedRectangle(cornerRadius: 16)
                         .stroke(Color.white.opacity(0.2), lineWidth: 1)
                 }
             )
-            .shadow(color: event.isSpecial ? Color.purple.opacity(0.3) : Color.black.opacity(0.1),
-                    radius: 12, x: 0, y: 6)
+            .shadow(color: event.isSpecial ? Color.purple.opacity(0.25) : Color.black.opacity(0.08),
+                    radius: 8, x: 0, y: 4)
         }
         .buttonStyle(PlainButtonStyle())
         .onAppear {
@@ -660,12 +663,18 @@ struct ModernCountdownBanner: View {
         let components = Calendar.current.dateComponents([.day, .hour, .minute], from: now, to: event.date)
 
         if let days = components.day, let hours = components.hour, let minutes = components.minute {
-            if days > 0 {
-                timeRemaining = "\(days)d \(hours)h away"
+            if days > 1 {
+                // More than 1 day: show only days
+                timeRemaining = "\(days)d"
+            } else if days == 1 {
+                // Exactly 1 day: show days only
+                timeRemaining = "1d"
             } else if hours > 0 {
-                timeRemaining = "\(hours)h \(minutes)m away"
+                // Less than 1 day: show hours and minutes
+                timeRemaining = "\(hours)h \(minutes)m"
             } else {
-                timeRemaining = "\(minutes)m away"
+                // Less than 1 hour: show minutes only
+                timeRemaining = "\(minutes)m"
             }
         }
     }
