@@ -17,6 +17,8 @@ struct CalendarView: View {
     @State private var selectedEventForDetail: CalendarEvent?
     @State private var selectedTab = 0 // 0 = Upcoming, 1 = Memories
     @State private var currentMonth = Date()
+    @State private var selectedDay: Date? = nil // For filtering by specific day
+    @State private var summaryCardExpanded = true
 
     var body: some View {
         NavigationView {
@@ -87,14 +89,50 @@ struct CalendarView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 16)
 
+                    // Calendar Grid
+                    CalendarGridView(
+                        currentMonth: currentMonth,
+                        events: viewModel.events,
+                        selectedDay: $selectedDay
+                    )
+                    .padding(.horizontal)
+                    .padding(.bottom, 16)
+
+                    // Month Summary Card (only for past months)
+                    if isMonthInPast(currentMonth) {
+                        MonthSummaryCard(
+                            month: currentMonth,
+                            events: eventsForCurrentMonth(),
+                            isExpanded: $summaryCardExpanded
+                        )
+                        .padding(.horizontal)
+                        .padding(.bottom, 16)
+                    }
+
                     // Custom Tab Selector
                     ModernTabSelector(selectedTab: $selectedTab)
                         .padding(.horizontal)
-                        .padding(.bottom, 20)
+                        .padding(.bottom, 12)
+
+                    // Filter indicator
+                    if let selectedDay = selectedDay {
+                        FilterHeaderView(
+                            selectedDay: selectedDay,
+                            eventCount: filteredEvents().count,
+                            onClear: {
+                                withAnimation(.spring(response: 0.3)) {
+                                    self.selectedDay = nil
+                                }
+                            }
+                        )
+                        .padding(.horizontal)
+                        .padding(.bottom, 12)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
 
                     // Events list
                     ScrollView(showsIndicators: false) {
-                        let eventsToShow = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
+                        let eventsToShow = filteredEvents()
 
                         if eventsToShow.isEmpty {
                             EmptyStateView(isUpcoming: selectedTab == 0)
@@ -191,7 +229,52 @@ struct CalendarView: View {
             } message: {
                 Text(errorMessage)
             }
+            .onChange(of: currentMonth) { oldValue, newValue in
+                // Reset day filter when month changes
+                withAnimation(.spring(response: 0.3)) {
+                    selectedDay = nil
+                }
+            }
+            .onChange(of: selectedTab) { oldValue, newValue in
+                // Reset day filter when switching tabs
+                withAnimation(.spring(response: 0.3)) {
+                    selectedDay = nil
+                }
+            }
         }
+    }
+
+    // MARK: - Helper Functions
+
+    func filteredEvents() -> [CalendarEvent] {
+        let baseEvents = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
+
+        // Filter by selected month
+        let monthFiltered = baseEvents.filter { event in
+            Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
+        }
+
+        // Further filter by selected day if one is selected
+        if let selectedDay = selectedDay {
+            return monthFiltered.filter { event in
+                Calendar.current.isDate(event.date, equalTo: selectedDay, toGranularity: .day)
+            }
+        }
+
+        return monthFiltered
+    }
+
+    func eventsForCurrentMonth() -> [CalendarEvent] {
+        return viewModel.events.filter { event in
+            Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
+        }
+    }
+
+    func isMonthInPast(_ date: Date) -> Bool {
+        let now = Date()
+        let currentMonthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: now))!
+        let selectedMonthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: date))!
+        return selectedMonthStart < currentMonthStart
     }
 }
 
@@ -1195,6 +1278,410 @@ class CalendarViewModel: ObservableObject {
 
     func deleteEvent(_ event: CalendarEvent) async throws {
         try await firebaseManager.deleteCalendarEvent(event)
+    }
+}
+
+// MARK: - Calendar Grid View
+struct CalendarGridView: View {
+    let currentMonth: Date
+    let events: [CalendarEvent]
+    @Binding var selectedDay: Date?
+    @State private var hoveredDay: Date?
+
+    private let calendar = Calendar.current
+    private let daysOfWeek = ["S", "M", "T", "W", "T", "F", "S"]
+
+    var body: some View {
+        VStack(spacing: 12) {
+            // Days of week header
+            HStack(spacing: 0) {
+                ForEach(daysOfWeek, id: \.self) { day in
+                    Text(day)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        .frame(maxWidth: .infinity)
+                }
+            }
+
+            // Calendar grid
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 8) {
+                ForEach(daysInMonth(), id: \.self) { date in
+                    if let date = date {
+                        CalendarDayCell(
+                            date: date,
+                            events: eventsForDay(date),
+                            isSelected: selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!),
+                            isToday: calendar.isDateInToday(date),
+                            onTap: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                    if selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!) {
+                                        selectedDay = nil // Deselect if tapping same day
+                                    } else {
+                                        selectedDay = date
+                                    }
+                                }
+                            }
+                        )
+                    } else {
+                        Color.clear
+                            .frame(height: 40)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.white)
+                .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 4)
+        )
+    }
+
+    func daysInMonth() -> [Date?] {
+        guard let monthInterval = calendar.dateInterval(of: .month, for: currentMonth),
+              let firstWeekday = calendar.dateComponents([.weekday], from: monthInterval.start).weekday else {
+            return []
+        }
+
+        let firstDayOfWeek = calendar.firstWeekday
+        let leadingEmptyDays = (firstWeekday - firstDayOfWeek + 7) % 7
+
+        var days: [Date?] = Array(repeating: nil, count: leadingEmptyDays)
+
+        var currentDate = monthInterval.start
+        while currentDate < monthInterval.end {
+            days.append(currentDate)
+            currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate)!
+        }
+
+        return days
+    }
+
+    func eventsForDay(_ date: Date) -> [CalendarEvent] {
+        return events.filter { event in
+            calendar.isDate(event.date, inSameDayAs: date)
+        }
+    }
+}
+
+// MARK: - Calendar Day Cell
+struct CalendarDayCell: View {
+    let date: Date
+    let events: [CalendarEvent]
+    let isSelected: Bool
+    let isToday: Bool
+    let onTap: () -> Void
+
+    @State private var showTooltip = false
+
+    var body: some View {
+        Button(action: {
+            if events.isEmpty {
+                // Show brief feedback for empty days
+                withAnimation(.spring(response: 0.2)) {
+                    showTooltip = true
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    withAnimation(.spring(response: 0.2)) {
+                        showTooltip = false
+                    }
+                }
+            } else {
+                onTap()
+            }
+        }) {
+            VStack(spacing: 4) {
+                // Day number
+                Text("\(Calendar.current.component(.day, from: date))")
+                    .font(.system(size: 14, weight: isToday ? .bold : .regular))
+                    .foregroundColor(
+                        isSelected ? .white :
+                        isToday ? Color(red: 0.6, green: 0.4, blue: 0.85) :
+                        events.isEmpty ? Color(red: 0.7, green: 0.6, blue: 0.8).opacity(0.5) :
+                        Color(red: 0.3, green: 0.2, blue: 0.5)
+                    )
+
+                // Event dots
+                if !events.isEmpty {
+                    EventDotsView(events: events)
+                } else if showTooltip {
+                    Text("·")
+                        .font(.system(size: 8))
+                        .foregroundColor(Color.gray.opacity(0.3))
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .frame(height: 40)
+            .frame(maxWidth: .infinity)
+            .background(
+                ZStack {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 0.7, green: 0.4, blue: 0.95),
+                                        Color(red: 0.55, green: 0.3, blue: 0.85)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                    } else if isToday {
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(Color(red: 0.6, green: 0.4, blue: 0.85), lineWidth: 2)
+                    } else if events.isEmpty && showTooltip {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.gray.opacity(0.05))
+                    }
+                }
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Event Dots View (clustered layout for multiple events)
+struct EventDotsView: View {
+    let events: [CalendarEvent]
+
+    var body: some View {
+        if events.count == 1 {
+            // Single dot
+            Circle()
+                .fill(dotColor(for: events[0]))
+                .frame(width: 5, height: 5)
+        } else if events.count == 2 {
+            // Two dots side by side
+            HStack(spacing: 2) {
+                Circle()
+                    .fill(dotColor(for: events[0]))
+                    .frame(width: 4, height: 4)
+                Circle()
+                    .fill(dotColor(for: events[1]))
+                    .frame(width: 4, height: 4)
+            }
+        } else {
+            // Three dots arranged diagonally for 3+
+            ZStack {
+                HStack(spacing: 2) {
+                    Circle()
+                        .fill(dotColor(for: events[0]))
+                        .frame(width: 3.5, height: 3.5)
+                        .offset(y: 1)
+                    Circle()
+                        .fill(dotColor(for: events[1]))
+                        .frame(width: 3.5, height: 3.5)
+                        .offset(y: -1)
+                    if events.count > 2 {
+                        Circle()
+                            .fill(dotColor(for: events[2]))
+                            .frame(width: 3.5, height: 3.5)
+                            .offset(y: 1)
+                    }
+                }
+            }
+        }
+    }
+
+    func dotColor(for event: CalendarEvent) -> Color {
+        let isPast = event.date < Date()
+
+        if event.isSpecial {
+            return isPast ?
+                Color(red: 0.85, green: 0.35, blue: 0.75) : // Gold/pink for special past
+                Color(red: 0.9, green: 0.6, blue: 0.2) // Gold for special upcoming
+        } else {
+            return isPast ?
+                Color(red: 0.85, green: 0.4, blue: 0.9) : // Pink for past with photos
+                Color(red: 0.6, green: 0.4, blue: 0.85) // Purple for upcoming
+        }
+    }
+}
+
+// MARK: - Month Summary Card
+struct MonthSummaryCard: View {
+    let month: Date
+    let events: [CalendarEvent]
+    @Binding var isExpanded: Bool
+
+    var eventCount: Int { events.count }
+    var photoCount: Int { events.flatMap { $0.photoURLs }.count }
+    var specialEventCount: Int { events.filter { $0.isSpecial }.count }
+    var photoURLs: [String] {
+        Array(events.flatMap { $0.photoURLs }.prefix(4))
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header (always visible)
+            Button(action: {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    isExpanded.toggle()
+                }
+            }) {
+                HStack(spacing: 12) {
+                    // Icon
+                    ZStack {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 0.9, green: 0.85, blue: 0.98),
+                                        Color(red: 0.85, green: 0.75, blue: 0.95)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 44, height: 44)
+
+                        Image(systemName: "calendar.badge.clock")
+                            .font(.system(size: 18))
+                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(month, format: .dateTime.month(.wide).year())")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                        HStack(spacing: 12) {
+                            Text("\(eventCount) plan\(eventCount == 1 ? "" : "s")")
+                                .font(.caption)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+
+                            if photoCount > 0 {
+                                HStack(spacing: 2) {
+                                    Image(systemName: "photo.fill")
+                                        .font(.system(size: 10))
+                                    Text("\(photoCount)")
+                                        .font(.caption)
+                                }
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                            }
+
+                            if specialEventCount > 0 {
+                                Text("\(specialEventCount) special moment\(specialEventCount == 1 ? "" : "s") ✨")
+                                    .font(.caption)
+                                    .foregroundColor(Color(red: 0.7, green: 0.4, blue: 0.9))
+                            }
+                        }
+                    }
+
+                    Spacer()
+
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+                .padding(16)
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            // Expandable content
+            if isExpanded && !photoURLs.isEmpty {
+                VStack(spacing: 12) {
+                    Divider()
+                        .padding(.horizontal, 16)
+
+                    // Photo collage
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                        ForEach(photoURLs.prefix(4), id: \.self) { photoURL in
+                            CachedAsyncImage(url: URL(string: photoURL)) { image in
+                                image
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(height: 100)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                            } placeholder: {
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.gray.opacity(0.2))
+                                    .frame(height: 100)
+                                    .overlay(ProgressView())
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .background(
+            ZStack {
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Color.white)
+
+                // Subtle "archived" overlay
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.95, green: 0.9, blue: 0.98).opacity(0.5),
+                                Color.white.opacity(0.5)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+
+                RoundedRectangle(cornerRadius: 20)
+                    .strokeBorder(Color(red: 0.85, green: 0.75, blue: 0.95), lineWidth: 1)
+            }
+        )
+        .shadow(color: Color.purple.opacity(0.08), radius: 12, x: 0, y: 4)
+    }
+}
+
+// MARK: - Filter Header View
+struct FilterHeaderView: View {
+    let selectedDay: Date
+    let eventCount: Int
+    let onClear: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(selectedDay, format: .dateTime.month(.wide).day())
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                if eventCount > 0 {
+                    Text("\(eventCount) event\(eventCount == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                } else {
+                    Text("No events")
+                        .font(.caption)
+                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                }
+            }
+
+            Spacer()
+
+            Button(action: onClear) {
+                HStack(spacing: 4) {
+                    Text("Show All")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption)
+                }
+                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color(red: 0.95, green: 0.9, blue: 1.0))
+                .cornerRadius(12)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white)
+                .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 2)
+        )
     }
 }
 
