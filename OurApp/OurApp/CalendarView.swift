@@ -37,6 +37,52 @@ struct CalendarView: View {
     @State private var recapPhotoData: RecapPhotoData?
     @State private var countdownBannerIndex = 0
     @State private var countdownResetTimer: Timer?
+    @State private var searchText = ""
+    @State private var selectedTags: Set<String> = []
+    @State private var showingFilterSheet = false
+
+    // Memoized filtered events - computed only when dependencies change
+    private var filteredEvents: [CalendarEvent] {
+        let baseEvents = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
+
+        // Filter by selected month
+        var filtered = baseEvents.filter { event in
+            Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
+        }
+
+        // Further filter by selected day if one is selected
+        if let selectedDay = selectedDay {
+            filtered = filtered.filter { event in
+                Calendar.current.isDate(event.date, equalTo: selectedDay, toGranularity: .day)
+            }
+        }
+
+        // Filter by search text
+        if !searchText.isEmpty {
+            filtered = filtered.filter { event in
+                event.title.localizedCaseInsensitiveContains(searchText) ||
+                event.description.localizedCaseInsensitiveContains(searchText) ||
+                event.location.localizedCaseInsensitiveContains(searchText)
+            }
+        }
+
+        // Filter by tags
+        if !selectedTags.isEmpty {
+            filtered = filtered.filter { event in
+                guard let tags = event.tags else { return false }
+                return !selectedTags.isDisjoint(with: tags)
+            }
+        }
+
+        return filtered
+    }
+
+    // Get all unique tags from events
+    private var allTags: [String] {
+        let allEvents = viewModel.events
+        let tags = allEvents.compactMap { $0.tags }.flatMap { $0 }
+        return Array(Set(tags)).sorted()
+    }
 
     var body: some View {
         NavigationView {
@@ -176,7 +222,7 @@ struct CalendarView: View {
                         if let selectedDay = selectedDay {
                             FilterHeaderView(
                                 selectedDay: selectedDay,
-                                eventCount: filteredEvents().count,
+                                eventCount: filteredEvents.count,
                                 onClear: {
                                     withAnimation(.spring(response: 0.3)) {
                                         self.selectedDay = nil
@@ -189,7 +235,7 @@ struct CalendarView: View {
                         }
 
                         // Events list
-                        let eventsToShow = filteredEvents()
+                        let eventsToShow = filteredEvents
 
                         if eventsToShow.isEmpty {
                             EmptyStateView(isUpcoming: selectedTab == 0)
@@ -276,6 +322,24 @@ struct CalendarView: View {
             }
             .navigationTitle("Our Plans")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: {
+                        showingFilterSheet = true
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: selectedTags.isEmpty ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                            if !selectedTags.isEmpty {
+                                Text("\(selectedTags.count)")
+                                    .font(.caption2)
+                                    .fontWeight(.bold)
+                            }
+                        }
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                    }
+                }
+            }
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search events...")
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView(initialDate: selectedDate) { event in
                     do {
@@ -315,6 +379,9 @@ struct CalendarView: View {
             } message: {
                 Text(errorMessage)
             }
+            .sheet(isPresented: $showingFilterSheet) {
+                FilterTagsView(allTags: allTags, selectedTags: $selectedTags)
+            }
             .onChange(of: currentMonth) { oldValue, newValue in
                 // Reset day filter when month changes
                 withAnimation(.spring(response: 0.3)) {
@@ -331,24 +398,6 @@ struct CalendarView: View {
     }
 
     // MARK: - Helper Functions
-
-    func filteredEvents() -> [CalendarEvent] {
-        let baseEvents = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
-
-        // Filter by selected month
-        let monthFiltered = baseEvents.filter { event in
-            Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
-        }
-
-        // Further filter by selected day if one is selected
-        if let selectedDay = selectedDay {
-            return monthFiltered.filter { event in
-                Calendar.current.isDate(event.date, equalTo: selectedDay, toGranularity: .day)
-            }
-        }
-
-        return monthFiltered
-    }
 
     func eventsForCurrentMonth() -> [CalendarEvent] {
         return viewModel.events.filter { event in
@@ -1403,6 +1452,8 @@ struct AddEventView: View {
     @State private var date: Date
     @State private var isSpecial = false
     @State private var isSaving = false
+    @State private var tags: [String] = []
+    @State private var newTag = ""
 
     init(initialDate: Date, onSave: @escaping (CalendarEvent) async -> Void) {
         self.initialDate = initialDate
@@ -1426,6 +1477,48 @@ struct AddEventView: View {
 
                 Section {
                     Toggle("Special Event 💜", isOn: $isSpecial)
+                }
+
+                Section("Tags") {
+                    HStack {
+                        TextField("Add tag", text: $newTag)
+                        Button(action: {
+                            let trimmedTag = newTag.trimmingCharacters(in: .whitespaces)
+                            if !trimmedTag.isEmpty && !tags.contains(trimmedTag) {
+                                tags.append(trimmedTag)
+                                newTag = ""
+                            }
+                        }) {
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                        }
+                        .disabled(newTag.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+
+                    if !tags.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(tags, id: \.self) { tag in
+                                    HStack(spacing: 4) {
+                                        Text(tag)
+                                            .font(.caption)
+                                            .foregroundColor(.white)
+                                        Button(action: {
+                                            tags.removeAll { $0 == tag }
+                                        }) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.caption2)
+                                                .foregroundColor(.white.opacity(0.8))
+                                        }
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                    .cornerRadius(12)
+                                }
+                            }
+                        }
+                    }
                 }
             }
             .navigationTitle("New Plan")
@@ -1464,7 +1557,15 @@ struct AddEventView: View {
             location: location,
             createdBy: "You",
             isSpecial: isSpecial,
-            photoURLs: []
+            photoURLs: [],
+            googleCalendarId: nil,
+            lastSyncedAt: nil,
+            backgroundImageURL: nil,
+            backgroundOffsetX: nil,
+            backgroundOffsetY: nil,
+            backgroundScale: nil,
+            tags: tags.isEmpty ? nil : tags,
+            weatherForecast: nil
         )
 
         await onSave(event)
@@ -1494,6 +1595,8 @@ struct EditEventView: View {
     @State private var showingBackgroundPicker = false
     @State private var showingBackgroundError = false
     @State private var backgroundErrorMessage = ""
+    @State private var tags: [String]
+    @State private var newTag = ""
 
     init(event: CalendarEvent, onSave: @escaping (CalendarEvent) async -> Void) {
         self.event = event
@@ -1507,6 +1610,7 @@ struct EditEventView: View {
         _backgroundOffsetX = State(initialValue: event.backgroundOffsetX ?? 0.0)
         _backgroundOffsetY = State(initialValue: event.backgroundOffsetY ?? 0.0)
         _backgroundScale = State(initialValue: event.backgroundScale ?? 1.0)
+        _tags = State(initialValue: event.tags ?? [])
     }
 
     var body: some View {
@@ -1515,6 +1619,7 @@ struct EditEventView: View {
                 detailsSection
                 whenWhereSection
                 specialEventSection
+                tagsSection
                 backgroundSection
             }
             .navigationTitle("Edit Event")
@@ -1554,6 +1659,50 @@ struct EditEventView: View {
     var specialEventSection: some View {
         Section {
             Toggle("Special Event 💜", isOn: $isSpecial)
+        }
+    }
+
+    var tagsSection: some View {
+        Section("Tags") {
+            HStack {
+                TextField("Add tag", text: $newTag)
+                Button(action: {
+                    let trimmedTag = newTag.trimmingCharacters(in: .whitespaces)
+                    if !trimmedTag.isEmpty && !tags.contains(trimmedTag) {
+                        tags.append(trimmedTag)
+                        newTag = ""
+                    }
+                }) {
+                    Image(systemName: "plus.circle.fill")
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+                .disabled(newTag.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+
+            if !tags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(tags, id: \.self) { tag in
+                            HStack(spacing: 4) {
+                                Text(tag)
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                                Button(action: {
+                                    tags.removeAll { $0 == tag }
+                                }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.caption2)
+                                        .foregroundColor(.white.opacity(0.8))
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color(red: 0.6, green: 0.4, blue: 0.85))
+                            .cornerRadius(12)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1769,6 +1918,7 @@ struct EditEventView: View {
         updatedEvent.backgroundOffsetX = backgroundOffsetX
         updatedEvent.backgroundOffsetY = backgroundOffsetY
         updatedEvent.backgroundScale = backgroundScale
+        updatedEvent.tags = tags.isEmpty ? nil : tags
 
         await onSave(updatedEvent)
         isSaving = false
@@ -2321,6 +2471,65 @@ struct FilterHeaderView: View {
                 .fill(Color.white)
                 .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 2)
         )
+    }
+}
+
+// MARK: - Filter Tags View
+struct FilterTagsView: View {
+    @Environment(\.dismiss) var dismiss
+    let allTags: [String]
+    @Binding var selectedTags: Set<String>
+
+    var body: some View {
+        NavigationView {
+            List {
+                if allTags.isEmpty {
+                    Section {
+                        Text("No tags available")
+                            .foregroundColor(.secondary)
+                            .font(.subheadline)
+                    }
+                } else {
+                    Section("Filter by Tags") {
+                        ForEach(allTags, id: \.self) { tag in
+                            Button(action: {
+                                if selectedTags.contains(tag) {
+                                    selectedTags.remove(tag)
+                                } else {
+                                    selectedTags.insert(tag)
+                                }
+                            }) {
+                                HStack {
+                                    Text(tag)
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    if selectedTags.contains(tag) {
+                                        Image(systemName: "checkmark")
+                                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Filter Events")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Clear All") {
+                        selectedTags.removeAll()
+                    }
+                    .disabled(selectedTags.isEmpty)
+                }
+
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
     }
 }
 

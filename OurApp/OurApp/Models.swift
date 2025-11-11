@@ -53,6 +53,8 @@ struct CalendarEvent: Identifiable, Codable {
     var backgroundOffsetX: Double? // X offset for background positioning
     var backgroundOffsetY: Double? // Y offset for background positioning
     var backgroundScale: Double? // Scale factor for background image
+    var tags: [String]? // Tags for categorizing and filtering events
+    var weatherForecast: String? // Weather forecast for the event (cached)
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -69,6 +71,8 @@ struct CalendarEvent: Identifiable, Codable {
         case backgroundOffsetX
         case backgroundOffsetY
         case backgroundScale
+        case tags
+        case weatherForecast
     }
 }
 
