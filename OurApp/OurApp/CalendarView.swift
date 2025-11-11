@@ -27,6 +27,8 @@ struct CalendarView: View {
     @State private var selectedDay: Date? = nil // For filtering by specific day
     @State private var summaryCardExpanded = true // Start expanded
     @State private var recapPhotoData: RecapPhotoData?
+    @State private var countdownBannerIndex = 0
+    @State private var countdownResetTimer: Timer?
 
     var body: some View {
         NavigationView {
@@ -88,14 +90,33 @@ struct CalendarView: View {
                             }
                             .padding(.horizontal)
 
-                            // Countdown Banner
-                            if let nextEvent = viewModel.upcomingEvents.first {
-                                ModernCountdownBanner(event: nextEvent, onTap: {
-                                    selectedEventForDetail = nextEvent
-                                })
-                                    .id(nextEvent.id) // Force refresh when event changes
-                                    .padding(.horizontal)
-                                    .transition(.move(edge: .top).combined(with: .opacity))
+                            // Countdown Banner - Swipeable
+                            if !viewModel.upcomingEvents.isEmpty {
+                                let upcomingToShow = Array(viewModel.upcomingEvents.prefix(5))
+
+                                TabView(selection: $countdownBannerIndex) {
+                                    ForEach(Array(upcomingToShow.enumerated()), id: \.element.id) { index, event in
+                                        ModernCountdownBanner(event: event, onTap: {
+                                            selectedEventForDetail = event
+                                        })
+                                        .tag(index)
+                                    }
+                                }
+                                .tabViewStyle(.page(indexDisplayMode: upcomingToShow.count > 1 ? .automatic : .never))
+                                .frame(height: 80)
+                                .padding(.horizontal)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                                .onChange(of: countdownBannerIndex) { oldValue, newValue in
+                                    // Reset timer when user manually swipes
+                                    resetCountdownTimer()
+                                }
+                                .onAppear {
+                                    startCountdownResetTimer()
+                                }
+                                .onDisappear {
+                                    countdownResetTimer?.invalidate()
+                                    countdownResetTimer = nil
+                                }
                             }
                         }
                         .padding(.top, 8)
@@ -262,6 +283,12 @@ struct CalendarView: View {
                     selectedDay = nil
                 }
             }
+            .onChange(of: viewModel.upcomingEvents.count) { oldValue, newValue in
+                // Reset countdown banner index if events changed
+                if countdownBannerIndex >= newValue {
+                    countdownBannerIndex = 0
+                }
+            }
         }
     }
 
@@ -296,6 +323,19 @@ struct CalendarView: View {
         let currentMonthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: now))!
         let selectedMonthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: date))!
         return selectedMonthStart < currentMonthStart
+    }
+
+    func startCountdownResetTimer() {
+        countdownResetTimer?.invalidate()
+        countdownResetTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { _ in
+            withAnimation(.easeInOut(duration: 0.5)) {
+                countdownBannerIndex = 0
+            }
+        }
+    }
+
+    func resetCountdownTimer() {
+        startCountdownResetTimer()
     }
 }
 
