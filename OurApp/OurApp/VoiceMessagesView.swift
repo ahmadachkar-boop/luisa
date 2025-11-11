@@ -72,7 +72,7 @@ struct VoiceMessagesView: View {
                 }
                 .sheet(isPresented: $showingRecorder) {
                     VoiceRecorderView { audioData, duration, title in
-                        try? await viewModel.uploadVoiceMessage(
+                        await viewModel.uploadVoiceMessage(
                             audioData: audioData,
                             title: title,
                             duration: duration
@@ -257,7 +257,7 @@ class VoiceMessagesViewModel: ObservableObject {
 
     func uploadVoiceMessage(audioData: Data, title: String, duration: TimeInterval) async {
         do {
-            try await firebaseManager.uploadVoiceMessage(
+            _ = try await firebaseManager.uploadVoiceMessage(
                 audioData: audioData,
                 title: title,
                 duration: duration,
