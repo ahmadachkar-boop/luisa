@@ -1644,20 +1644,20 @@ struct MonthSummaryCard: View {
                                         .resizable()
                                         .scaledToFill()
                                         .frame(maxWidth: .infinity)
-                                        .frame(height: 100)
+                                        .frame(height: 140)
                                         .clipped()
                                         .clipShape(RoundedRectangle(cornerRadius: 12))
                                 } placeholder: {
                                     RoundedRectangle(cornerRadius: 12)
                                         .fill(Color.gray.opacity(0.2))
                                         .frame(maxWidth: .infinity)
-                                        .frame(height: 100)
+                                        .frame(height: 140)
                                         .overlay(ProgressView())
                                 }
                             }
                             .buttonStyle(PlainButtonStyle())
                             .frame(maxWidth: .infinity)
-                            .frame(height: 100)
+                            .frame(height: 140)
                             .contentShape(Rectangle())
                             .id(photoURL) // For animation
                         }
