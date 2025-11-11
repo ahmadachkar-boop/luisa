@@ -504,10 +504,20 @@ struct CalendarView: View {
                 if countdownBannerIndex >= newValue {
                     countdownBannerIndex = 0
                 }
+                // Update Live Activity when events change
+                updateLiveActivity()
             }
             .task {
                 // Fetch weather for existing events when view appears
                 await viewModel.fetchWeatherForEvents()
+            }
+            .onAppear {
+                // Start Live Activity when view appears
+                startLiveActivity()
+            }
+            .onDisappear {
+                // Note: We keep the Live Activity running even when view disappears
+                // User can manually dismiss it from the Dynamic Island
             }
         }
     }
@@ -559,6 +569,19 @@ struct CalendarView: View {
 
     func resetCountdownTimer() {
         startCountdownResetTimer()
+    }
+
+    // MARK: - Live Activity Management
+    func startLiveActivity() {
+        if #available(iOS 16.1, *), LiveActivityManager.isSupported {
+            LiveActivityManager.shared.updateLiveActivity(with: viewModel.upcomingEvents)
+        }
+    }
+
+    func updateLiveActivity() {
+        if #available(iOS 16.1, *), LiveActivityManager.isSupported {
+            LiveActivityManager.shared.updateLiveActivity(with: viewModel.upcomingEvents)
+        }
     }
 
     func refreshCalendar() async {
