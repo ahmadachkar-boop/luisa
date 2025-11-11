@@ -459,7 +459,7 @@ struct CalendarView: View {
         // Sync with Google Calendar if signed in
         if googleCalendarManager.isSignedIn {
             do {
-                try await googleCalendarManager.syncWithGoogleCalendar()
+                try await googleCalendarManager.syncEvents()
             } catch {
                 await MainActor.run {
                     errorMessage = "Failed to sync with Google Calendar: \(error.localizedDescription)"
