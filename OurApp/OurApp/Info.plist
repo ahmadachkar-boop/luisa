@@ -4,5 +4,14 @@
 <dict>
 	<key>NSWeatherUsageDescription</key>
 	<string>We use your location to show weather forecasts for your upcoming events</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.147528790359-oj9snngdl2msc8p6qtpkte5u21ausvh0</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
