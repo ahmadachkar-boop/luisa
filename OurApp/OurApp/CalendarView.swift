@@ -2484,6 +2484,7 @@ struct MonthSummaryCard: View {
     @State private var shuffleCount = 0
     @State private var lastShuffledPosition: Int? = nil
     @State private var animatingPosition: Int? = nil
+    @State private var showingAllPhotos = false
     private let maxShuffles = 15 // Stop shuffling after 15 cycles (1 minute at 4s intervals)
     private var shuffleTimerId: String {
         "shuffle_\(month.timeIntervalSince1970)"
@@ -2611,6 +2612,34 @@ struct MonthSummaryCard: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)
+
+                    // Button to view all photos
+                    Button(action: {
+                        showingAllPhotos = true
+                    }) {
+                        HStack {
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .font(.caption)
+                            Text("View All \(photoCount) Photos")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.7, green: 0.4, blue: 0.95),
+                                    Color(red: 0.55, green: 0.3, blue: 0.85)
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .cornerRadius(12)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
                 .onAppear {
@@ -2652,6 +2681,13 @@ struct MonthSummaryCard: View {
             if newValue && displayedPhotoURLs.isEmpty {
                 initializePhotos()
             }
+        }
+        .sheet(isPresented: $showingAllPhotos) {
+            MonthPhotosGridView(
+                month: month,
+                photoURLs: allPhotoURLs,
+                onPhotoTap: onPhotoTap
+            )
         }
     }
 
@@ -2717,6 +2753,101 @@ struct MonthSummaryCard: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             withAnimation(.easeInOut(duration: 0.3)) {
                 animatingPosition = nil
+            }
+        }
+    }
+}
+
+// MARK: - Month Photos Grid View
+struct MonthPhotosGridView: View {
+    let month: Date
+    let photoURLs: [String]
+    let onPhotoTap: ([String], Int) -> Void
+    @Environment(\.dismiss) var dismiss
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 8),
+        GridItem(.flexible(), spacing: 8),
+        GridItem(.flexible(), spacing: 8)
+    ]
+
+    var body: some View {
+        NavigationView {
+            ZStack {
+                // Background gradient
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.98, green: 0.96, blue: 1.0),
+                        Color(red: 0.96, green: 0.94, blue: 0.99),
+                        Color.white
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 20) {
+                        // Header info
+                        VStack(spacing: 8) {
+                            Text(month, format: .dateTime.month(.wide).year())
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
+
+                            Text("\(photoURLs.count) Photos")
+                                .font(.subheadline)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        }
+                        .padding(.top, 8)
+
+                        // Photo grid
+                        LazyVGrid(columns: columns, spacing: 8) {
+                            ForEach(Array(photoURLs.enumerated()), id: \.offset) { index, photoURL in
+                                Button(action: {
+                                    dismiss()
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                        onPhotoTap(photoURLs, index)
+                                    }
+                                }) {
+                                    AsyncImage(url: URL(string: photoURL)) { phase in
+                                        if let image = phase.image {
+                                            image
+                                                .resizable()
+                                                .scaledToFill()
+                                                .frame(width: 110, height: 110)
+                                                .clipped()
+                                        } else {
+                                            Color.gray.opacity(0.2)
+                                                .frame(width: 110, height: 110)
+                                                .overlay(ProgressView())
+                                        }
+                                    }
+                                    .aspectRatio(1, contentMode: .fill)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(Color.white, lineWidth: 2)
+                                    )
+                                    .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 20)
+                    }
+                }
+            }
+            .navigationTitle("All Photos")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
             }
         }
     }
