@@ -715,131 +715,115 @@ struct ModernEventCard: View {
     let event: CalendarEvent
     let onTap: () -> Void
     let onDelete: () -> Void
-    @State private var showingDeleteAlert = false
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(alignment: .top, spacing: 16) {
-                // Date badge
-                VStack(spacing: 4) {
-                    Text(event.date, format: .dateTime.day())
-                        .font(.system(size: 26, weight: .bold))
-                        .foregroundColor(.white)
+        HStack(alignment: .top, spacing: 16) {
+            // Date badge
+            VStack(spacing: 4) {
+                Text(event.date, format: .dateTime.day())
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundColor(.white)
 
-                    Text(event.date, format: .dateTime.month(.abbreviated).year())
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.9))
-                        .textCase(.uppercase)
-                }
-                .frame(width: 70, height: 70)
-                .background(
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 18)
-                            .fill(
-                                LinearGradient(
-                                    colors: event.isSpecial ?
-                                        [Color(red: 0.85, green: 0.35, blue: 0.75), Color(red: 0.65, green: 0.25, blue: 0.9)] :
-                                        [Color(red: 0.6, green: 0.4, blue: 0.85), Color(red: 0.5, green: 0.3, blue: 0.75)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
+                Text(event.date, format: .dateTime.month(.abbreviated).year())
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.9))
+                    .textCase(.uppercase)
+            }
+            .frame(width: 70, height: 70)
+            .background(
+                ZStack {
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(
+                            LinearGradient(
+                                colors: event.isSpecial ?
+                                    [Color(red: 0.85, green: 0.35, blue: 0.75), Color(red: 0.65, green: 0.25, blue: 0.9)] :
+                                    [Color(red: 0.6, green: 0.4, blue: 0.85), Color(red: 0.5, green: 0.3, blue: 0.75)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
                             )
+                        )
 
-                        if event.isSpecial {
-                            RoundedRectangle(cornerRadius: 18)
-                                .strokeBorder(Color.white.opacity(0.3), lineWidth: 2)
-                        }
+                    if event.isSpecial {
+                        RoundedRectangle(cornerRadius: 18)
+                            .strokeBorder(Color.white.opacity(0.3), lineWidth: 2)
                     }
-                )
-                .shadow(color: event.isSpecial ? Color.purple.opacity(0.4) : Color.black.opacity(0.15),
-                        radius: 10, x: 0, y: 4)
+                }
+            )
+            .shadow(color: event.isSpecial ? Color.purple.opacity(0.4) : Color.black.opacity(0.15),
+                    radius: 10, x: 0, y: 4)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    // Title row
-                    HStack(spacing: 8) {
-                        Text(event.title)
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
+            VStack(alignment: .leading, spacing: 8) {
+                // Title row
+                HStack(spacing: 8) {
+                    Text(event.title)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
 
-                        if event.isSpecial {
-                            Image(systemName: "star.fill")
-                                .font(.caption)
-                                .foregroundColor(Color(red: 0.8, green: 0.5, blue: 0.95))
-                        }
-
-                        Spacer()
-
-                        if !event.photoURLs.isEmpty {
-                            HStack(spacing: 2) {
-                                Image(systemName: "photo.fill")
-                                    .font(.caption2)
-                                Text("\(event.photoURLs.count)")
-                                    .font(.caption2)
-                                    .fontWeight(.medium)
-                            }
-                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                        }
-                    }
-
-                    // Time
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock")
+                    if event.isSpecial {
+                        Image(systemName: "star.fill")
                             .font(.caption)
-                        Text(event.date, format: .dateTime.hour().minute())
-                            .font(.system(size: 14))
-                    }
-                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-
-                    // Description
-                    if !event.description.isEmpty {
-                        Text(event.description)
-                            .font(.system(size: 14))
-                            .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
-                            .lineLimit(2)
+                            .foregroundColor(Color(red: 0.8, green: 0.5, blue: 0.95))
                     }
 
-                    // Location
-                    if !event.location.isEmpty {
-                        HStack(spacing: 6) {
-                            Image(systemName: "mappin.circle.fill")
-                                .font(.caption)
-                            Text(event.location)
-                                .font(.system(size: 13))
-                                .lineLimit(1)
-                        }
-                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                    }
+                    Spacer()
 
-                    // Weather indicator for upcoming events
-                    if let weather = event.weatherForecast, !weather.isEmpty, event.date > Date() {
-                        HStack(spacing: 6) {
-                            Image(systemName: "cloud.sun.fill")
-                                .font(.caption)
-                            Text(weather)
-                                .font(.system(size: 13))
-                                .lineLimit(1)
+                    if !event.photoURLs.isEmpty {
+                        HStack(spacing: 2) {
+                            Image(systemName: "photo.fill")
+                                .font(.caption2)
+                            Text("\(event.photoURLs.count)")
+                                .font(.caption2)
+                                .fontWeight(.medium)
                         }
                         .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                     }
                 }
 
-                VStack(spacing: 12) {
-                    Button(action: {
-                        showingDeleteAlert = true
-                    }) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 15))
-                            .foregroundColor(.red.opacity(0.7))
-                            .frame(width: 32, height: 32)
-                            .background(Color.red.opacity(0.1))
-                            .clipShape(Circle())
+                // Time
+                HStack(spacing: 6) {
+                    Image(systemName: "clock")
+                        .font(.caption)
+                    Text(event.date, format: .dateTime.hour().minute())
+                        .font(.system(size: 14))
+                }
+                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+
+                // Description
+                if !event.description.isEmpty {
+                    Text(event.description)
+                        .font(.system(size: 14))
+                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+                        .lineLimit(2)
+                }
+
+                // Location
+                if !event.location.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "mappin.circle.fill")
+                            .font(.caption)
+                        Text(event.location)
+                            .font(.system(size: 13))
+                            .lineLimit(1)
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+
+                // Weather indicator for upcoming events
+                if let weather = event.weatherForecast, !weather.isEmpty, event.date > Date() {
+                    HStack(spacing: 6) {
+                        Image(systemName: "cloud.sun.fill")
+                            .font(.caption)
+                        Text(weather)
+                            .font(.system(size: 13))
+                            .lineLimit(1)
+                    }
+                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                 }
             }
-            .padding(20)
+
+            Spacer()
         }
-        .buttonStyle(PlainButtonStyle())
+        .padding(20)
         .background(
             ZStack {
                 // Glassmorphism card
@@ -879,11 +863,9 @@ struct ModernEventCard: View {
         )
         .shadow(color: event.isSpecial ? Color.purple.opacity(0.15) : Color.black.opacity(0.06),
                 radius: 15, x: 0, y: 4)
-        .alert("Delete Event?", isPresented: $showingDeleteAlert) {
-            Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive, action: onDelete)
-        } message: {
-            Text("This will remove '\(event.title)' from your plans")
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onTap()
         }
     }
 }
