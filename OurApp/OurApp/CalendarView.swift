@@ -2482,7 +2482,9 @@ struct MonthSummaryCard: View {
 
     @State private var displayedPhotoURLs: [String] = []
     @State private var shuffleCount = 0
-    private let maxShuffles = 12 // Stop shuffling after 12 cycles (1 minute at 5s intervals)
+    @State private var lastShuffledPosition: Int? = nil
+    @State private var animatingPosition: Int? = nil
+    private let maxShuffles = 15 // Stop shuffling after 15 cycles (1 minute at 4s intervals)
     private var shuffleTimerId: String {
         "shuffle_\(month.timeIntervalSince1970)"
     }
@@ -2598,6 +2600,12 @@ struct MonthSummaryCard: View {
                             .frame(maxWidth: .infinity)
                             .frame(height: 140)
                             .contentShape(Rectangle())
+                            .rotation3DEffect(
+                                .degrees(animatingPosition == index ? 180 : 0),
+                                axis: (x: 0, y: 1, z: 0),
+                                perspective: 0.5
+                            )
+                            .scaleEffect(animatingPosition == index ? 0.95 : 1.0)
                             .id(photoURL) // For animation
                         }
                     }
@@ -2660,7 +2668,8 @@ struct MonthSummaryCard: View {
         guard allPhotoURLs.count > 4 else { return } // Only shuffle if we have more than 4 photos
 
         shuffleCount = 0
-        TimerManager.shared.schedule(id: shuffleTimerId, interval: 5.0, repeats: true) {
+        lastShuffledPosition = nil
+        TimerManager.shared.schedule(id: shuffleTimerId, interval: 4.0, repeats: true) {
             shuffleRandomPhoto()
         }
     }
@@ -2675,20 +2684,40 @@ struct MonthSummaryCard: View {
             return
         }
 
-        withAnimation(.easeInOut(duration: 0.5)) {
-            // Pick a random position to replace (0-3)
-            let randomPosition = Int.random(in: 0..<4)
+        // Pick a random position to replace (0-3), but not the same as last time
+        var randomPosition: Int
+        if let lastPosition = lastShuffledPosition {
+            // Ensure we don't shuffle the same position twice in a row
+            let availablePositions = (0..<4).filter { $0 != lastPosition }
+            randomPosition = availablePositions.randomElement() ?? Int.random(in: 0..<4)
+        } else {
+            randomPosition = Int.random(in: 0..<4)
+        }
 
-            // Get photos not currently displayed
-            let availablePhotos = allPhotoURLs.filter { !displayedPhotoURLs.contains($0) }
+        // Get photos not currently displayed
+        let availablePhotos = allPhotoURLs.filter { !displayedPhotoURLs.contains($0) }
 
-            guard !availablePhotos.isEmpty else { return }
+        guard !availablePhotos.isEmpty else { return }
 
-            // Pick a random photo from available ones
-            let newPhoto = availablePhotos.randomElement()!
+        // Pick a random photo from available ones
+        let newPhoto = availablePhotos.randomElement()!
 
-            // Replace the photo at random position
+        // Trigger flip animation
+        withAnimation(.easeInOut(duration: 0.3)) {
+            animatingPosition = randomPosition
+        }
+
+        // Wait for halfway through animation, then change photo
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             displayedPhotoURLs[randomPosition] = newPhoto
+            lastShuffledPosition = randomPosition
+        }
+
+        // Complete animation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                animatingPosition = nil
+            }
         }
     }
 }
