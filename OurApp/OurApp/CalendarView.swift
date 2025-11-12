@@ -602,7 +602,7 @@ struct CalendarView: View {
                             Text("Island Gap: \(Int(islandGap))pt")
                                 .font(.caption)
                                 .foregroundColor(.white)
-                            Slider(value: $islandGap, in: 100...200, step: 1)
+                            Slider(value: $islandGap, in: -50...200, step: 1)
                         }
 
                         VStack(alignment: .leading) {
