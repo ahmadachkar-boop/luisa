@@ -505,6 +505,13 @@ struct CalendarView: View {
                 // User can manually dismiss it from the Dynamic Island
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            // Reserve space for the Dynamic Island ears so content doesn't go behind them
+            if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
+                Color.clear
+                    .frame(height: earHeight + yOffset)
+            }
+        }
         .overlay(alignment: .top) {
             // DYNAMIC ISLAND "EARS" - renders in left/right spaces around the Island
             if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
@@ -551,18 +558,35 @@ struct CalendarView: View {
                     .padding(.leading, 6)
                     .padding(.trailing, 8)
                     .background(
-                        Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: currentEvent.isSpecial ?
-                                        [Color.black.opacity(0.95), Color(red: 0.15, green: 0.1, blue: 0.2)] :
-                                        [Color.black.opacity(0.9), Color(red: 0.1, green: 0.1, blue: 0.15)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
+                        ZStack {
+                            // Backdrop blur layer
+                            Capsule()
+                                .fill(.ultraThinMaterial)
+
+                            // Gradient overlay
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: currentEvent.isSpecial ?
+                                            [Color.black.opacity(0.75), Color(red: 0.15, green: 0.1, blue: 0.2).opacity(0.8)] :
+                                            [Color.black.opacity(0.7), Color(red: 0.1, green: 0.1, blue: 0.15).opacity(0.75)],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
                                 )
-                            )
-                            .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
+                        }
+                        .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
                     )
+                    .overlay(alignment: .bottom) {
+                        // Gradient fade at bottom edge
+                        LinearGradient(
+                            colors: [.clear, .black.opacity(0.2)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 8)
+                        .clipShape(Capsule())
+                    }
                 } right: {
                     // RIGHT EAR CONTENT - Countdown (tap for next event)
                     HStack(spacing: 4) {
@@ -578,16 +602,33 @@ struct CalendarView: View {
                     .padding(.leading, 8)
                     .padding(.trailing, 6)
                     .background(
-                        Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.black.opacity(0.9), Color(red: 0.1, green: 0.1, blue: 0.15)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
+                        ZStack {
+                            // Backdrop blur layer
+                            Capsule()
+                                .fill(.ultraThinMaterial)
+
+                            // Gradient overlay
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color.black.opacity(0.7), Color(red: 0.1, green: 0.1, blue: 0.15).opacity(0.75)],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
                                 )
-                            )
-                            .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
+                        }
+                        .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
                     )
+                    .overlay(alignment: .bottom) {
+                        // Gradient fade at bottom edge
+                        LinearGradient(
+                            colors: [.clear, .black.opacity(0.2)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 8)
+                        .clipShape(Capsule())
+                    }
                 }
             }
         }
