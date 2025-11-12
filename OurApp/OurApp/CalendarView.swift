@@ -508,10 +508,17 @@ struct CalendarView: View {
         }
         .navigationTitle("Our Plans 💜")
         .navigationBarTitleDisplayMode(.large)
-        .overlay(alignment: .top) {
-            // DYNAMIC ISLAND "EARS" - renders in left/right spaces around the Island
-            if false && !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            // DYNAMIC ISLAND AREA
+            if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
                 let currentEvent = viewModel.upcomingEvents[safe: currentEarEventIndex] ?? viewModel.upcomingEvents.first!
+
+                ZStack(alignment: .top) {
+                    // Gray background
+                    Rectangle()
+                        .fill(Color(white: 0.15))
+
+                    // Ears on top
 
                 DynamicIslandEars(
                     islandGap: islandGap,
@@ -578,6 +585,8 @@ struct CalendarView: View {
                             .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
                     )
                 }
+                }
+                .frame(height: earHeight + yOffset + 10)
             }
         }
         .overlay(alignment: .bottom) {
