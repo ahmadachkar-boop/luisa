@@ -496,11 +496,10 @@ struct CalendarView: View {
                 // Note: We keep the Live Activity running even when view disappears
                 // User can manually dismiss it from the Dynamic Island
             }
-        }
-        .overlay(alignment: .top) {
-            // IN-APP DYNAMIC ISLAND BANNER (positioned IN the status bar area)
+
+            // IN-APP DYNAMIC ISLAND BANNER (acts like background to ignore safe areas)
             if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
-                GeometryReader { geometry in
+                VStack {
                     InAppDynamicIsland(
                         events: viewModel.upcomingEvents,
                         selectedIndex: $dynamicIslandIndex,
@@ -511,10 +510,11 @@ struct CalendarView: View {
                             countdownText(for: event)
                         }
                     )
-                    .frame(maxWidth: .infinity)
-                    .offset(y: -geometry.safeAreaInsets.top + 6) // Move up into status bar area, 6pts from absolute top (where Dynamic Island is)
+                    .padding(.top, 12) // Position where Dynamic Island is
+
+                    Spacer()
                 }
-                .frame(height: 37) // Match banner height to prevent layout issues
+                .ignoresSafeArea() // Like background, this ignores safe areas
             }
         }
     }
