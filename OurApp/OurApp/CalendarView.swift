@@ -177,7 +177,9 @@ struct CalendarView: View {
     @State private var showDebugTuning = false
     @State private var islandGap: CGFloat = 126  // Narrower gap - Island is ~126pts in compact state
     @State private var earWidth: CGFloat = 120   // Fixed width for each ear to look connected
+    @State private var earHeight: CGFloat = 37   // Height of each ear
     @State private var yOffset: CGFloat = 8      // Vertical offset from top
+    @State private var currentEarEventIndex = 0  // Index of event shown in ears
 
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
@@ -506,67 +508,86 @@ struct CalendarView: View {
         .overlay(alignment: .top) {
             // DYNAMIC ISLAND "EARS" - renders in left/right spaces around the Island
             if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
+                let currentEvent = viewModel.upcomingEvents[safe: currentEarEventIndex] ?? viewModel.upcomingEvents.first!
+
                 DynamicIslandEars(
                     islandGap: islandGap,
                     earWidth: earWidth,
-                    earHeight: 37,
-                    yOffset: yOffset
+                    earHeight: earHeight,
+                    yOffset: yOffset,
+                    onLeftTap: {
+                        // Previous event
+                        withAnimation(.spring(response: 0.3)) {
+                            if currentEarEventIndex > 0 {
+                                currentEarEventIndex -= 1
+                            } else {
+                                currentEarEventIndex = min(viewModel.upcomingEvents.count - 1, 4) // Cycle to last (max 5 events)
+                            }
+                        }
+                    },
+                    onRightTap: {
+                        // Next event
+                        withAnimation(.spring(response: 0.3)) {
+                            let maxIndex = min(viewModel.upcomingEvents.count - 1, 4) // Max 5 events
+                            if currentEarEventIndex < maxIndex {
+                                currentEarEventIndex += 1
+                            } else {
+                                currentEarEventIndex = 0 // Cycle back to first
+                            }
+                        }
+                    }
                 ) {
-                    // LEFT EAR CONTENT - Event name (full)
-                    if let nextEvent = viewModel.upcomingEvents.first {
-                        HStack(spacing: 4) {
-                            Image(systemName: nextEvent.isSpecial ? "star.fill" : "calendar")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(.white)
-                            Text(nextEvent.title)
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(.white)
-                                .lineLimit(1)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 8)
-                        .background(
-                            Capsule()
-                                .fill(
-                                    LinearGradient(
-                                        colors: nextEvent.isSpecial ?
-                                            [Color.black.opacity(0.95), Color(red: 0.15, green: 0.1, blue: 0.2)] :
-                                            [Color.black.opacity(0.9), Color(red: 0.1, green: 0.1, blue: 0.15)],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
-                                .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
-                        )
+                    // LEFT EAR CONTENT - Event name (tap for previous event)
+                    HStack(spacing: 4) {
+                        Image(systemName: currentEvent.isSpecial ? "star.fill" : "calendar")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(.white)
+                        Text(currentEvent.title)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 8)
+                    .background(
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: currentEvent.isSpecial ?
+                                        [Color.black.opacity(0.95), Color(red: 0.15, green: 0.1, blue: 0.2)] :
+                                        [Color.black.opacity(0.9), Color(red: 0.1, green: 0.1, blue: 0.15)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
+                    )
                 } right: {
-                    // RIGHT EAR CONTENT - Countdown
-                    if let nextEvent = viewModel.upcomingEvents.first {
-                        HStack(spacing: 4) {
-                            Image(systemName: "clock.fill")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(.white)
-                            Text(countdownText(for: nextEvent))
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.95))
-                                .lineLimit(1)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 8)
-                        .background(
-                            Capsule()
-                                .fill(
-                                    LinearGradient(
-                                        colors: [Color.black.opacity(0.9), Color(red: 0.1, green: 0.1, blue: 0.15)],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
-                                .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
-                        )
+                    // RIGHT EAR CONTENT - Countdown (tap for next event)
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock.fill")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(.white)
+                        Text(countdownText(for: currentEvent))
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.95))
+                            .lineLimit(1)
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 8)
+                    .background(
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.black.opacity(0.9), Color(red: 0.1, green: 0.1, blue: 0.15)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
+                    )
                 }
             }
         }
@@ -591,6 +612,13 @@ struct CalendarView: View {
                                 .font(.caption)
                                 .foregroundColor(.white)
                             Slider(value: $earWidth, in: 80...160, step: 1)
+                        }
+
+                        VStack(alignment: .leading) {
+                            Text("Ear Height: \(Int(earHeight))pt")
+                                .font(.caption)
+                                .foregroundColor(.white)
+                            Slider(value: $earHeight, in: 30...50, step: 1)
                         }
 
                         VStack(alignment: .leading) {
@@ -3464,6 +3492,8 @@ struct ToolDrawerView: View {
 struct DynamicIslandEars<Left: View, Right: View>: View {
     let left: Left
     let right: Right
+    let onLeftTap: () -> Void
+    let onRightTap: () -> Void
 
     var islandGap: CGFloat = 126      // center hole width (compact Island ~126pts)
     var earWidth: CGFloat = 120       // fixed width for each ear
@@ -3474,10 +3504,14 @@ struct DynamicIslandEars<Left: View, Right: View>: View {
          earWidth: CGFloat = 120,
          earHeight: CGFloat = 37,
          yOffset: CGFloat = 8,
+         onLeftTap: @escaping () -> Void = {},
+         onRightTap: @escaping () -> Void = {},
          @ViewBuilder left: () -> Left,
          @ViewBuilder right: () -> Right) {
         self.left = left()
         self.right = right()
+        self.onLeftTap = onLeftTap
+        self.onRightTap = onRightTap
         self.islandGap = islandGap
         self.earWidth = earWidth
         self.earHeight = earHeight
@@ -3486,21 +3520,26 @@ struct DynamicIslandEars<Left: View, Right: View>: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // LEFT EAR - fixed width, appears to connect to Island
+            // LEFT EAR - tap to go to previous event
             left
                 .frame(width: earWidth, height: earHeight)
                 .contentShape(Rectangle())
-                .allowsHitTesting(false) // avoid gesture conflicts
+                .onTapGesture {
+                    onLeftTap()
+                }
 
             // HOLE (where the Island is)
             Color.clear
                 .frame(width: islandGap, height: earHeight)
+                .allowsHitTesting(false)
 
-            // RIGHT EAR - fixed width, appears to connect to Island
+            // RIGHT EAR - tap to go to next event
             right
                 .frame(width: earWidth, height: earHeight)
                 .contentShape(Rectangle())
-                .allowsHitTesting(false)
+                .onTapGesture {
+                    onRightTap()
+                }
         }
         .frame(maxWidth: .infinity, alignment: .top)
         .offset(y: yOffset)
@@ -3584,6 +3623,13 @@ struct InAppDynamicIsland: View {
 
     private func resetAutoSwipeTimer() {
         startAutoSwipeTimer()
+    }
+}
+
+// MARK: - Array Extension for Safe Subscripting
+extension Array {
+    subscript(safe index: Index) -> Element? {
+        return indices.contains(index) ? self[index] : nil
     }
 }
 
