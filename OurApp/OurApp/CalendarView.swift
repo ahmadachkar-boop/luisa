@@ -509,23 +509,8 @@ struct CalendarView: View {
         .navigationTitle("Our Plans 💜")
         .navigationBarTitleDisplayMode(.large)
         .overlay(alignment: .top) {
-            // SOLID MASK - Only covers status bar area (dynamic island zone)
-            if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
-                VStack(spacing: 0) {
-                    Rectangle()
-                        .fill(Color(white: 0.15))  // Solid gray
-                        .frame(height: earHeight + yOffset + 10)
-                        .frame(maxWidth: .infinity)
-
-                    Spacer()
-                }
-                .ignoresSafeArea(.all, edges: .top)
-                .allowsHitTesting(false)
-            }
-        }
-        .overlay(alignment: .top) {
             // DYNAMIC ISLAND "EARS" - renders in left/right spaces around the Island
-            if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
+            if false && !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
                 let currentEvent = viewModel.upcomingEvents[safe: currentEarEventIndex] ?? viewModel.upcomingEvents.first!
 
                 DynamicIslandEars(
