@@ -173,6 +173,12 @@ struct CalendarView: View {
     @State private var expandedCardId: String? = nil
     @State private var dynamicIslandIndex = 0
 
+    // Dynamic Island ears tuning (debug)
+    @State private var showDebugTuning = false
+    @State private var islandGap: CGFloat = 126  // Narrower gap - Island is ~126pts in compact state
+    @State private var earWidth: CGFloat = 120   // Fixed width for each ear to look connected
+    @State private var yOffset: CGFloat = 8      // Vertical offset from top
+
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
         let baseEvents = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
@@ -501,68 +507,120 @@ struct CalendarView: View {
             // DYNAMIC ISLAND "EARS" - renders in left/right spaces around the Island
             if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
                 DynamicIslandEars(
-                    islandGap: 170,  // center hole width (where the Island is)
+                    islandGap: islandGap,
+                    earWidth: earWidth,
                     earHeight: 37,
-                    yOffset: 6
+                    yOffset: yOffset
                 ) {
-                    // LEFT EAR CONTENT - Event icon and countdown
+                    // LEFT EAR CONTENT - Event name (full)
                     if let nextEvent = viewModel.upcomingEvents.first {
-                        HStack(spacing: 6) {
+                        HStack(spacing: 4) {
                             Image(systemName: nextEvent.isSpecial ? "star.fill" : "calendar")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(.white)
+                            Text(nextEvent.title)
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundColor(.white)
-                            Text(countdownText(for: nextEvent))
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.white.opacity(0.9))
                                 .lineLimit(1)
                         }
+                        .frame(maxWidth: .infinity)
                         .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
+                        .padding(.vertical, 8)
                         .background(
                             Capsule()
                                 .fill(
                                     LinearGradient(
                                         colors: nextEvent.isSpecial ?
-                                            [Color.black.opacity(0.9), Color(red: 0.15, green: 0.1, blue: 0.2)] :
-                                            [Color.black.opacity(0.85), Color(red: 0.1, green: 0.1, blue: 0.15)],
+                                            [Color.black.opacity(0.95), Color(red: 0.15, green: 0.1, blue: 0.2)] :
+                                            [Color.black.opacity(0.9), Color(red: 0.1, green: 0.1, blue: 0.15)],
                                         startPoint: .leading,
                                         endPoint: .trailing
                                     )
                                 )
-                                .shadow(color: Color.black.opacity(0.5), radius: 8, x: 0, y: 4)
+                                .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
                         )
                     }
                 } right: {
-                    // RIGHT EAR CONTENT - Event count indicator
-                    if viewModel.upcomingEvents.count > 1 {
-                        HStack(spacing: 6) {
-                            Image(systemName: "calendar.badge.clock")
-                                .font(.system(size: 10, weight: .semibold))
+                    // RIGHT EAR CONTENT - Countdown
+                    if let nextEvent = viewModel.upcomingEvents.first {
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock.fill")
+                                .font(.system(size: 9, weight: .semibold))
                                 .foregroundColor(.white)
-                            Text("+\(viewModel.upcomingEvents.count - 1)")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.white.opacity(0.9))
+                            Text(countdownText(for: nextEvent))
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.95))
                                 .lineLimit(1)
                         }
+                        .frame(maxWidth: .infinity)
                         .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
+                        .padding(.vertical, 8)
                         .background(
                             Capsule()
                                 .fill(
                                     LinearGradient(
-                                        colors: [Color.black.opacity(0.85), Color(red: 0.1, green: 0.1, blue: 0.15)],
+                                        colors: [Color.black.opacity(0.9), Color(red: 0.1, green: 0.1, blue: 0.15)],
                                         startPoint: .leading,
                                         endPoint: .trailing
                                     )
                                 )
-                                .shadow(color: Color.black.opacity(0.5), radius: 8, x: 0, y: 4)
+                                .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
                         )
-                    } else {
-                        // Empty placeholder when only one event
-                        Color.clear
                     }
                 }
             }
+        }
+        .overlay(alignment: .bottom) {
+            // DEBUG TUNING OVERLAY
+            if showDebugTuning {
+                VStack(spacing: 16) {
+                    Text("Dynamic Island Tuning")
+                        .font(.headline)
+                        .foregroundColor(.white)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading) {
+                            Text("Island Gap: \(Int(islandGap))pt")
+                                .font(.caption)
+                                .foregroundColor(.white)
+                            Slider(value: $islandGap, in: 100...200, step: 1)
+                        }
+
+                        VStack(alignment: .leading) {
+                            Text("Ear Width: \(Int(earWidth))pt")
+                                .font(.caption)
+                                .foregroundColor(.white)
+                            Slider(value: $earWidth, in: 80...160, step: 1)
+                        }
+
+                        VStack(alignment: .leading) {
+                            Text("Y Offset: \(Int(yOffset))pt")
+                                .font(.caption)
+                                .foregroundColor(.white)
+                            Slider(value: $yOffset, in: 0...20, step: 1)
+                        }
+                    }
+
+                    Button("Close Debug") {
+                        showDebugTuning = false
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(Color.white.opacity(0.2)))
+                }
+                .padding(20)
+                .background(
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(Color.black.opacity(0.85))
+                        .shadow(radius: 20)
+                )
+                .padding(20)
+            }
+        }
+        .onTapGesture(count: 3) {
+            // Triple tap anywhere to show debug tuning
+            showDebugTuning.toggle()
         }
     }
 
@@ -3407,48 +3465,45 @@ struct DynamicIslandEars<Left: View, Right: View>: View {
     let left: Left
     let right: Right
 
-    // Tune these per device once; persist if you want (or expose sliders in a debug panel)
-    var islandGap: CGFloat = 170      // center hole width (compact Island width-ish)
+    var islandGap: CGFloat = 126      // center hole width (compact Island ~126pts)
+    var earWidth: CGFloat = 120       // fixed width for each ear
     var earHeight: CGFloat = 37       // compact Island height
-    var yOffset: CGFloat = 6          // nudge to visually align with the Island
+    var yOffset: CGFloat = 8          // nudge to visually align with the Island
 
-    init(islandGap: CGFloat = 170,
+    init(islandGap: CGFloat = 126,
+         earWidth: CGFloat = 120,
          earHeight: CGFloat = 37,
-         yOffset: CGFloat = 6,
+         yOffset: CGFloat = 8,
          @ViewBuilder left: () -> Left,
          @ViewBuilder right: () -> Right) {
         self.left = left()
         self.right = right()
         self.islandGap = islandGap
+        self.earWidth = earWidth
         self.earHeight = earHeight
         self.yOffset = yOffset
     }
 
     var body: some View {
-        GeometryReader { geo in
-            let total = geo.size.width
-            let earWidth = max((total - islandGap) / 2, 0)
+        HStack(spacing: 0) {
+            // LEFT EAR - fixed width, appears to connect to Island
+            left
+                .frame(width: earWidth, height: earHeight)
+                .contentShape(Rectangle())
+                .allowsHitTesting(false) // avoid gesture conflicts
 
-            HStack(spacing: 0) {
-                // LEFT EAR
-                left
-                    .frame(width: earWidth, height: earHeight)
-                    .contentShape(Rectangle())
-                    .allowsHitTesting(false) // avoid gesture conflicts
+            // HOLE (where the Island is)
+            Color.clear
+                .frame(width: islandGap, height: earHeight)
 
-                // HOLE (where the Island is)
-                Color.clear
-                    .frame(width: islandGap, height: earHeight)
-
-                // RIGHT EAR
-                right
-                    .frame(width: earWidth, height: earHeight)
-                    .contentShape(Rectangle())
-                    .allowsHitTesting(false)
-            }
-            .frame(maxWidth: .infinity, alignment: .top)
-            .offset(y: yOffset)
+            // RIGHT EAR - fixed width, appears to connect to Island
+            right
+                .frame(width: earWidth, height: earHeight)
+                .contentShape(Rectangle())
+                .allowsHitTesting(false)
         }
+        .frame(maxWidth: .infinity, alignment: .top)
+        .offset(y: yOffset)
         .frame(height: earHeight + yOffset)
         .ignoresSafeArea(.container, edges: .top)
     }
