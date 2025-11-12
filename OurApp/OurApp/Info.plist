@@ -6,6 +6,8 @@
 	<string>We use your location to show weather forecasts for your upcoming events</string>
 	<key>NSWeatherUsageDescription</key>
 	<string>We use your location to show weather forecasts for your upcoming events</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
