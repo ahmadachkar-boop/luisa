@@ -506,21 +506,21 @@ struct CalendarView: View {
                 // User can manually dismiss it from the Dynamic Island
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            // Reserve space for the Dynamic Island ears so content doesn't go behind them
-            if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
-                Color.clear
-                    .frame(height: earHeight + yOffset)
-            }
-        }
+        .navigationTitle("Our Plans 💜")
+        .navigationBarTitleDisplayMode(.large)
         .overlay(alignment: .top) {
-            // SOLID MASK - Simple solid rectangle covering dynamic island area
+            // SOLID MASK - Only covers status bar area (dynamic island zone)
             if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
-                Rectangle()
-                    .fill(Color(white: 0.15))  // Solid gray
-                    .frame(height: earHeight + yOffset + 10)
-                    .frame(maxWidth: .infinity)
-                    .ignoresSafeArea(.container, edges: .top)
+                VStack(spacing: 0) {
+                    Rectangle()
+                        .fill(Color(white: 0.15))  // Solid gray
+                        .frame(height: earHeight + yOffset + 10)
+                        .frame(maxWidth: .infinity)
+
+                    Spacer()
+                }
+                .ignoresSafeArea(.all, edges: .top)
+                .allowsHitTesting(false)
             }
         }
         .overlay(alignment: .top) {
@@ -650,8 +650,6 @@ struct CalendarView: View {
                 .padding(20)
             }
         }
-        .navigationTitle("Our Plans 💜")
-        .navigationBarTitleDisplayMode(.large)
         .onTapGesture(count: 3) {
             // Triple tap anywhere to show debug tuning
             showDebugTuning.toggle()
