@@ -503,27 +503,20 @@ struct CalendarView: View {
                 // User can manually dismiss it from the Dynamic Island
             }
         }
-        .overlay(alignment: .top) {
-            // IN-APP DYNAMIC ISLAND BANNER (floats at absolute top in status bar area)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            // IN-APP DYNAMIC ISLAND BANNER (positioned just below status bar/Dynamic Island)
             if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
-                GeometryReader { geometry in
-                    VStack {
-                        InAppDynamicIsland(
-                            events: viewModel.upcomingEvents,
-                            selectedIndex: $dynamicIslandIndex,
-                            onEventTap: { event in
-                                selectedEventForDetail = event
-                            },
-                            countdownText: { event in
-                                countdownText(for: event)
-                            }
-                        )
-                        .padding(.top, geometry.safeAreaInsets.top + 5) // 5pt below notch/status bar
-
-                        Spacer()
+                InAppDynamicIsland(
+                    events: viewModel.upcomingEvents,
+                    selectedIndex: $dynamicIslandIndex,
+                    onEventTap: { event in
+                        selectedEventForDetail = event
+                    },
+                    countdownText: { event in
+                        countdownText(for: event)
                     }
-                }
-                .ignoresSafeArea() // Allow it to extend into status bar area
+                )
+                .padding(.vertical, 4) // Small padding above and below
             }
         }
     }
