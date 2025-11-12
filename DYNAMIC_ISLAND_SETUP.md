@@ -115,9 +115,9 @@ Once running on a device:
 
 ## Troubleshooting
 
-### Error: "Multiple commands produce"
+### Error: "Multiple commands produce" (EventLiveActivity)
 
-This means files are in the wrong targets!
+This means EventLiveActivity.swift is in both targets!
 
 **Fix:**
 
@@ -129,6 +129,25 @@ This means files are in the wrong targets!
 2. **Clean and rebuild:**
    - Clean build folder: **Product → Clean Build Folder** (⌘⇧K)
    - Rebuild: **Product → Build** (⌘B)
+
+### Error: "Multiple commands produce" (EventActivityAttributes.stringsdata)
+
+This is a Swift localization conflict when files are in multiple targets.
+
+**Fix:**
+
+1. Click on your **project** in Project Navigator (top item)
+2. Select **OurApp** target
+3. Go to **Build Settings** tab
+4. Search for: `SWIFT_EMIT_LOC_STRINGS`
+5. Set it to **NO**
+6. Select **OurAppWidgets** target
+7. Search for: `SWIFT_EMIT_LOC_STRINGS`
+8. Set it to **NO**
+9. **Clean Build Folder** (⌘⇧K)
+10. **Build** (⌘B)
+
+This disables automatic localization string extraction which causes the conflict.
 
 ### Error: "unsupportedTarget" or "Failed to start Live Activity"
 
