@@ -27,39 +27,41 @@ This guide will help you set up the Live Activities feature to display your upco
 
 ### 2. Add Files to Widget Extension Target
 
-**CRITICAL STEP** - This is the most common cause of the "unsupportedTarget" error!
+**CRITICAL STEP** - This is the most common cause of errors!
 
-The following files MUST be added to your Widget Extension target:
+The following files MUST be configured correctly:
 
-1. **EventActivityAttributes.swift** - Must be in BOTH targets
-2. **EventLiveActivity.swift** - Must be in BOTH targets
-3. **LiveActivityManager.swift** - Only needs to be in main app target
+1. **EventActivityAttributes.swift** - Must be in **BOTH** targets (shared data)
+2. **EventLiveActivity.swift** - Must be in **WIDGET ONLY** (the actual widget)
+3. **LiveActivityManager.swift** - Must be in **MAIN APP ONLY** (manager)
 
-#### How to add files to the Widget Extension:
+#### How to configure target membership:
 
-1. In Xcode's **Project Navigator** (left sidebar), locate these files:
-   - `EventActivityAttributes.swift`
-   - `EventLiveActivity.swift`
+**For EventActivityAttributes.swift (BOTH targets):**
+1. In Xcode's **Project Navigator** (left sidebar), click `EventActivityAttributes.swift`
+2. Open **File Inspector** (View → Inspectors → Show File Inspector, or ⌥⌘1)
+3. Find **Target Membership** section
+4. Configure:
+   - ✅ **CHECK** OurApp
+   - ✅ **CHECK** OurAppWidgets
 
-2. **For EventActivityAttributes.swift**:
-   - Click on the file
-   - Open **File Inspector** (View → Inspectors → Show File Inspector, or right sidebar first tab)
-   - Find **Target Membership** section
-   - ✅ Check **OurApp** (should already be checked)
-   - ✅ Check **OurAppWidgets** (THIS IS CRITICAL!)
+**For EventLiveActivity.swift (WIDGET ONLY):**
+1. Click `EventLiveActivity.swift` in Project Navigator
+2. Open **File Inspector** (⌥⌘1)
+3. Find **Target Membership** section
+4. Configure:
+   - ❌ **UNCHECK** OurApp (remove from main app)
+   - ✅ **CHECK** OurAppWidgets (only in widget)
 
-3. **For EventLiveActivity.swift**:
-   - Click on the file
-   - Open **File Inspector**
-   - Find **Target Membership** section
-   - ✅ Check **OurApp** (should already be checked)
-   - ✅ Check **OurAppWidgets** (THIS IS CRITICAL!)
+**For LiveActivityManager.swift (MAIN APP ONLY):**
+1. Click `LiveActivityManager.swift` in Project Navigator
+2. Open **File Inspector** (⌥⌘1)
+3. Find **Target Membership** section
+4. Configure:
+   - ✅ **CHECK** OurApp (only in main app)
+   - ❌ **UNCHECK** OurAppWidgets (not in widget)
 
-4. **Verify the checkmarks**:
-   - Both files should have TWO checkmarks ✅✅
-   - One for OurApp, one for OurAppWidgets
-
-**Screenshot guidance**: You should see both checkboxes selected for each file!
+**Important:** If you see "Multiple commands produce" errors, it means EventLiveActivity.swift is in both targets - remove it from OurApp!
 
 ### 3. Configure App Groups (Optional but Recommended)
 
@@ -113,30 +115,39 @@ Once running on a device:
 
 ## Troubleshooting
 
-### Error: "unsupportedTarget" or "Failed to start Live Activity"
+### Error: "Multiple commands produce"
 
-This is the #1 most common error! It means the files aren't properly added to the Widget Extension.
+This means files are in the wrong targets!
 
 **Fix:**
 
-1. **Open Xcode File Inspector** for these files:
-   - `EventActivityAttributes.swift`
-   - `EventLiveActivity.swift`
+1. **EventLiveActivity.swift** - Remove from OurApp target
+   - Select file → File Inspector (⌥⌘1)
+   - ❌ UNCHECK OurApp
+   - ✅ CHECK OurAppWidgets only
 
-2. **For EACH file above:**
-   - Select the file in Project Navigator
-   - Open File Inspector (⌥⌘1 or View → Inspectors → File)
-   - Scroll to **Target Membership**
-   - **BOTH boxes must be checked:**
-     - ✅ OurApp
-     - ✅ OurAppWidgets (or whatever you named your widget extension)
+2. **Clean and rebuild:**
+   - Clean build folder: **Product → Clean Build Folder** (⌘⇧K)
+   - Rebuild: **Product → Build** (⌘B)
+
+### Error: "unsupportedTarget" or "Failed to start Live Activity"
+
+This means target membership is incorrect.
+
+**Fix:**
+
+1. **EventActivityAttributes.swift** - Must be in BOTH targets:
+   - ✅ OurApp
+   - ✅ OurAppWidgets
+
+2. **EventLiveActivity.swift** - Must be in WIDGET ONLY:
+   - ❌ OurApp (uncheck this!)
+   - ✅ OurAppWidgets
 
 3. **After fixing:**
    - Clean build folder: **Product → Clean Build Folder** (⌘⇧K)
    - Rebuild: **Product → Build** (⌘B)
    - Run on device
-
-**Still not working?** Make sure you created the Widget Extension target (Step 1 above).
 
 ### Live Activity Not Appearing
 
