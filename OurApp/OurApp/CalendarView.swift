@@ -405,15 +405,8 @@ struct CalendarView: View {
                     }
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarHidden(true) // Hide navigation bar to allow banner at absolute top
             .statusBar(hidden: true) // Hide status bar to use that space for Dynamic Island banner
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text("Our Plans")
-                        .font(.headline)
-                        .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
-                }
-            }
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView(initialDate: selectedDate) { event in
                     do {
@@ -505,7 +498,7 @@ struct CalendarView: View {
             }
         }
         .overlay(alignment: .top) {
-            // IN-APP DYNAMIC ISLAND BANNER (floats at top in status bar area)
+            // IN-APP DYNAMIC ISLAND BANNER (floats at top where actual Dynamic Island is)
             if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
                 InAppDynamicIsland(
                     events: viewModel.upcomingEvents,
@@ -517,7 +510,8 @@ struct CalendarView: View {
                         countdownText(for: event)
                     }
                 )
-                .padding(.top, 12) // Small padding from absolute top (where Dynamic Island is)
+                .padding(.top, 14) // Position where Dynamic Island hardware is
+                .ignoresSafeArea() // Allow it to extend into status bar area
             }
         }
     }
@@ -3374,30 +3368,23 @@ struct InAppDynamicIsland: View {
                     Button(action: {
                         onEventTap(event)
                     }) {
-                        HStack(spacing: 0) {
-                            // Left side: Event name with icon
-                            HStack(spacing: 6) {
-                                Image(systemName: event.isSpecial ? "star.fill" : "calendar")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundColor(.white)
+                        HStack(spacing: 8) {
+                            // Left side: Event icon
+                            Image(systemName: event.isSpecial ? "star.fill" : "calendar")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.white)
 
-                                Text(event.title)
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundColor(.white)
-                                    .lineLimit(1)
-                            }
-
-                            Spacer(minLength: 8)
+                            Spacer(minLength: 4)
 
                             // Right side: Countdown
                             Text(countdownText(event))
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(.white.opacity(0.9))
                                 .lineLimit(1)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: 380) // Limit width to look like Dynamic Island
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .frame(width: 170, height: 37) // Match actual Dynamic Island compact size
                         .background(
                             Capsule()
                                 .fill(
@@ -3417,7 +3404,7 @@ struct InAppDynamicIsland: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            .frame(height: 45) // Compact height like real Dynamic Island
+            .frame(height: 37) // Compact height matching real Dynamic Island
             .onChange(of: selectedIndex) { oldValue, newValue in
                 resetAutoSwipeTimer()
             }
