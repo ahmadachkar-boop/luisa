@@ -406,6 +406,7 @@ struct CalendarView: View {
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
+            .statusBar(hidden: true) // Hide status bar to use that space for Dynamic Island banner
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("Our Plans")
@@ -503,8 +504,8 @@ struct CalendarView: View {
                 // User can manually dismiss it from the Dynamic Island
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            // IN-APP DYNAMIC ISLAND BANNER (positioned just below status bar/Dynamic Island)
+        .overlay(alignment: .top) {
+            // IN-APP DYNAMIC ISLAND BANNER (floats at top in status bar area)
             if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
                 InAppDynamicIsland(
                     events: viewModel.upcomingEvents,
@@ -516,7 +517,7 @@ struct CalendarView: View {
                         countdownText(for: event)
                     }
                 )
-                .padding(.vertical, 4) // Small padding above and below
+                .padding(.top, 12) // Small padding from absolute top (where Dynamic Island is)
             }
         }
     }
