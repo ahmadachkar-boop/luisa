@@ -497,7 +497,7 @@ struct CalendarView: View {
                 // User can manually dismiss it from the Dynamic Island
             }
 
-            // IN-APP DYNAMIC ISLAND BANNER (acts like background to ignore safe areas)
+            // IN-APP DYNAMIC ISLAND BANNER (layered on top, ignores safe areas)
             if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
                 VStack(spacing: 0) {
                     InAppDynamicIsland(
@@ -510,12 +510,15 @@ struct CalendarView: View {
                             countdownText(for: event)
                         }
                     )
-                    .padding(.top, 12) // Position where Dynamic Island is (12pts from absolute screen top)
+                    .allowsHitTesting(true) // Banner is tappable
+                    .padding(.top, 12) // Position 12pts from absolute screen top
 
                     Spacer()
+                        .allowsHitTesting(false) // Spacer doesn't block touches
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top) // Explicit top alignment
-                .ignoresSafeArea() // Like background, this ignores safe areas
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(false) // Container doesn't block touches (only banner does)
+                .ignoresSafeArea() // Extend into safe area like background
             }
         }
     }
