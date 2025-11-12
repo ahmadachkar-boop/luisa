@@ -242,14 +242,15 @@ struct CalendarView: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                         }
 
-                        // Month label (always visible, swipe calendar to navigate)
+                        // Month indicator for calendar
                         Text(currentMonth, format: .dateTime.month(.wide).year())
-                            .font(.title2)
-                            .fontWeight(.bold)
+                            .font(.title3)
+                            .fontWeight(.semibold)
                             .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal)
-                            .padding(.top, 12)
-                            .padding(.bottom, 16)
+                            .padding(.top, 8)
+                            .padding(.bottom, 12)
 
                         // Calendar Grid
                         CalendarGridView(
@@ -649,6 +650,8 @@ struct CalendarView: View {
                 .padding(20)
             }
         }
+        .navigationTitle("Our Plans 💜")
+        .navigationBarTitleDisplayMode(.large)
         .onTapGesture(count: 3) {
             // Triple tap anywhere to show debug tuning
             showDebugTuning.toggle()
