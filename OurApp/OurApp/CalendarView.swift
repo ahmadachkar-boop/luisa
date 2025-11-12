@@ -547,8 +547,9 @@ struct CalendarView: View {
                             .foregroundColor(.white)
                             .lineLimit(1)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity) // Fill available height
-                    .padding(.horizontal, 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading) // Fill available height, align left
+                    .padding(.leading, 6)
+                    .padding(.trailing, 8)
                     .background(
                         Capsule()
                             .fill(
@@ -573,8 +574,9 @@ struct CalendarView: View {
                             .foregroundColor(.white.opacity(0.95))
                             .lineLimit(1)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity) // Fill available height
-                    .padding(.horizontal, 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing) // Fill available height, align right
+                    .padding(.leading, 8)
+                    .padding(.trailing, 6)
                     .background(
                         Capsule()
                             .fill(
@@ -599,31 +601,31 @@ struct CalendarView: View {
 
                     VStack(alignment: .leading, spacing: 12) {
                         VStack(alignment: .leading) {
-                            Text("Island Gap: \(Int(islandGap))pt")
+                            Text("Island Gap: \(String(format: "%.1f", islandGap))pt")
                                 .font(.caption)
                                 .foregroundColor(.white)
-                            Slider(value: $islandGap, in: -50...200, step: 1)
+                            Slider(value: $islandGap, in: -100...200, step: 0.5)
                         }
 
                         VStack(alignment: .leading) {
-                            Text("Ear Width: \(Int(earWidth))pt")
+                            Text("Ear Width: \(String(format: "%.1f", earWidth))pt")
                                 .font(.caption)
                                 .foregroundColor(.white)
-                            Slider(value: $earWidth, in: 80...160, step: 1)
+                            Slider(value: $earWidth, in: 80...160, step: 0.5)
                         }
 
                         VStack(alignment: .leading) {
-                            Text("Ear Height: \(Int(earHeight))pt")
+                            Text("Ear Height: \(String(format: "%.1f", earHeight))pt")
                                 .font(.caption)
                                 .foregroundColor(.white)
-                            Slider(value: $earHeight, in: 30...50, step: 1)
+                            Slider(value: $earHeight, in: 30...50, step: 0.5)
                         }
 
                         VStack(alignment: .leading) {
-                            Text("Y Offset: \(Int(yOffset))pt")
+                            Text("Y Offset: \(String(format: "%.1f", yOffset))pt")
                                 .font(.caption)
                                 .foregroundColor(.white)
-                            Slider(value: $yOffset, in: 0...20, step: 1)
+                            Slider(value: $yOffset, in: 0...20, step: 0.5)
                         }
                     }
 
