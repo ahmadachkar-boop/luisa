@@ -3626,13 +3626,6 @@ struct InAppDynamicIsland: View {
     }
 }
 
-// MARK: - Array Extension for Safe Subscripting
-extension Array {
-    subscript(safe index: Index) -> Element? {
-        return indices.contains(index) ? self[index] : nil
-    }
-}
-
 #Preview {
     CalendarView()
 }
