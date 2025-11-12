@@ -512,7 +512,7 @@ struct CalendarView: View {
                         }
                     )
                     .frame(maxWidth: .infinity)
-                    .offset(y: -geometry.safeAreaInsets.top + 12) // Move up into status bar area, 12pts from absolute top
+                    .offset(y: -geometry.safeAreaInsets.top + 6) // Move up into status bar area, 6pts from absolute top (where Dynamic Island is)
                 }
                 .frame(height: 37) // Match banner height to prevent layout issues
             }
