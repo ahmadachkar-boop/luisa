@@ -547,9 +547,8 @@ struct CalendarView: View {
                             .foregroundColor(.white)
                             .lineLimit(1)
                     }
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity) // Fill available height
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 8)
                     .background(
                         Capsule()
                             .fill(
@@ -574,9 +573,8 @@ struct CalendarView: View {
                             .foregroundColor(.white.opacity(0.95))
                             .lineLimit(1)
                     }
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity) // Fill available height
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 8)
                     .background(
                         Capsule()
                             .fill(
