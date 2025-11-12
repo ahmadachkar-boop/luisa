@@ -511,12 +511,12 @@ struct CalendarView: View {
                             countdownText(for: event)
                         }
                     )
+                    .ignoresSafeArea(.all) // Allow banner content to extend into status bar area
                     .padding(.top, 12) // Small padding from absolute top (where Dynamic Island is)
 
                     Spacer()
                 }
                 .frame(maxWidth: .infinity)
-                .ignoresSafeArea(.all) // Allow rendering in status bar area
             }
         }
     }
