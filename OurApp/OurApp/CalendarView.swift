@@ -404,25 +404,6 @@ struct CalendarView: View {
                         Spacer()
                     }
                 }
-
-                // IN-APP DYNAMIC ISLAND BANNER (positioned at top where real Dynamic Island is)
-                VStack {
-                    if !viewModel.upcomingEvents.isEmpty {
-                        InAppDynamicIsland(
-                            events: viewModel.upcomingEvents,
-                            selectedIndex: $dynamicIslandIndex,
-                            onEventTap: { event in
-                                selectedEventForDetail = event
-                            },
-                            countdownText: { event in
-                                countdownText(for: event)
-                            }
-                        )
-                        .padding(.top, 10) // Position just below status bar where Dynamic Island is
-                    }
-                    Spacer()
-                }
-                .allowsHitTesting(!showingToolDrawer) // Don't interfere with tool drawer
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -520,6 +501,22 @@ struct CalendarView: View {
             .onDisappear {
                 // Note: We keep the Live Activity running even when view disappears
                 // User can manually dismiss it from the Dynamic Island
+            }
+        }
+        .overlay(alignment: .top) {
+            // IN-APP DYNAMIC ISLAND BANNER (floats at the very top)
+            if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
+                InAppDynamicIsland(
+                    events: viewModel.upcomingEvents,
+                    selectedIndex: $dynamicIslandIndex,
+                    onEventTap: { event in
+                        selectedEventForDetail = event
+                    },
+                    countdownText: { event in
+                        countdownText(for: event)
+                    }
+                )
+                .padding(.top, 50) // Position below status bar at top of screen
             }
         }
     }
