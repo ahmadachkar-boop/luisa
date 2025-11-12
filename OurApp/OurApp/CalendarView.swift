@@ -522,37 +522,37 @@ struct CalendarView: View {
                     let blurHeight = earHeight + yOffset
 
                     ZStack {
-                        // Top strip - above the ears, full width
+                        // Top strip - above the ears, full width, extended down to overlap
                         Rectangle()
                             .fill(.ultraThinMaterial)
-                            .frame(height: yOffset)
+                            .frame(height: yOffset + earHeight / 2)
                             .frame(maxWidth: .infinity)
                             .ignoresSafeArea(.container, edges: .top)
 
                         // Main blur row at ear level
                         HStack(spacing: 0) {
-                            // Left side blur - from screen edge to left ear
+                            // Left side blur - extended to overlap with curved edge
                             Rectangle()
                                 .fill(.ultraThinMaterial)
-                                .frame(width: horizontalPadding, height: earHeight)
+                                .frame(width: horizontalPadding + earHeight / 2, height: earHeight)
 
-                            // Left ear space (no blur)
+                            // Left ear space (no blur) - reduced to account for overlap
                             Color.clear
-                                .frame(width: earWidth, height: earHeight)
+                                .frame(width: earWidth - earHeight / 2, height: earHeight)
 
-                            // Center island gap blur
+                            // Center island gap blur - extended to overlap with both curved edges
                             Rectangle()
                                 .fill(.ultraThinMaterial)
-                                .frame(width: islandGap, height: earHeight)
+                                .frame(width: islandGap + earHeight, height: earHeight)
 
-                            // Right ear space (no blur)
+                            // Right ear space (no blur) - reduced to account for overlap
                             Color.clear
-                                .frame(width: earWidth, height: earHeight)
+                                .frame(width: earWidth - earHeight / 2, height: earHeight)
 
-                            // Right side blur - from right ear to screen edge
+                            // Right side blur - extended to overlap with curved edge
                             Rectangle()
                                 .fill(.ultraThinMaterial)
-                                .frame(width: horizontalPadding, height: earHeight)
+                                .frame(width: horizontalPadding + earHeight / 2, height: earHeight)
                         }
                         .offset(y: yOffset)
                     }
@@ -609,15 +609,7 @@ struct CalendarView: View {
                     .padding(.trailing, 8)
                     .background(
                         Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: currentEvent.isSpecial ?
-                                        [Color.black.opacity(0.95), Color(red: 0.15, green: 0.1, blue: 0.2)] :
-                                        [Color.black.opacity(0.9), Color(red: 0.1, green: 0.1, blue: 0.15)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
+                            .fill(Color.black)
                             .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
                     )
                 } right: {
@@ -636,13 +628,7 @@ struct CalendarView: View {
                     .padding(.trailing, 6)
                     .background(
                         Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.black.opacity(0.9), Color(red: 0.1, green: 0.1, blue: 0.15)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
+                            .fill(Color.black)
                             .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
                     )
                 }
