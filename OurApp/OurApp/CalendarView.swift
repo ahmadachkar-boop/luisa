@@ -513,53 +513,13 @@ struct CalendarView: View {
             }
         }
         .overlay(alignment: .top) {
-            // BLUR MASK - Heavy blur around dynamic island to hide content
+            // SOLID MASK - Simple solid rectangle covering dynamic island area
             if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
-                GeometryReader { geometry in
-                    let screenWidth = geometry.size.width
-                    let totalEarsWidth = earWidth * 2 + islandGap
-                    let horizontalPadding = (screenWidth - totalEarsWidth) / 2
-                    let blurHeight = earHeight + yOffset
-
-                    ZStack {
-                        // Top strip - above the ears, full width, extended down to overlap
-                        Rectangle()
-                            .fill(.ultraThinMaterial)
-                            .frame(height: yOffset + earHeight / 2)
-                            .frame(maxWidth: .infinity)
-                            .ignoresSafeArea(.container, edges: .top)
-
-                        // Main blur row at ear level
-                        HStack(spacing: 0) {
-                            // Left side blur - extended to overlap with curved edge
-                            Rectangle()
-                                .fill(.ultraThinMaterial)
-                                .frame(width: horizontalPadding + earHeight / 2, height: earHeight)
-
-                            // Left ear space (no blur) - reduced to account for overlap
-                            Color.clear
-                                .frame(width: earWidth - earHeight / 2, height: earHeight)
-
-                            // Center island gap blur - extended to overlap with both curved edges
-                            Rectangle()
-                                .fill(.ultraThinMaterial)
-                                .frame(width: islandGap + earHeight, height: earHeight)
-
-                            // Right ear space (no blur) - reduced to account for overlap
-                            Color.clear
-                                .frame(width: earWidth - earHeight / 2, height: earHeight)
-
-                            // Right side blur - extended to overlap with curved edge
-                            Rectangle()
-                                .fill(.ultraThinMaterial)
-                                .frame(width: horizontalPadding + earHeight / 2, height: earHeight)
-                        }
-                        .offset(y: yOffset)
-                    }
-                    .frame(height: blurHeight)
+                Rectangle()
+                    .fill(Color(white: 0.15))  // Solid gray
+                    .frame(height: earHeight + yOffset + 10)
+                    .frame(maxWidth: .infinity)
                     .ignoresSafeArea(.container, edges: .top)
-                }
-                .frame(height: earHeight + yOffset)
             }
         }
         .overlay(alignment: .top) {
