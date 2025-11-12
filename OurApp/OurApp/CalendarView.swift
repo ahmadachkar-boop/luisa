@@ -499,7 +499,7 @@ struct CalendarView: View {
 
             // IN-APP DYNAMIC ISLAND BANNER (acts like background to ignore safe areas)
             if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
-                VStack {
+                VStack(spacing: 0) {
                     InAppDynamicIsland(
                         events: viewModel.upcomingEvents,
                         selectedIndex: $dynamicIslandIndex,
@@ -510,10 +510,11 @@ struct CalendarView: View {
                             countdownText(for: event)
                         }
                     )
-                    .padding(.top, 12) // Position where Dynamic Island is
+                    .padding(.top, 12) // Position where Dynamic Island is (12pts from absolute screen top)
 
                     Spacer()
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top) // Explicit top alignment
                 .ignoresSafeArea() // Like background, this ignores safe areas
             }
         }
