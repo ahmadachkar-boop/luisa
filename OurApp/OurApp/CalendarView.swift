@@ -541,20 +541,10 @@ struct CalendarView: View {
                 if countdownBannerIndex >= newValue {
                     countdownBannerIndex = 0
                 }
-                // Update Live Activity when events change
-                updateLiveActivity()
             }
             .task {
                 // Fetch weather for existing events when view appears
                 await viewModel.fetchWeatherForEvents()
-            }
-            .onAppear {
-                // Start Live Activity when view appears
-                startLiveActivity()
-            }
-            .onDisappear {
-                // Note: We keep the Live Activity running even when view disappears
-                // User can manually dismiss it from the Dynamic Island
             }
         }
         .navigationTitle("Our Plans 💜")
@@ -608,19 +598,6 @@ struct CalendarView: View {
 
     func resetCountdownTimer() {
         startCountdownResetTimer()
-    }
-
-    // MARK: - Live Activity Management
-    func startLiveActivity() {
-        if #available(iOS 16.1, *), LiveActivityManager.isSupported {
-            LiveActivityManager.shared.updateLiveActivity(with: viewModel.upcomingEvents)
-        }
-    }
-
-    func updateLiveActivity() {
-        if #available(iOS 16.1, *), LiveActivityManager.isSupported {
-            LiveActivityManager.shared.updateLiveActivity(with: viewModel.upcomingEvents)
-        }
     }
 
     func refreshCalendar() async {
@@ -3394,144 +3371,6 @@ struct ToolDrawerView: View {
             }
         )
         .padding(.horizontal, 16)
-    }
-}
-
-// MARK: - Dynamic Island "Ears" Component
-struct DynamicIslandEars<Left: View, Right: View>: View {
-    let left: Left
-    let right: Right
-    let onLeftTap: () -> Void
-    let onRightTap: () -> Void
-
-    var islandGap: CGFloat = 126      // center hole width (compact Island ~126pts)
-    var earWidth: CGFloat = 120       // fixed width for each ear
-    var earHeight: CGFloat = 37       // compact Island height
-    var yOffset: CGFloat = 8          // nudge to visually align with the Island
-
-    init(islandGap: CGFloat = 126,
-         earWidth: CGFloat = 120,
-         earHeight: CGFloat = 37,
-         yOffset: CGFloat = 8,
-         onLeftTap: @escaping () -> Void = {},
-         onRightTap: @escaping () -> Void = {},
-         @ViewBuilder left: () -> Left,
-         @ViewBuilder right: () -> Right) {
-        self.left = left()
-        self.right = right()
-        self.onLeftTap = onLeftTap
-        self.onRightTap = onRightTap
-        self.islandGap = islandGap
-        self.earWidth = earWidth
-        self.earHeight = earHeight
-        self.yOffset = yOffset
-    }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            // LEFT EAR - tap to go to previous event
-            left
-                .frame(width: earWidth, height: earHeight)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    onLeftTap()
-                }
-
-            // HOLE (where the Island is)
-            Color.clear
-                .frame(width: islandGap, height: earHeight)
-                .allowsHitTesting(false)
-
-            // RIGHT EAR - tap to go to next event
-            right
-                .frame(width: earWidth, height: earHeight)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    onRightTap()
-                }
-        }
-        .frame(maxWidth: .infinity, alignment: .top)
-        .offset(y: yOffset)
-        .frame(height: earHeight + yOffset)
-        .ignoresSafeArea(.container, edges: .top)
-    }
-}
-
-// MARK: - In-App Dynamic Island Banner
-struct InAppDynamicIsland: View {
-    let events: [CalendarEvent]
-    @Binding var selectedIndex: Int
-    let onEventTap: (CalendarEvent) -> Void
-    let countdownText: (CalendarEvent) -> String
-
-    var body: some View {
-        if !events.isEmpty {
-            let eventsToShow = Array(events.prefix(5))
-
-            TabView(selection: $selectedIndex) {
-                ForEach(Array(eventsToShow.enumerated()), id: \.element.id) { index, event in
-                    Button(action: {
-                        onEventTap(event)
-                    }) {
-                        HStack(spacing: 8) {
-                            // Left side: Event icon
-                            Image(systemName: event.isSpecial ? "star.fill" : "calendar")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(.white)
-
-                            Spacer(minLength: 4)
-
-                            // Right side: Countdown
-                            Text(countdownText(event))
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.white.opacity(0.9))
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .frame(width: 170, height: 37) // Match actual Dynamic Island compact size
-                        .background(
-                            Capsule()
-                                .fill(
-                                    LinearGradient(
-                                        colors: event.isSpecial ?
-                                            [Color.black.opacity(0.9), Color(red: 0.15, green: 0.1, blue: 0.2)] :
-                                            [Color.black.opacity(0.85), Color(red: 0.1, green: 0.1, blue: 0.15)],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
-                                .shadow(color: Color.black.opacity(0.5), radius: 15, x: 0, y: 8)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .tag(index)
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .frame(height: 37) // Compact height matching real Dynamic Island
-            .onChange(of: selectedIndex) { oldValue, newValue in
-                resetAutoSwipeTimer()
-            }
-            .onAppear {
-                startAutoSwipeTimer()
-            }
-            .onDisappear {
-                TimerManager.shared.invalidate(id: "inAppDynamicIslandAutoSwipe")
-            }
-        }
-    }
-
-    private func startAutoSwipeTimer() {
-        TimerManager.shared.schedule(id: "inAppDynamicIslandAutoSwipe", interval: 10.0, repeats: false) {
-            withAnimation(.easeInOut(duration: 0.5)) {
-                selectedIndex = 0
-            }
-        }
-    }
-
-    private func resetAutoSwipeTimer() {
-        startAutoSwipeTimer()
     }
 }
 
