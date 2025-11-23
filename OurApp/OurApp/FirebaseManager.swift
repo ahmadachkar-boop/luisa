@@ -152,6 +152,34 @@ class FirebaseManager: ObservableObject {
         }
     }
 
+    func cleanupOrphanedPhotos() async throws -> Int {
+        print("🧹 [CLEANUP] Starting orphaned photos cleanup...")
+        var deletedCount = 0
+
+        // Get all photos from Firestore
+        let photosSnapshot = try await db.collection("photos").getDocuments()
+
+        for doc in photosSnapshot.documents {
+            guard let photo = try? doc.data(as: Photo.self) else { continue }
+
+            // Try to get metadata for the photo in Storage
+            do {
+                let storageRef = storage.reference(forURL: photo.imageURL)
+                _ = try await storageRef.getMetadata()
+                // Photo exists in Storage, skip it
+            } catch {
+                // Photo doesn't exist in Storage (404 or other error)
+                // Delete the orphaned Firestore document
+                print("🗑️ [CLEANUP] Deleting orphaned photo document: \(photo.imageURL)")
+                try? await db.collection("photos").document(doc.documentID).delete()
+                deletedCount += 1
+            }
+        }
+
+        print("🟢 [CLEANUP] Cleanup complete. Deleted \(deletedCount) orphaned photo documents")
+        return deletedCount
+    }
+
     // MARK: - Photo Folders
     func createFolder(name: String, type: PhotoFolder.FolderType, eventId: String? = nil, isSpecialEvent: Bool? = nil) async throws -> String {
         let folder = PhotoFolder(
