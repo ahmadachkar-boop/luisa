@@ -235,6 +235,67 @@ struct CalendarView: View {
         return Array(Set(tags)).sorted()
     }
 
+    // Helper computed property for upcoming events in current month
+    private var currentMonthUpcomingEvents: [CalendarEvent] {
+        guard !isMonthInPast(currentMonth) else { return [] }
+        return viewModel.upcomingEvents.filter { event in
+            Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
+        }
+    }
+
+    private var shouldShowUpcomingBanner: Bool {
+        !currentMonthUpcomingEvents.isEmpty
+    }
+
+    @ViewBuilder
+    private var upcomingEventsBanner: some View {
+        if let nextEvent = currentMonthUpcomingEvents.first {
+            HStack(spacing: 12) {
+                Image(systemName: nextEvent.isSpecial ? "star.fill" : "calendar")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(nextEvent.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    Text(countdownText(for: nextEvent))
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.9))
+                }
+
+                Spacer()
+
+                if currentMonthUpcomingEvents.count > 1 {
+                    Text("+\(currentMonthUpcomingEvents.count - 1)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(0.8))
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.6, green: 0.5, blue: 0.8),
+                        Color(red: 0.7, green: 0.6, blue: 0.9)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .cornerRadius(12)
+            .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+            .padding(.horizontal)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            .onTapGesture {
+                selectedEventForDetail = nextEvent
+            }
+        }
+    }
+
     var body: some View {
         NavigationView {
             ZStack {
@@ -253,57 +314,8 @@ struct CalendarView: View {
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
                         // Upcoming Events Banner (only show when on current/future month)
-                        if !isMonthInPast(currentMonth) {
-                            let monthEvents = viewModel.upcomingEvents.filter { event in
-                                Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
-                            }
-
-                            if !monthEvents.isEmpty {
-                                let nextEvent = monthEvents.first!
-                                HStack(spacing: 12) {
-                                    Image(systemName: nextEvent.isSpecial ? "star.fill" : "calendar")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(.white)
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(nextEvent.title)
-                                            .font(.system(size: 13, weight: .semibold))
-                                            .foregroundColor(.white)
-                                            .lineLimit(1)
-                                        Text(countdownText(for: nextEvent))
-                                            .font(.system(size: 11))
-                                            .foregroundColor(.white.opacity(0.9))
-                                    }
-
-                                    Spacer()
-
-                                    if monthEvents.count > 1 {
-                                        Text("+\(monthEvents.count - 1)")
-                                            .font(.system(size: 11, weight: .medium))
-                                            .foregroundColor(.white.opacity(0.8))
-                                    }
-                                }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(
-                                LinearGradient(
-                                    colors: [
-                                        Color(red: 0.6, green: 0.5, blue: 0.8),
-                                        Color(red: 0.7, green: 0.6, blue: 0.9)
-                                    ],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .cornerRadius(12)
-                            .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
-                            .padding(.horizontal)
-                            .padding(.top, 12)
-                            .padding(.bottom, 8)
-                            .onTapGesture {
-                                selectedEventForDetail = nextEvent
-                            }
-                            }
+                        if shouldShowUpcomingBanner {
+                            upcomingEventsBanner
                         }
 
                         // Sync indicator
