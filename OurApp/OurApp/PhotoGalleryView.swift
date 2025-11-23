@@ -117,6 +117,21 @@ struct PhotoGalleryView: View {
         .safeAreaInset(edge: .top) {
             Color.clear.frame(height: 0)
         }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    // Swipe from left to right (back gesture)
+                    let horizontalAmount = value.translation.width
+                    let verticalAmount = abs(value.translation.height)
+
+                    // Only trigger if it's more horizontal than vertical and swipes right
+                    if horizontalAmount > 50 && horizontalAmount > verticalAmount * 2 && currentFolderView != .allPhotos {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            currentFolderView = folderNavStack.popLast() ?? .allPhotos
+                        }
+                    }
+                }
+        )
     }
 
     private var folderNavigationBar: some View {
