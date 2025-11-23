@@ -70,7 +70,7 @@ class FirebaseManager: ObservableObject {
     }
 
     // MARK: - Photos
-    func uploadPhoto(imageData: Data, caption: String, uploadedBy: String) async throws -> String {
+    func uploadPhoto(imageData: Data, caption: String, uploadedBy: String, capturedAt: Date? = nil) async throws -> String {
         let fileName = "\(UUID().uuidString).jpg"
         let storageRef = storage.reference().child("photos/\(fileName)")
 
@@ -81,7 +81,8 @@ class FirebaseManager: ObservableObject {
             imageURL: downloadURL.absoluteString,
             caption: caption,
             uploadedBy: uploadedBy,
-            createdAt: Date()
+            createdAt: Date(),
+            capturedAt: capturedAt
         )
 
         try db.collection("photos").addDocument(from: photo)

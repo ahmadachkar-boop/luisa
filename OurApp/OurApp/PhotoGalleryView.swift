@@ -1,5 +1,21 @@
 import SwiftUI
 import PhotosUI
+import ImageIO
+
+// Helper function to extract capture date from image metadata
+func extractCaptureDate(from imageData: Data) -> Date? {
+    guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, nil),
+          let imageProperties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [String: Any],
+          let exifDict = imageProperties[kCGImagePropertyExifDictionary as String] as? [String: Any],
+          let dateTimeOriginal = exifDict[kCGImagePropertyExifDateTimeOriginal as String] as? String else {
+        return nil
+    }
+
+    // EXIF date format: "YYYY:MM:DD HH:MM:SS"
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+    return formatter.date(from: dateTimeOriginal)
+}
 
 // Wrapper to make Int work with .fullScreenCover(item:)
 struct PhotoIndex: Identifiable {
@@ -28,12 +44,14 @@ struct PhotoGalleryView: View {
         GridItem(.flexible(), spacing: 8)
     ]
 
-    // Group photos by month/year
+    // Group photos by month/year (using original capture date from metadata)
     private var photosByMonth: [(key: String, photos: [Photo])] {
         let grouped = Dictionary(grouping: viewModel.photos) { photo -> String in
             let formatter = DateFormatter()
             formatter.dateFormat = "MMMM yyyy"
-            return formatter.string(from: photo.createdAt)
+            // Use capturedAt if available, otherwise fall back to createdAt
+            let dateToUse = photo.capturedAt ?? photo.createdAt
+            return formatter.string(from: dateToUse)
         }
 
         // Sort by date (newest first)
@@ -185,7 +203,7 @@ struct PhotoGalleryView: View {
                             ProgressView()
                                 .tint(Color(red: 0.8, green: 0.7, blue: 1.0))
                         } else {
-                            PhotosPicker(selection: $selectedItems, maxSelectionCount: 10, matching: .images) {
+                            PhotosPicker(selection: $selectedItems, matching: .images) {
                                 Image(systemName: "plus.circle.fill")
                                     .font(.title2)
                                     .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
@@ -205,10 +223,13 @@ struct PhotoGalleryView: View {
                         do {
                             if let data = try await item.loadTransferable(type: Data.self),
                                let uiImage = UIImage(data: data) {
+                                // Extract original capture date from image metadata
+                                let capturedAt = extractCaptureDate(from: data)
+
                                 // Resize and compress the image before upload
                                 let resized = uiImage.resized(toMaxDimension: 1920)
                                 if let compressedData = resized.compressed(toMaxBytes: 1_000_000) {
-                                    try await viewModel.uploadPhoto(imageData: compressedData)
+                                    try await viewModel.uploadPhoto(imageData: compressedData, capturedAt: capturedAt)
                                 } else {
                                     uploadErrors.append("Failed to compress image \(index + 1)")
                                 }
@@ -542,11 +563,12 @@ class PhotoGalleryViewModel: ObservableObject {
         }
     }
 
-    func uploadPhoto(imageData: Data) async throws {
+    func uploadPhoto(imageData: Data, capturedAt: Date? = nil) async throws {
         _ = try await firebaseManager.uploadPhoto(
             imageData: imageData,
             caption: "",
-            uploadedBy: "You"
+            uploadedBy: "You",
+            capturedAt: capturedAt
         )
     }
 

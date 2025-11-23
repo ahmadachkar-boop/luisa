@@ -26,7 +26,8 @@ struct Photo: Identifiable, Codable {
     var imageURL: String
     var caption: String
     var uploadedBy: String
-    var createdAt: Date
+    var createdAt: Date // When uploaded
+    var capturedAt: Date? // Original date from image metadata (falls back to createdAt if unavailable)
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -34,6 +35,7 @@ struct Photo: Identifiable, Codable {
         case caption
         case uploadedBy
         case createdAt
+        case capturedAt
     }
 }
 
