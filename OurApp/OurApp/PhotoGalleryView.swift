@@ -281,7 +281,7 @@ struct PhotoGalleryView: View {
                 .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 8)
         .background(
             LinearGradient(
                 colors: [
@@ -291,7 +291,6 @@ struct PhotoGalleryView: View {
                 startPoint: .leading,
                 endPoint: .trailing
             )
-            .blur(radius: 20)
         )
     }
 
