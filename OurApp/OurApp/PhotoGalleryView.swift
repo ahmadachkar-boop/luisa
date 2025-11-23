@@ -90,6 +90,32 @@ struct PhotoGalleryView: View {
         photosByMonth.flatMap { $0.photos }
     }
 
+    // Flat array of photos in chronological order (oldest first) for pagination
+    private var photosInChronologicalOrder: [Photo] {
+        let grouped = Dictionary(grouping: filteredPhotos) { photo -> String in
+            let date = photo.capturedAt ?? photo.createdAt
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMMM yyyy"
+            return formatter.string(from: date)
+        }
+
+        return grouped.sorted { first, second in
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMMM yyyy"
+            guard let date1 = formatter.date(from: first.key),
+                  let date2 = formatter.date(from: second.key) else {
+                return first.key < second.key
+            }
+            return date1 < date2 // Oldest first
+        }.flatMap { month in
+            month.value.sorted { photo1, photo2 in
+                let date1 = photo1.capturedAt ?? photo1.createdAt
+                let date2 = photo2.capturedAt ?? photo2.createdAt
+                return date1 < date2 // Oldest first
+            }
+        }
+    }
+
     // Current folder title for display
     private var folderTitle: String {
         switch currentFolderView {
@@ -587,6 +613,14 @@ struct PhotoGalleryView: View {
                 Text(saveErrorMessage)
             }
             .fullScreenCover(item: $selectedPhotoIndex) { photoIndex in
+                // Create chronological positions array: maps each display position to its chronological position (1-based)
+                let chronologicalPositions = photosInDisplayOrder.map { displayPhoto in
+                    if let chronoIndex = photosInChronologicalOrder.firstIndex(where: { $0.id == displayPhoto.id }) {
+                        return chronoIndex + 1 // Convert to 1-based position
+                    }
+                    return 1 // Fallback
+                }
+
                 FullScreenPhotoViewer(
                     photoURLs: photosInDisplayOrder.map { $0.imageURL },
                     initialIndex: photoIndex.value,
@@ -599,7 +633,8 @@ struct PhotoGalleryView: View {
                             }
                         }
                     },
-                    captureDates: photosInDisplayOrder.map { $0.capturedAt ?? $0.createdAt }
+                    captureDates: photosInDisplayOrder.map { $0.capturedAt ?? $0.createdAt },
+                    chronologicalPositions: chronologicalPositions
                 )
             }
             }

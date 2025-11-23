@@ -192,6 +192,7 @@ struct FullScreenPhotoViewer: View {
     let onDismiss: () -> Void
     let onDelete: ((Int) -> Void)?
     let captureDates: [Date?]? // Optional capture dates for each photo
+    let chronologicalPositions: [Int]? // Optional chronological position (1-based) for each photo
 
     // Use a unique ID to force complete view recreation
     @State private var viewID = UUID()
@@ -208,12 +209,13 @@ struct FullScreenPhotoViewer: View {
     @State private var selectedIndices: Set<Int> = []
     @State private var loadedImages: [Int: UIImage] = [:]
 
-    init(photoURLs: [String], initialIndex: Int, onDismiss: @escaping () -> Void, onDelete: ((Int) -> Void)? = nil, captureDates: [Date?]? = nil) {
+    init(photoURLs: [String], initialIndex: Int, onDismiss: @escaping () -> Void, onDelete: ((Int) -> Void)? = nil, captureDates: [Date?]? = nil, chronologicalPositions: [Int]? = nil) {
         self.photoURLs = photoURLs
         self.initialIndex = initialIndex
         self.onDismiss = onDismiss
         self.onDelete = onDelete
         self.captureDates = captureDates
+        self.chronologicalPositions = chronologicalPositions
 
         // Initialize directly with the index we want
         let safeIndex = max(0, min(initialIndex, photoURLs.count - 1))
@@ -238,7 +240,7 @@ struct FullScreenPhotoViewer: View {
 
                     Spacer()
 
-                    Text("\(currentIndex + 1) / \(photoURLs.count)")
+                    Text("\(chronologicalPositions?[currentIndex] ?? (currentIndex + 1)) / \(photoURLs.count)")
                         .foregroundColor(.white)
                         .font(.subheadline)
                         .shadow(radius: 3)
@@ -348,13 +350,16 @@ struct FullScreenPhotoViewer: View {
                     if !isZoomed && photoURLs.count > 1 {
                         let maxDots = 10
                         let showAllDots = photoURLs.count <= maxDots
+                        // Use chronological position for dot highlighting, or fall back to current index
+                        let dotPosition = chronologicalPositions?[currentIndex] ?? (currentIndex + 1)
 
                         HStack(spacing: 8) {
                             if showAllDots {
                                 // Show all dots if count is <= max
-                                ForEach(0..<photoURLs.count, id: \.self) { index in
+                                // Highlight based on chronological position (1-based)
+                                ForEach(1...photoURLs.count, id: \.self) { position in
                                     Circle()
-                                        .fill(index == currentIndex ? Color.white : Color.white.opacity(0.5))
+                                        .fill(position == dotPosition ? Color.white : Color.white.opacity(0.5))
                                         .frame(width: 8, height: 8)
                                 }
                             } else {
@@ -364,11 +369,11 @@ struct FullScreenPhotoViewer: View {
                                         .fill(Color.white.opacity(0.3))
                                         .frame(width: 6, height: 6)
                                 }
-                                // Highlight current position proportionally
+                                // Highlight current position proportionally based on chronological position
                                 Circle()
                                     .fill(Color.white)
                                     .frame(width: 10, height: 10)
-                                    .offset(x: CGFloat(currentIndex) / CGFloat(photoURLs.count - 1) * CGFloat((maxDots - 1) * 14) - CGFloat((maxDots - 1) * 7))
+                                    .offset(x: CGFloat(dotPosition - 1) / CGFloat(photoURLs.count - 1) * CGFloat((maxDots - 1) * 14) - CGFloat((maxDots - 1) * 7))
                             }
                         }
                         .padding(.bottom, 20)
