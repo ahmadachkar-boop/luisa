@@ -45,7 +45,79 @@ struct PhotoGalleryView: View {
                 return first.key > second.key
             }
             return date1 > date2
+        }.map { (key: $0.key, photos: $0.value) }
+    }
+
+    private var photoGridView: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20, pinnedViews: [.sectionHeaders]) {
+                ForEach(photosByMonth, id: \.key) { monthGroup in
+                    Section {
+                        LazyVGrid(columns: columns, spacing: 8) {
+                            ForEach(Array(monthGroup.photos.enumerated()), id: \.element.id) { _, photo in
+                                let globalIndex = viewModel.photos.firstIndex(where: { $0.id == photo.id }) ?? 0
+
+                                PhotoGridCell(
+                                    photo: photo,
+                                    index: globalIndex,
+                                    selectionMode: selectionMode,
+                                    isSelected: selectedPhotoIndices.contains(globalIndex),
+                                    onTap: {
+                                        if selectionMode {
+                                            if selectedPhotoIndices.contains(globalIndex) {
+                                                selectedPhotoIndices.remove(globalIndex)
+                                            } else {
+                                                selectedPhotoIndices.insert(globalIndex)
+                                            }
+                                        } else {
+                                            selectedPhotoIndex = PhotoIndex(value: globalIndex)
+                                        }
+                                    },
+                                    onLongPress: {
+                                        if !selectionMode {
+                                            selectionMode = true
+                                            selectedPhotoIndices.insert(globalIndex)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                    } header: {
+                        monthHeaderView(monthGroup: monthGroup)
+                    }
+                }
+            }
+            .padding(.top, 8)
         }
+    }
+
+    private func monthHeaderView(monthGroup: (key: String, photos: [Photo])) -> some View {
+        HStack {
+            Text(monthGroup.key)
+                .font(.title3)
+                .fontWeight(.bold)
+                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+            Spacer()
+
+            Text("\(monthGroup.photos.count) photo\(monthGroup.photos.count == 1 ? "" : "s")")
+                .font(.caption)
+                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(red: 0.95, green: 0.9, blue: 1.0).opacity(0.95),
+                    Color.white.opacity(0.95)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .blur(radius: 20)
+        )
     }
 
     var body: some View {
@@ -78,98 +150,7 @@ struct PhotoGalleryView: View {
                             .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
                     }
                 } else {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 20, pinnedViews: [.sectionHeaders]) {
-                            ForEach(photosByMonth, id: \.key) { monthGroup in
-                                Section {
-                                    LazyVGrid(columns: columns, spacing: 8) {
-                                        ForEach(Array(monthGroup.photos.enumerated()), id: \.element.id) { _, photo in
-                                            let globalIndex = viewModel.photos.firstIndex(where: { $0.id == photo.id }) ?? 0
-
-                                            ZStack(alignment: .topTrailing) {
-                                                CachedAsyncImage(url: URL(string: photo.imageURL)) { image in
-                                                    image
-                                                        .resizable()
-                                                        .aspectRatio(contentMode: .fill)
-                                                } placeholder: {
-                                                    Rectangle()
-                                                        .fill(Color.gray.opacity(0.3))
-                                                        .overlay {
-                                                            ProgressView()
-                                                        }
-                                                }
-                                                .frame(width: (UIScreen.main.bounds.width - 32) / 3, height: (UIScreen.main.bounds.width - 32) / 3)
-                                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                                                .shadow(color: Color.black.opacity(0.15), radius: 4, x: 0, y: 2)
-                                                .overlay(
-                                                    selectionMode ?
-                                                        RoundedRectangle(cornerRadius: 12)
-                                                            .stroke(selectedPhotoIndices.contains(globalIndex) ? Color(red: 0.8, green: 0.7, blue: 1.0) : Color.clear, lineWidth: 3)
-                                                    : nil
-                                                )
-                                                .contentShape(RoundedRectangle(cornerRadius: 12))
-                                                .onTapGesture {
-                                                    if selectionMode {
-                                                        if selectedPhotoIndices.contains(globalIndex) {
-                                                            selectedPhotoIndices.remove(globalIndex)
-                                                        } else {
-                                                            selectedPhotoIndices.insert(globalIndex)
-                                                        }
-                                                    } else {
-                                                        selectedPhotoIndex = PhotoIndex(value: globalIndex)
-                                                    }
-                                                }
-                                                .onLongPressGesture(minimumDuration: 0.5) {
-                                                    if !selectionMode {
-                                                        selectionMode = true
-                                                        selectedPhotoIndices.insert(globalIndex)
-                                                    }
-                                                }
-
-                                                // Checkmark overlay
-                                                if selectionMode {
-                                                    Image(systemName: selectedPhotoIndices.contains(globalIndex) ? "checkmark.circle.fill" : "circle")
-                                                        .font(.title2)
-                                                        .foregroundColor(selectedPhotoIndices.contains(globalIndex) ? Color(red: 0.8, green: 0.7, blue: 1.0) : .white)
-                                                        .shadow(radius: 3)
-                                                        .padding(8)
-                                                        .allowsHitTesting(false)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    .padding(.horizontal, 8)
-                                } header: {
-                                    HStack {
-                                        Text(monthGroup.key)
-                                            .font(.title3)
-                                            .fontWeight(.bold)
-                                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-
-                                        Spacer()
-
-                                        Text("\(monthGroup.photos.count) photo\(monthGroup.photos.count == 1 ? "" : "s")")
-                                            .font(.caption)
-                                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                                    }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 12)
-                                    .background(
-                                        LinearGradient(
-                                            colors: [
-                                                Color(red: 0.95, green: 0.9, blue: 1.0).opacity(0.95),
-                                                Color.white.opacity(0.95)
-                                            ],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                        .blur(radius: 20)
-                                    )
-                                }
-                            }
-                        }
-                        .padding(.top, 8)
-                    }
+                    photoGridView
                 }
             }
             .navigationTitle("Our Photos 💜")
@@ -492,6 +473,53 @@ struct PhotoDetailView: View {
             showingSaveError = true
         }
         imageSaver.writeToPhotoAlbum(image: image)
+    }
+}
+
+struct PhotoGridCell: View {
+    let photo: Photo
+    let index: Int
+    let selectionMode: Bool
+    let isSelected: Bool
+    let onTap: () -> Void
+    let onLongPress: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            CachedAsyncImage(url: URL(string: photo.imageURL)) { image in
+                image
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } placeholder: {
+                Rectangle()
+                    .fill(Color.gray.opacity(0.3))
+                    .overlay {
+                        ProgressView()
+                    }
+            }
+            .frame(width: (UIScreen.main.bounds.width - 32) / 3, height: (UIScreen.main.bounds.width - 32) / 3)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .shadow(color: Color.black.opacity(0.15), radius: 4, x: 0, y: 2)
+            .overlay(
+                selectionMode ?
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(isSelected ? Color(red: 0.8, green: 0.7, blue: 1.0) : Color.clear, lineWidth: 3)
+                : nil
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .onTapGesture(perform: onTap)
+            .onLongPressGesture(minimumDuration: 0.5, perform: onLongPress)
+
+            // Checkmark overlay
+            if selectionMode {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title2)
+                    .foregroundColor(isSelected ? Color(red: 0.8, green: 0.7, blue: 1.0) : .white)
+                    .shadow(radius: 3)
+                    .padding(8)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 }
 
