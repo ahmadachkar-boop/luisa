@@ -25,20 +25,6 @@ func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws 
     }
 }
 
-// MARK: - EXIF Metadata Helper
-func extractCaptureDate(from imageData: Data) -> Date? {
-    guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, nil),
-          let imageProperties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [String: Any],
-          let exifDict = imageProperties[kCGImagePropertyExifDictionary as String] as? [String: Any],
-          let dateTimeOriginal = exifDict[kCGImagePropertyExifDateTimeOriginal as String] as? String else {
-        return nil
-    }
-
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
-    return formatter.date(from: dateTimeOriginal)
-}
-
 // MARK: - Design Constants
 extension CGFloat {
     static let cornerRadiusSmall: CGFloat = 12
@@ -1296,7 +1282,7 @@ struct EventDetailView: View {
 
                                 // Add photos button for past events
                                 if isPastEvent {
-                                    PhotosPicker(selection: $photoPickerItems, maxSelectionCount: 5, matching: .images) {
+                                    PhotosPicker(selection: $photoPickerItems, matching: .images) {
                                         HStack(spacing: 4) {
                                             if isUploadingPhotos {
                                                 ProgressView()
