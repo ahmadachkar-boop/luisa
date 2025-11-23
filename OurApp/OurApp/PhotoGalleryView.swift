@@ -114,6 +114,9 @@ struct PhotoGalleryView: View {
                 }
             }
         }
+        .safeAreaInset(edge: .top) {
+            Color.clear.frame(height: 0)
+        }
     }
 
     private var folderNavigationBar: some View {
@@ -219,9 +222,12 @@ struct PhotoGalleryView: View {
     }
 
     private var photoGridView: some View {
-        LazyVStack(alignment: .leading, spacing: 20, pinnedViews: [.sectionHeaders]) {
+        LazyVStack(alignment: .leading, spacing: 20, pinnedViews: []) {
             ForEach(photosByMonth, id: \.key) { monthGroup in
                 Section {
+                    // Month header (not pinned anymore)
+                    monthHeaderView(monthGroup: monthGroup)
+
                     LazyVGrid(columns: columns, spacing: 8) {
                         ForEach(Array(monthGroup.photos.enumerated()), id: \.element.id) { _, photo in
                             let globalIndex = viewModel.photos.firstIndex(where: { $0.id == photo.id }) ?? 0
@@ -252,8 +258,7 @@ struct PhotoGalleryView: View {
                         }
                     }
                     .padding(.horizontal, 8)
-                } header: {
-                    monthHeaderView(monthGroup: monthGroup)
+                    .padding(.top, 8)
                 }
             }
         }
