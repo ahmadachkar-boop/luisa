@@ -171,19 +171,20 @@ struct CalendarView: View {
     @State private var showingSearch = false
     @State private var showingToolDrawer = false
     @State private var expandedCardId: String? = nil
-    @State private var dynamicIslandIndex = 0
-
-    // Dynamic Island ears tuning (debug)
-    @State private var showDebugTuning = false
-    @State private var islandGap: CGFloat = 126  // Narrower gap - Island is ~126pts in compact state
-    @State private var earWidth: CGFloat = 120   // Fixed width for each ear to look connected
-    @State private var earHeight: CGFloat = 37   // Height of each ear
-    @State private var yOffset: CGFloat = 8      // Vertical offset from top
-    @State private var currentEarEventIndex = 0  // Index of event shown in ears
 
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
-        let baseEvents = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
+        // When viewing a past month, only show memories from that month
+        let baseEvents: [CalendarEvent]
+        if isMonthInPast(currentMonth) {
+            // Filter past events to only show events from the selected month
+            baseEvents = viewModel.pastEvents.filter { event in
+                Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
+            }
+        } else {
+            // For current/future months, use tab selection
+            baseEvents = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
+        }
 
         var filtered = baseEvents
 
@@ -229,6 +230,54 @@ struct CalendarView: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
+                        // Upcoming Events Banner (only show when on current/future month)
+                        if !isMonthInPast(currentMonth) && !viewModel.upcomingEvents.isEmpty {
+                            let nextEvent = viewModel.upcomingEvents.first!
+                            HStack(spacing: 12) {
+                                Image(systemName: nextEvent.isSpecial ? "star.fill" : "calendar")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.white)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(nextEvent.title)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+                                    Text(countdownText(for: nextEvent))
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.white.opacity(0.9))
+                                }
+
+                                Spacer()
+
+                                if viewModel.upcomingEvents.count > 1 {
+                                    Text("+\(viewModel.upcomingEvents.count - 1)")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.8))
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 0.6, green: 0.5, blue: 0.8),
+                                        Color(red: 0.7, green: 0.6, blue: 0.9)
+                                    ],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .cornerRadius(12)
+                            .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+                            .padding(.horizontal)
+                            .padding(.top, 12)
+                            .padding(.bottom, 8)
+                            .onTapGesture {
+                                selectedEventForDetail = nextEvent
+                            }
+                        }
+
                         // Sync indicator
                         if googleCalendarManager.isSyncing {
                             HStack(spacing: 8) {
@@ -294,10 +343,12 @@ struct CalendarView: View {
                             .padding(.bottom, 16)
                         }
 
-                        // Custom Tab Selector
-                        ModernTabSelector(selectedTab: $selectedTab)
-                            .padding(.horizontal)
-                            .padding(.bottom, 12)
+                        // Custom Tab Selector (only show for current/future months)
+                        if !isMonthInPast(currentMonth) {
+                            ModernTabSelector(selectedTab: $selectedTab)
+                                .padding(.horizontal)
+                                .padding(.bottom, 12)
+                        }
 
                         // Filter indicator
                         if let selectedDay = selectedDay {
@@ -508,146 +559,6 @@ struct CalendarView: View {
         }
         .navigationTitle("Our Plans 💜")
         .navigationBarTitleDisplayMode(.large)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            // DYNAMIC ISLAND AREA
-            if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
-                let currentEvent = viewModel.upcomingEvents[safe: currentEarEventIndex] ?? viewModel.upcomingEvents.first!
-
-                ZStack(alignment: .top) {
-                    // Gray background
-                    Rectangle()
-                        .fill(Color(white: 0.15))
-
-                    // Ears on top
-
-                DynamicIslandEars(
-                    islandGap: islandGap,
-                    earWidth: earWidth,
-                    earHeight: earHeight,
-                    yOffset: yOffset,
-                    onLeftTap: {
-                        // Previous event
-                        withAnimation(.spring(response: 0.3)) {
-                            if currentEarEventIndex > 0 {
-                                currentEarEventIndex -= 1
-                            } else {
-                                currentEarEventIndex = min(viewModel.upcomingEvents.count - 1, 4) // Cycle to last (max 5 events)
-                            }
-                        }
-                    },
-                    onRightTap: {
-                        // Next event
-                        withAnimation(.spring(response: 0.3)) {
-                            let maxIndex = min(viewModel.upcomingEvents.count - 1, 4) // Max 5 events
-                            if currentEarEventIndex < maxIndex {
-                                currentEarEventIndex += 1
-                            } else {
-                                currentEarEventIndex = 0 // Cycle back to first
-                            }
-                        }
-                    }
-                ) {
-                    // LEFT EAR CONTENT - Event name (tap for previous event)
-                    HStack(spacing: 4) {
-                        Image(systemName: currentEvent.isSpecial ? "star.fill" : "calendar")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(.white)
-                        Text(currentEvent.title)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white)
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading) // Fill available height, align left
-                    .padding(.leading, 6)
-                    .padding(.trailing, 8)
-                    .background(
-                        Capsule()
-                            .fill(Color.black)
-                            .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
-                    )
-                } right: {
-                    // RIGHT EAR CONTENT - Countdown (tap for next event)
-                    HStack(spacing: 4) {
-                        Image(systemName: "clock.fill")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(.white)
-                        Text(countdownText(for: currentEvent))
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.95))
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing) // Fill available height, align right
-                    .padding(.leading, 8)
-                    .padding(.trailing, 6)
-                    .background(
-                        Capsule()
-                            .fill(Color.black)
-                            .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
-                    )
-                }
-                }
-                .frame(height: earHeight + yOffset + 10)
-            }
-        }
-        .overlay(alignment: .bottom) {
-            // DEBUG TUNING OVERLAY
-            if showDebugTuning {
-                VStack(spacing: 16) {
-                    Text("Dynamic Island Tuning")
-                        .font(.headline)
-                        .foregroundColor(.white)
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        VStack(alignment: .leading) {
-                            Text("Island Gap: \(String(format: "%.1f", islandGap))pt")
-                                .font(.caption)
-                                .foregroundColor(.white)
-                            Slider(value: $islandGap, in: -100...200, step: 0.5)
-                        }
-
-                        VStack(alignment: .leading) {
-                            Text("Ear Width: \(String(format: "%.1f", earWidth))pt")
-                                .font(.caption)
-                                .foregroundColor(.white)
-                            Slider(value: $earWidth, in: 80...160, step: 0.5)
-                        }
-
-                        VStack(alignment: .leading) {
-                            Text("Ear Height: \(String(format: "%.1f", earHeight))pt")
-                                .font(.caption)
-                                .foregroundColor(.white)
-                            Slider(value: $earHeight, in: 30...50, step: 0.5)
-                        }
-
-                        VStack(alignment: .leading) {
-                            Text("Y Offset: \(String(format: "%.1f", yOffset))pt")
-                                .font(.caption)
-                                .foregroundColor(.white)
-                            Slider(value: $yOffset, in: 0...20, step: 0.5)
-                        }
-                    }
-
-                    Button("Close Debug") {
-                        showDebugTuning = false
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(Color.white.opacity(0.2)))
-                }
-                .padding(20)
-                .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Color.black.opacity(0.85))
-                        .shadow(radius: 20)
-                )
-                .padding(20)
-            }
-        }
-        .onTapGesture(count: 3) {
-            // Triple tap anywhere to show debug tuning
-            showDebugTuning.toggle()
-        }
     }
 
     // MARK: - Helper Functions
