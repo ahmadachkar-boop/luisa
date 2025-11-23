@@ -422,9 +422,7 @@ struct PhotoGalleryView: View {
 
     private func navigateToFolder(_ folder: FolderViewType) {
         folderNavStack.append(currentFolderView)
-        withAnimation(.easeInOut(duration: 0.3)) {
-            currentFolderView = folder
-        }
+        currentFolderView = folder
     }
 
     private func monthHeaderView(monthGroup: (key: String, photos: [Photo])) -> some View {
@@ -442,7 +440,6 @@ struct PhotoGalleryView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(Color.white.opacity(0.8))
     }
 
     var body: some View {
@@ -1040,7 +1037,9 @@ class PhotoGalleryViewModel: ObservableObject {
         let relevantEvents = events.filter { event in
             guard let eventId = event.id else { return false }
             let hasPhotos = photos.contains(where: { $0.eventId == eventId })
-            return hasPhotos && (!specialOnly || event.isSpecial)
+            // If specialOnly is true, only show special events
+            // If specialOnly is false, only show non-special events (to avoid duplication)
+            return hasPhotos && (specialOnly ? event.isSpecial : !event.isSpecial)
         }
 
         return relevantEvents.map { event in
