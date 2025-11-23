@@ -127,16 +127,17 @@ struct PhotoGalleryView: View {
                     // Only trigger if it's more horizontal than vertical
                     if abs(horizontalAmount) > 50 && abs(horizontalAmount) > verticalAmount * 2 {
                         if horizontalAmount > 0 {
-                            // Swipe right
-                            if currentFolderView == .allPhotos {
-                                // Show folders overview
-                                withAnimation(.easeInOut(duration: 0.3)) {
-                                    showingFoldersOverview = true
-                                }
-                            } else {
-                                // Navigate back
+                            // Swipe right - navigate back
+                            if currentFolderView != .allPhotos {
                                 withAnimation(.easeInOut(duration: 0.3)) {
                                     currentFolderView = folderNavStack.popLast() ?? .allPhotos
+                                }
+                            }
+                        } else if horizontalAmount < 0 {
+                            // Swipe left - show folders overview (only from All Photos)
+                            if currentFolderView == .allPhotos {
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    showingFoldersOverview = true
                                 }
                             }
                         }
@@ -159,10 +160,29 @@ struct PhotoGalleryView: View {
             }
 
             // Current folder title
-            Text(folderTitle)
-                .font(.title2)
-                .fontWeight(.bold)
-                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+            if currentFolderView == .allPhotos {
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        showingFoldersOverview = true
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Text(folderTitle)
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                        Image(systemName: "chevron.down")
+                            .font(.caption)
+                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+            } else {
+                Text(folderTitle)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+            }
 
             Spacer()
 
