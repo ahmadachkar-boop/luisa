@@ -140,79 +140,80 @@ struct PhotoGalleryView: View {
     }
 
     var body: some View {
-        NavigationView {
-            ZStack {
-                // Background gradient
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.95, green: 0.9, blue: 1.0),
-                        Color.white
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+        ZStack {
+            NavigationView {
+                ZStack {
+                    // Background gradient
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.95, green: 0.9, blue: 1.0),
+                            Color.white
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .ignoresSafeArea()
+
+                    if viewModel.photos.isEmpty {
+                        VStack(spacing: 20) {
+                            Image(systemName: "heart.text.square.fill")
+                                .font(.system(size: 80))
+                                .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
+
+                            Text("No photos yet")
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                            Text("Add your first memory together 📸")
+                                .font(.subheadline)
+                                .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+                        }
+                    } else {
+                        photoGridView
+                    }
+                }
+                .blur(radius: showingToolDrawer ? 3 : 0)
+                .allowsHitTesting(!showingToolDrawer)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 20)
+                        .onEnded { value in
+                            // Pull down from top to open drawer
+                            if value.translation.height > 50 && value.startLocation.y < 100 {
+                                withAnimation(.spring(response: 0.3)) {
+                                    showingToolDrawer = true
+                                }
+                            }
+                        }
                 )
-                .ignoresSafeArea()
-
-                if viewModel.photos.isEmpty {
-                    VStack(spacing: 20) {
-                        Image(systemName: "heart.text.square.fill")
-                            .font(.system(size: 80))
-                            .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
-
-                        Text("No photos yet")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-
-                        Text("Add your first memory together 📸")
-                            .font(.subheadline)
-                            .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
-                    }
-                } else {
-                    photoGridView
-                }
-            }
-            .blur(radius: showingToolDrawer ? 3 : 0)
-            .allowsHitTesting(!showingToolDrawer)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 20)
-                    .onEnded { value in
-                        // Pull down from top to open drawer
-                        if value.translation.height > 50 && value.startLocation.y < 100 {
-                            withAnimation(.spring(response: 0.3)) {
-                                showingToolDrawer = true
+                .toolbar {
+                    if selectionMode {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button("Cancel") {
+                                selectionMode = false
+                                selectedPhotoIndices.removeAll()
                             }
+                            .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
                         }
-                    }
-            )
-            .toolbar {
-                if selectionMode {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Cancel") {
-                            selectionMode = false
-                            selectedPhotoIndices.removeAll()
-                        }
-                        .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
-                    }
 
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        HStack(spacing: 16) {
-                            Button(action: saveSelectedPhotos) {
-                                Image(systemName: "square.and.arrow.down")
-                                    .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
-                            }
-                            .disabled(selectedPhotoIndices.isEmpty)
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            HStack(spacing: 16) {
+                                Button(action: saveSelectedPhotos) {
+                                    Image(systemName: "square.and.arrow.down")
+                                        .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
+                                }
+                                .disabled(selectedPhotoIndices.isEmpty)
 
-                            Button(action: deleteSelectedPhotos) {
-                                Image(systemName: "trash")
-                                    .foregroundColor(.red)
+                                Button(action: deleteSelectedPhotos) {
+                                    Image(systemName: "trash")
+                                        .foregroundColor(.red)
+                                }
+                                .disabled(selectedPhotoIndices.isEmpty)
                             }
-                            .disabled(selectedPhotoIndices.isEmpty)
                         }
                     }
                 }
-            }
-            .onChange(of: selectedItems) { oldItems, newItems in
+                .onChange(of: selectedItems) { oldItems, newItems in
                 Task {
                     guard !newItems.isEmpty else { return }
                     isUploading = true
@@ -278,6 +279,7 @@ struct PhotoGalleryView: View {
                     },
                     captureDates: viewModel.photos.map { $0.capturedAt ?? $0.createdAt }
                 )
+            }
             }
 
             // TOOL DRAWER OVERLAY
