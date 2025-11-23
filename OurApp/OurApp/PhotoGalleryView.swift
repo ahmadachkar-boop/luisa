@@ -275,7 +275,8 @@ struct PhotoGalleryView: View {
                                 try? await viewModel.deletePhoto(photoToDelete)
                             }
                         }
-                    }
+                    },
+                    captureDates: viewModel.photos.map { $0.capturedAt ?? $0.createdAt }
                 )
             }
         }
