@@ -304,8 +304,12 @@ struct PhotoGalleryView: View {
                     }
                 }
 
-                // Events
-                let eventPhotosCount = viewModel.photos.filter { $0.eventId != nil }.count
+                // Events (excluding special events to match folder content)
+                let eventPhotosCount = viewModel.photos.filter { photo in
+                    guard let eventId = photo.eventId else { return false }
+                    // Only count photos from non-special events
+                    return viewModel.events.first(where: { $0.id == eventId })?.isSpecial == false
+                }.count
                 if eventPhotosCount > 0 {
                     FolderCard(
                         title: "Events",
