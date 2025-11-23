@@ -367,6 +367,7 @@ struct CalendarView: View {
                             MonthSummaryCard(
                                 month: currentMonth,
                                 events: eventsForCurrentMonth(),
+                                photos: viewModel.photos,
                                 isExpanded: $summaryCardExpanded,
                                 onPhotoTap: { photoURLs, index in
                                     recapPhotoData = RecapPhotoData(photoURLs: photoURLs, initialIndex: index)
@@ -2597,6 +2598,7 @@ struct EventDotsView: View {
 struct MonthSummaryCard: View {
     let month: Date
     let events: [CalendarEvent]
+    let photos: [Photo] // All photos to filter from
     @Binding var isExpanded: Bool
     let onPhotoTap: ([String], Int) -> Void
 
@@ -2611,10 +2613,20 @@ struct MonthSummaryCard: View {
     }
 
     var eventCount: Int { events.count }
-    var photoCount: Int { events.flatMap { $0.photoURLs }.count }
     var specialEventCount: Int { events.filter { $0.isSpecial }.count }
+
+    // Filter photos to only those captured in this month
+    var photosForMonth: [Photo] {
+        let calendar = Calendar.current
+        return photos.filter { photo in
+            let captureDate = photo.capturedAt ?? photo.createdAt
+            return calendar.isDate(captureDate, equalTo: month, toGranularity: .month)
+        }
+    }
+
+    var photoCount: Int { photosForMonth.count }
     var allPhotoURLs: [String] {
-        events.flatMap { $0.photoURLs }
+        photosForMonth.map { $0.imageURL }
     }
 
     var body: some View {
