@@ -1682,10 +1682,18 @@ struct EventDetailView: View {
                 }
 
                 print("🔵 [UPLOAD] Compressed size: \(compressedData.count) bytes")
-                print("🔵 [UPLOAD] Uploading to Firebase...")
+                print("🔵 [UPLOAD] Uploading to Firebase with event linkage...")
 
-                let photoURL = try await FirebaseManager.shared.uploadEventPhoto(imageData: compressedData)
-                print("🟢 [UPLOAD SUCCESS] Photo \(index + 1) uploaded: \(photoURL)")
+                // Upload photo with event linkage to photo gallery
+                let photoURL = try await FirebaseManager.shared.uploadPhoto(
+                    imageData: compressedData,
+                    caption: "",
+                    uploadedBy: "You",
+                    capturedAt: nil,
+                    eventId: currentEvent.id,
+                    folderId: nil
+                )
+                print("🟢 [UPLOAD SUCCESS] Photo \(index + 1) uploaded and linked to event: \(photoURL)")
                 newPhotoURLs.append(photoURL)
 
                 // Update progress
