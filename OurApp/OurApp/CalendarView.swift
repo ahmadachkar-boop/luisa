@@ -394,127 +394,129 @@ struct CalendarView: View {
         }
     }
 
-    var body: some View {
-        NavigationView {
-            ZStack {
-                backgroundGradient
-
-                ScrollView(showsIndicators: false) {
-                    VStack(spacing: 0) {
-                        // Upcoming Events Banner (only show when on current/future month)
-                        if shouldShowUpcomingBanner {
-                            upcomingEventsBanner
-                        }
-
-                        // Sync indicator
-                        if googleCalendarManager.isSyncing {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text("Syncing with Google Calendar...")
-                                    .font(.caption)
-                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                            }
-                            .padding(.vertical, 8)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                        }
-
-                        // Month indicator for calendar
-                        Text(currentMonth, format: .dateTime.month(.wide).year())
-                            .font(.title3)
-                            .fontWeight(.semibold)
-                            .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal)
-                            .padding(.top, 8)
-                            .padding(.bottom, 12)
-
-                        // Calendar Grid
-                        CalendarGridView(
-                            currentMonth: currentMonth,
-                            events: viewModel.events,
-                            selectedDay: $selectedDay,
-                            selectedTab: $selectedTab
-                        )
-                        .id(calendarGridId)
-                        .padding(.horizontal)
-                        .padding(.bottom, 16)
-                        .gesture(
-                            DragGesture(minimumDistance: 30)
-                                .onEnded { value in
-                                    let horizontalAmount = value.translation.width
-
-                                    if horizontalAmount < -50 {
-                                        // Swipe left - next month
-                                        withAnimation(.spring(response: 0.3)) {
-                                            currentMonth = Calendar.current.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
-                                        }
-                                    } else if horizontalAmount > 50 {
-                                        // Swipe right - previous month
-                                        withAnimation(.spring(response: 0.3)) {
-                                            currentMonth = Calendar.current.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
-                                        }
-                                    }
-                                }
-                        )
-
-                        // Month Summary Card (only for past months)
-                        if isMonthInPast(currentMonth) {
-                            MonthSummaryCard(
-                                month: currentMonth,
-                                events: eventsForCurrentMonth(),
-                                photos: viewModel.photos,
-                                isExpanded: $summaryCardExpanded,
-                                onPhotoTap: { photoURLs, index in
-                                    recapPhotoData = RecapPhotoData(photoURLs: photoURLs, initialIndex: index)
-                                }
-                            )
-                            .padding(.horizontal)
-                            .padding(.bottom, 16)
-                        }
-
-                        // Custom Tab Selector (only show for current month)
-                        if !isMonthInPast(currentMonth) && !isMonthInFuture(currentMonth) {
-                            ModernTabSelector(selectedTab: $selectedTab)
-                                .padding(.horizontal)
-                                .padding(.bottom, 12)
-                        }
-
-                        // Filter indicator
-                        if let selectedDay = selectedDay {
-                            FilterHeaderView(
-                                selectedDay: selectedDay,
-                                eventCount: filteredEvents.count,
-                                onClear: {
-                                    withAnimation(.spring(response: 0.3)) {
-                                        self.selectedDay = nil
-                                    }
-                                }
-                            )
-                            .padding(.horizontal)
-                            .padding(.bottom, 12)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                        }
-
-                        // Events list
-                        eventsListSection
-                    }
+    @ViewBuilder
+    private var calendarScrollContent: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 0) {
+                // Upcoming Events Banner (only show when on current/future month)
+                if shouldShowUpcomingBanner {
+                    upcomingEventsBanner
                 }
-                .blur(radius: showingToolDrawer ? 3 : 0)
-                .allowsHitTesting(!showingToolDrawer)
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 20)
+
+                // Sync indicator
+                if googleCalendarManager.isSyncing {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Syncing with Google Calendar...")
+                            .font(.caption)
+                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                    }
+                    .padding(.vertical, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                // Month indicator for calendar
+                Text(currentMonth, format: .dateTime.month(.wide).year())
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
+
+                // Calendar Grid
+                CalendarGridView(
+                    currentMonth: currentMonth,
+                    events: viewModel.events,
+                    selectedDay: $selectedDay,
+                    selectedTab: $selectedTab
+                )
+                .id(calendarGridId)
+                .padding(.horizontal)
+                .padding(.bottom, 16)
+                .gesture(
+                    DragGesture(minimumDistance: 30)
                         .onEnded { value in
-                            // Pull down from top to open drawer
-                            if value.translation.height > 50 && value.startLocation.y < 100 {
+                            let horizontalAmount = value.translation.width
+
+                            if horizontalAmount < -50 {
+                                // Swipe left - next month
                                 withAnimation(.spring(response: 0.3)) {
-                                    showingToolDrawer = true
+                                    currentMonth = Calendar.current.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
+                                }
+                            } else if horizontalAmount > 50 {
+                                // Swipe right - previous month
+                                withAnimation(.spring(response: 0.3)) {
+                                    currentMonth = Calendar.current.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
                                 }
                             }
                         }
                 )
 
-                // TOOL DRAWER OVERLAY
+                // Month Summary Card (only for past months)
+                if isMonthInPast(currentMonth) {
+                    MonthSummaryCard(
+                        month: currentMonth,
+                        events: eventsForCurrentMonth(),
+                        photos: viewModel.photos,
+                        isExpanded: $summaryCardExpanded,
+                        onPhotoTap: { photoURLs, index in
+                            recapPhotoData = RecapPhotoData(photoURLs: photoURLs, initialIndex: index)
+                        }
+                    )
+                    .padding(.horizontal)
+                    .padding(.bottom, 16)
+                }
+
+                // Custom Tab Selector (only show for current month)
+                if !isMonthInPast(currentMonth) && !isMonthInFuture(currentMonth) {
+                    ModernTabSelector(selectedTab: $selectedTab)
+                        .padding(.horizontal)
+                        .padding(.bottom, 12)
+                }
+
+                // Filter indicator
+                if let selectedDay = selectedDay {
+                    FilterHeaderView(
+                        selectedDay: selectedDay,
+                        eventCount: filteredEvents.count,
+                        onClear: {
+                            withAnimation(.spring(response: 0.3)) {
+                                self.selectedDay = nil
+                            }
+                        }
+                    )
+                    .padding(.horizontal)
+                    .padding(.bottom, 12)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                // Events list
+                eventsListSection
+            }
+        }
+        .blur(radius: showingToolDrawer ? 3 : 0)
+        .allowsHitTesting(!showingToolDrawer)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { value in
+                    // Pull down from top to open drawer
+                    if value.translation.height > 50 && value.startLocation.y < 100 {
+                        withAnimation(.spring(response: 0.3)) {
+                            showingToolDrawer = true
+                        }
+                    }
+                }
+        )
+    }
+
+    var body: some View {
+        NavigationView {
+            ZStack {
+                backgroundGradient
+                calendarScrollContent
                 toolDrawerOverlay
             }
             .sheet(isPresented: $showingAddEvent) {
