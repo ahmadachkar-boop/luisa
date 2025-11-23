@@ -70,7 +70,7 @@ class FirebaseManager: ObservableObject {
     }
 
     // MARK: - Photos
-    func uploadPhoto(imageData: Data, caption: String, uploadedBy: String) async throws -> String {
+    func uploadPhoto(imageData: Data, caption: String = "", uploadedBy: String = "You", capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws -> String {
         let fileName = "\(UUID().uuidString).jpg"
         let storageRef = storage.reference().child("photos/\(fileName)")
 
@@ -81,7 +81,10 @@ class FirebaseManager: ObservableObject {
             imageURL: downloadURL.absoluteString,
             caption: caption,
             uploadedBy: uploadedBy,
-            createdAt: Date()
+            createdAt: Date(),
+            capturedAt: capturedAt,
+            eventId: eventId,
+            folderId: folderId
         )
 
         try db.collection("photos").addDocument(from: photo)
@@ -125,6 +128,78 @@ class FirebaseManager: ObservableObject {
 
         // Delete from Firestore
         try await db.collection("photos").document(id).delete()
+    }
+
+    // MARK: - Photo Folders
+    func createFolder(name: String, type: PhotoFolder.FolderType, eventId: String? = nil, isSpecialEvent: Bool? = nil) async throws -> String {
+        let folder = PhotoFolder(
+            name: name,
+            createdAt: Date(),
+            type: type,
+            eventId: eventId,
+            isSpecialEvent: isSpecialEvent
+        )
+
+        let docRef = try db.collection("photoFolders").addDocument(from: folder)
+        return docRef.documentID
+    }
+
+    func getFolders() -> AsyncThrowingStream<[PhotoFolder], Error> {
+        AsyncThrowingStream { continuation in
+            let listener = db.collection("photoFolders")
+                .order(by: "createdAt")
+                .addSnapshotListener { snapshot, error in
+                    if let error = error {
+                        continuation.finish(throwing: error)
+                        return
+                    }
+
+                    guard let documents = snapshot?.documents else {
+                        continuation.yield([])
+                        return
+                    }
+
+                    let folders = documents.compactMap { doc -> PhotoFolder? in
+                        try? doc.data(as: PhotoFolder.self)
+                    }
+
+                    continuation.yield(folders)
+                }
+
+            continuation.onTermination = { _ in
+                listener.remove()
+            }
+        }
+    }
+
+    func deleteFolder(_ folder: PhotoFolder) async throws {
+        guard let id = folder.id else { return }
+
+        // Remove folder reference from all photos in this folder
+        let photosSnapshot = try await db.collection("photos")
+            .whereField("folderId", isEqualTo: id)
+            .getDocuments()
+
+        for doc in photosSnapshot.documents {
+            try await db.collection("photos").document(doc.documentID).updateData([
+                "folderId": FieldValue.delete()
+            ])
+        }
+
+        // Delete the folder
+        try await db.collection("photoFolders").document(id).delete()
+    }
+
+    func updatePhotoFolder(_ photoId: String, folderId: String?) async throws {
+        if let folderId = folderId {
+            try await db.collection("photos").document(photoId).updateData([
+                "folderId": folderId
+            ])
+        } else {
+            try await db.collection("photos").document(photoId).updateData([
+                "folderId": FieldValue.delete()
+            ])
+        }
     }
 
     // MARK: - Calendar Events

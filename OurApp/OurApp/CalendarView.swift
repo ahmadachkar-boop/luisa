@@ -3,6 +3,7 @@ import PhotosUI
 import MapKit
 import WeatherKit
 import CoreLocation
+import ImageIO
 
 // MARK: - Timeout Helper
 struct TimeoutError: Error {}
@@ -22,6 +23,20 @@ func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws 
         group.cancelAll()
         return result
     }
+}
+
+// MARK: - EXIF Metadata Helper
+func extractCaptureDate(from imageData: Data) -> Date? {
+    guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, nil),
+          let imageProperties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [String: Any],
+          let exifDict = imageProperties[kCGImagePropertyExifDictionary as String] as? [String: Any],
+          let dateTimeOriginal = exifDict[kCGImagePropertyExifDateTimeOriginal as String] as? String else {
+        return nil
+    }
+
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+    return formatter.date(from: dateTimeOriginal)
 }
 
 // MARK: - Design Constants
@@ -171,19 +186,41 @@ struct CalendarView: View {
     @State private var showingSearch = false
     @State private var showingToolDrawer = false
     @State private var expandedCardId: String? = nil
-    @State private var dynamicIslandIndex = 0
 
-    // Dynamic Island ears tuning (debug)
-    @State private var showDebugTuning = false
-    @State private var islandGap: CGFloat = 126  // Narrower gap - Island is ~126pts in compact state
-    @State private var earWidth: CGFloat = 120   // Fixed width for each ear to look connected
-    @State private var earHeight: CGFloat = 37   // Height of each ear
-    @State private var yOffset: CGFloat = 8      // Vertical offset from top
-    @State private var currentEarEventIndex = 0  // Index of event shown in ears
+    // Calendar grid ID to force refresh when events change
+    private var calendarGridId: String {
+        let eventIds = viewModel.events.compactMap { $0.id }.joined()
+        return "\(currentMonth.timeIntervalSince1970)-\(eventIds.hashValue)"
+    }
 
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
-        let baseEvents = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
+        let baseEvents: [CalendarEvent]
+
+        if isMonthInPast(currentMonth) {
+            // Past month: only show memories from that specific month
+            baseEvents = viewModel.pastEvents.filter { event in
+                Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
+            }
+        } else if isMonthInFuture(currentMonth) {
+            // Future month: only show upcoming events from that specific month
+            baseEvents = viewModel.upcomingEvents.filter { event in
+                Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
+            }
+        } else {
+            // Current month: filter both upcoming and memories to current month only
+            if selectedTab == 0 {
+                // Upcoming tab: filter to current month
+                baseEvents = viewModel.upcomingEvents.filter { event in
+                    Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
+                }
+            } else {
+                // Memories tab: filter to current month
+                baseEvents = viewModel.pastEvents.filter { event in
+                    Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
+                }
+            }
+        }
 
         var filtered = baseEvents
 
@@ -229,6 +266,60 @@ struct CalendarView: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
+                        // Upcoming Events Banner (only show when on current/future month)
+                        if !isMonthInPast(currentMonth) {
+                            let monthEvents = viewModel.upcomingEvents.filter { event in
+                                Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
+                            }
+
+                            if !monthEvents.isEmpty {
+                                let nextEvent = monthEvents.first!
+                                HStack(spacing: 12) {
+                                    Image(systemName: nextEvent.isSpecial ? "star.fill" : "calendar")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(.white)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(nextEvent.title)
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(.white)
+                                            .lineLimit(1)
+                                        Text(countdownText(for: nextEvent))
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.white.opacity(0.9))
+                                    }
+
+                                    Spacer()
+
+                                    if monthEvents.count > 1 {
+                                        Text("+\(monthEvents.count - 1)")
+                                            .font(.system(size: 11, weight: .medium))
+                                            .foregroundColor(.white.opacity(0.8))
+                                    }
+                                }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 0.6, green: 0.5, blue: 0.8),
+                                        Color(red: 0.7, green: 0.6, blue: 0.9)
+                                    ],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .cornerRadius(12)
+                            .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+                            .padding(.horizontal)
+                            .padding(.top, 12)
+                            .padding(.bottom, 8)
+                            .onTapGesture {
+                                selectedEventForDetail = nextEvent
+                            }
+                            }
+                        }
+
                         // Sync indicator
                         if googleCalendarManager.isSyncing {
                             HStack(spacing: 8) {
@@ -242,14 +333,15 @@ struct CalendarView: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                         }
 
-                        // Month label (always visible, swipe calendar to navigate)
+                        // Month indicator for calendar
                         Text(currentMonth, format: .dateTime.month(.wide).year())
-                            .font(.title2)
-                            .fontWeight(.bold)
+                            .font(.title3)
+                            .fontWeight(.semibold)
                             .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal)
-                            .padding(.top, 12)
-                            .padding(.bottom, 16)
+                            .padding(.top, 8)
+                            .padding(.bottom, 12)
 
                         // Calendar Grid
                         CalendarGridView(
@@ -258,6 +350,7 @@ struct CalendarView: View {
                             selectedDay: $selectedDay,
                             selectedTab: $selectedTab
                         )
+                        .id(calendarGridId)
                         .padding(.horizontal)
                         .padding(.bottom, 16)
                         .gesture(
@@ -293,10 +386,12 @@ struct CalendarView: View {
                             .padding(.bottom, 16)
                         }
 
-                        // Custom Tab Selector
-                        ModernTabSelector(selectedTab: $selectedTab)
-                            .padding(.horizontal)
-                            .padding(.bottom, 12)
+                        // Custom Tab Selector (only show for current month)
+                        if !isMonthInPast(currentMonth) && !isMonthInFuture(currentMonth) {
+                            ModernTabSelector(selectedTab: $selectedTab)
+                                .padding(.horizontal)
+                                .padding(.bottom, 12)
+                        }
 
                         // Filter indicator
                         if let selectedDay = selectedDay {
@@ -413,8 +508,6 @@ struct CalendarView: View {
                     }
                 }
             }
-            .navigationBarHidden(true) // Hide navigation bar to allow banner at absolute top
-            .statusBar(hidden: true) // Hide status bar to use that space for Dynamic Island banner
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView(initialDate: selectedDate) { event in
                     do {
@@ -489,165 +582,14 @@ struct CalendarView: View {
                 if countdownBannerIndex >= newValue {
                     countdownBannerIndex = 0
                 }
-                // Update Live Activity when events change
-                updateLiveActivity()
             }
             .task {
                 // Fetch weather for existing events when view appears
                 await viewModel.fetchWeatherForEvents()
             }
-            .onAppear {
-                // Start Live Activity when view appears
-                startLiveActivity()
-            }
-            .onDisappear {
-                // Note: We keep the Live Activity running even when view disappears
-                // User can manually dismiss it from the Dynamic Island
-            }
         }
-        .overlay(alignment: .top) {
-            // DYNAMIC ISLAND "EARS" - renders in left/right spaces around the Island
-            if !viewModel.upcomingEvents.isEmpty && !showingToolDrawer {
-                let currentEvent = viewModel.upcomingEvents[safe: currentEarEventIndex] ?? viewModel.upcomingEvents.first!
-
-                DynamicIslandEars(
-                    islandGap: islandGap,
-                    earWidth: earWidth,
-                    earHeight: earHeight,
-                    yOffset: yOffset,
-                    onLeftTap: {
-                        // Previous event
-                        withAnimation(.spring(response: 0.3)) {
-                            if currentEarEventIndex > 0 {
-                                currentEarEventIndex -= 1
-                            } else {
-                                currentEarEventIndex = min(viewModel.upcomingEvents.count - 1, 4) // Cycle to last (max 5 events)
-                            }
-                        }
-                    },
-                    onRightTap: {
-                        // Next event
-                        withAnimation(.spring(response: 0.3)) {
-                            let maxIndex = min(viewModel.upcomingEvents.count - 1, 4) // Max 5 events
-                            if currentEarEventIndex < maxIndex {
-                                currentEarEventIndex += 1
-                            } else {
-                                currentEarEventIndex = 0 // Cycle back to first
-                            }
-                        }
-                    }
-                ) {
-                    // LEFT EAR CONTENT - Event name (tap for previous event)
-                    HStack(spacing: 4) {
-                        Image(systemName: currentEvent.isSpecial ? "star.fill" : "calendar")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(.white)
-                        Text(currentEvent.title)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white)
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity) // Fill available height
-                    .padding(.horizontal, 8)
-                    .background(
-                        Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: currentEvent.isSpecial ?
-                                        [Color.black.opacity(0.95), Color(red: 0.15, green: 0.1, blue: 0.2)] :
-                                        [Color.black.opacity(0.9), Color(red: 0.1, green: 0.1, blue: 0.15)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
-                    )
-                } right: {
-                    // RIGHT EAR CONTENT - Countdown (tap for next event)
-                    HStack(spacing: 4) {
-                        Image(systemName: "clock.fill")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(.white)
-                        Text(countdownText(for: currentEvent))
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.95))
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity) // Fill available height
-                    .padding(.horizontal, 8)
-                    .background(
-                        Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.black.opacity(0.9), Color(red: 0.1, green: 0.1, blue: 0.15)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .shadow(color: Color.black.opacity(0.6), radius: 10, x: 0, y: 4)
-                    )
-                }
-            }
-        }
-        .overlay(alignment: .bottom) {
-            // DEBUG TUNING OVERLAY
-            if showDebugTuning {
-                VStack(spacing: 16) {
-                    Text("Dynamic Island Tuning")
-                        .font(.headline)
-                        .foregroundColor(.white)
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        VStack(alignment: .leading) {
-                            Text("Island Gap: \(Int(islandGap))pt")
-                                .font(.caption)
-                                .foregroundColor(.white)
-                            Slider(value: $islandGap, in: -50...200, step: 1)
-                        }
-
-                        VStack(alignment: .leading) {
-                            Text("Ear Width: \(Int(earWidth))pt")
-                                .font(.caption)
-                                .foregroundColor(.white)
-                            Slider(value: $earWidth, in: 80...160, step: 1)
-                        }
-
-                        VStack(alignment: .leading) {
-                            Text("Ear Height: \(Int(earHeight))pt")
-                                .font(.caption)
-                                .foregroundColor(.white)
-                            Slider(value: $earHeight, in: 30...50, step: 1)
-                        }
-
-                        VStack(alignment: .leading) {
-                            Text("Y Offset: \(Int(yOffset))pt")
-                                .font(.caption)
-                                .foregroundColor(.white)
-                            Slider(value: $yOffset, in: 0...20, step: 1)
-                        }
-                    }
-
-                    Button("Close Debug") {
-                        showDebugTuning = false
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(Color.white.opacity(0.2)))
-                }
-                .padding(20)
-                .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Color.black.opacity(0.85))
-                        .shadow(radius: 20)
-                )
-                .padding(20)
-            }
-        }
-        .onTapGesture(count: 3) {
-            // Triple tap anywhere to show debug tuning
-            showDebugTuning.toggle()
-        }
+        .navigationTitle("Our Plans 💜")
+        .navigationBarTitleDisplayMode(.large)
     }
 
     // MARK: - Helper Functions
@@ -663,6 +605,13 @@ struct CalendarView: View {
         let currentMonthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: now))!
         let selectedMonthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: date))!
         return selectedMonthStart < currentMonthStart
+    }
+
+    func isMonthInFuture(_ date: Date) -> Bool {
+        let now = Date()
+        let currentMonthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: now))!
+        let selectedMonthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: date))!
+        return selectedMonthStart > currentMonthStart
     }
 
     func countdownText(for event: CalendarEvent) -> String {
@@ -697,19 +646,6 @@ struct CalendarView: View {
 
     func resetCountdownTimer() {
         startCountdownResetTimer()
-    }
-
-    // MARK: - Live Activity Management
-    func startLiveActivity() {
-        if #available(iOS 16.1, *), LiveActivityManager.isSupported {
-            LiveActivityManager.shared.updateLiveActivity(with: viewModel.upcomingEvents)
-        }
-    }
-
-    func updateLiveActivity() {
-        if #available(iOS 16.1, *), LiveActivityManager.isSupported {
-            LiveActivityManager.shared.updateLiveActivity(with: viewModel.upcomingEvents)
-        }
     }
 
     func refreshCalendar() async {
@@ -1750,6 +1686,14 @@ struct EventDetailView: View {
 
                 print("🔵 [UPLOAD] Processing image: \(uiImage.size)")
 
+                // Extract original capture date from EXIF metadata
+                let capturedAt = extractCaptureDate(from: data)
+                if let capturedAt = capturedAt {
+                    print("🔵 [UPLOAD] Extracted capture date: \(capturedAt)")
+                } else {
+                    print("🔵 [UPLOAD] No EXIF capture date found")
+                }
+
                 // Resize and compress
                 let resized = uiImage.resized(toMaxDimension: 1920)
                 print("🔵 [UPLOAD] Resized to: \(resized.size)")
@@ -1761,10 +1705,18 @@ struct EventDetailView: View {
                 }
 
                 print("🔵 [UPLOAD] Compressed size: \(compressedData.count) bytes")
-                print("🔵 [UPLOAD] Uploading to Firebase...")
+                print("🔵 [UPLOAD] Uploading to Firebase with event linkage...")
 
-                let photoURL = try await FirebaseManager.shared.uploadEventPhoto(imageData: compressedData)
-                print("🟢 [UPLOAD SUCCESS] Photo \(index + 1) uploaded: \(photoURL)")
+                // Upload photo with event linkage to photo gallery
+                let photoURL = try await FirebaseManager.shared.uploadPhoto(
+                    imageData: compressedData,
+                    caption: "",
+                    uploadedBy: "You",
+                    capturedAt: capturedAt,
+                    eventId: currentEvent.id,
+                    folderId: nil
+                )
+                print("🟢 [UPLOAD SUCCESS] Photo \(index + 1) uploaded and linked to event: \(photoURL)")
                 newPhotoURLs.append(photoURL)
 
                 // Update progress
@@ -3483,144 +3435,6 @@ struct ToolDrawerView: View {
             }
         )
         .padding(.horizontal, 16)
-    }
-}
-
-// MARK: - Dynamic Island "Ears" Component
-struct DynamicIslandEars<Left: View, Right: View>: View {
-    let left: Left
-    let right: Right
-    let onLeftTap: () -> Void
-    let onRightTap: () -> Void
-
-    var islandGap: CGFloat = 126      // center hole width (compact Island ~126pts)
-    var earWidth: CGFloat = 120       // fixed width for each ear
-    var earHeight: CGFloat = 37       // compact Island height
-    var yOffset: CGFloat = 8          // nudge to visually align with the Island
-
-    init(islandGap: CGFloat = 126,
-         earWidth: CGFloat = 120,
-         earHeight: CGFloat = 37,
-         yOffset: CGFloat = 8,
-         onLeftTap: @escaping () -> Void = {},
-         onRightTap: @escaping () -> Void = {},
-         @ViewBuilder left: () -> Left,
-         @ViewBuilder right: () -> Right) {
-        self.left = left()
-        self.right = right()
-        self.onLeftTap = onLeftTap
-        self.onRightTap = onRightTap
-        self.islandGap = islandGap
-        self.earWidth = earWidth
-        self.earHeight = earHeight
-        self.yOffset = yOffset
-    }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            // LEFT EAR - tap to go to previous event
-            left
-                .frame(width: earWidth, height: earHeight)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    onLeftTap()
-                }
-
-            // HOLE (where the Island is)
-            Color.clear
-                .frame(width: islandGap, height: earHeight)
-                .allowsHitTesting(false)
-
-            // RIGHT EAR - tap to go to next event
-            right
-                .frame(width: earWidth, height: earHeight)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    onRightTap()
-                }
-        }
-        .frame(maxWidth: .infinity, alignment: .top)
-        .offset(y: yOffset)
-        .frame(height: earHeight + yOffset)
-        .ignoresSafeArea(.container, edges: .top)
-    }
-}
-
-// MARK: - In-App Dynamic Island Banner
-struct InAppDynamicIsland: View {
-    let events: [CalendarEvent]
-    @Binding var selectedIndex: Int
-    let onEventTap: (CalendarEvent) -> Void
-    let countdownText: (CalendarEvent) -> String
-
-    var body: some View {
-        if !events.isEmpty {
-            let eventsToShow = Array(events.prefix(5))
-
-            TabView(selection: $selectedIndex) {
-                ForEach(Array(eventsToShow.enumerated()), id: \.element.id) { index, event in
-                    Button(action: {
-                        onEventTap(event)
-                    }) {
-                        HStack(spacing: 8) {
-                            // Left side: Event icon
-                            Image(systemName: event.isSpecial ? "star.fill" : "calendar")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(.white)
-
-                            Spacer(minLength: 4)
-
-                            // Right side: Countdown
-                            Text(countdownText(event))
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.white.opacity(0.9))
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .frame(width: 170, height: 37) // Match actual Dynamic Island compact size
-                        .background(
-                            Capsule()
-                                .fill(
-                                    LinearGradient(
-                                        colors: event.isSpecial ?
-                                            [Color.black.opacity(0.9), Color(red: 0.15, green: 0.1, blue: 0.2)] :
-                                            [Color.black.opacity(0.85), Color(red: 0.1, green: 0.1, blue: 0.15)],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
-                                .shadow(color: Color.black.opacity(0.5), radius: 15, x: 0, y: 8)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .tag(index)
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .frame(height: 37) // Compact height matching real Dynamic Island
-            .onChange(of: selectedIndex) { oldValue, newValue in
-                resetAutoSwipeTimer()
-            }
-            .onAppear {
-                startAutoSwipeTimer()
-            }
-            .onDisappear {
-                TimerManager.shared.invalidate(id: "inAppDynamicIslandAutoSwipe")
-            }
-        }
-    }
-
-    private func startAutoSwipeTimer() {
-        TimerManager.shared.schedule(id: "inAppDynamicIslandAutoSwipe", interval: 10.0, repeats: false) {
-            withAnimation(.easeInOut(duration: 0.5)) {
-                selectedIndex = 0
-            }
-        }
-    }
-
-    private func resetAutoSwipeTimer() {
-        startAutoSwipeTimer()
     }
 }
 

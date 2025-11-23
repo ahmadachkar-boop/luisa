@@ -191,6 +191,7 @@ struct FullScreenPhotoViewer: View {
     let initialIndex: Int
     let onDismiss: () -> Void
     let onDelete: ((Int) -> Void)?
+    let captureDates: [Date?]? // Optional capture dates for each photo
 
     // Use a unique ID to force complete view recreation
     @State private var viewID = UUID()
@@ -207,11 +208,12 @@ struct FullScreenPhotoViewer: View {
     @State private var selectedIndices: Set<Int> = []
     @State private var loadedImages: [Int: UIImage] = [:]
 
-    init(photoURLs: [String], initialIndex: Int, onDismiss: @escaping () -> Void, onDelete: ((Int) -> Void)? = nil) {
+    init(photoURLs: [String], initialIndex: Int, onDismiss: @escaping () -> Void, onDelete: ((Int) -> Void)? = nil, captureDates: [Date?]? = nil) {
         self.photoURLs = photoURLs
         self.initialIndex = initialIndex
         self.onDismiss = onDismiss
         self.onDelete = onDelete
+        self.captureDates = captureDates
 
         // Initialize directly with the index we want
         let safeIndex = max(0, min(initialIndex, photoURLs.count - 1))
@@ -323,18 +325,56 @@ struct FullScreenPhotoViewer: View {
                     }
                 }
 
-                // Page indicators
-                if !isZoomed && photoURLs.count > 1 {
-                    HStack(spacing: 8) {
-                        ForEach(0..<photoURLs.count, id: \.self) { index in
-                            Circle()
-                                .fill(index == currentIndex ? Color.white : Color.white.opacity(0.5))
-                                .frame(width: 8, height: 8)
-                        }
+                // Bottom info area
+                VStack(spacing: 12) {
+                    // Capture date (if available)
+                    if let captureDates = captureDates,
+                       currentIndex < captureDates.count,
+                       let captureDate = captureDates[currentIndex] {
+                        Text(captureDate, style: .date)
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.8))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(Color.black.opacity(0.5))
+                                    .blur(radius: 10)
+                            )
+                            .shadow(radius: 2)
                     }
-                    .padding(.bottom, 20)
-                    .opacity(dragOffset == 0 ? 1 : 0)
+
+                    // Page indicators (max 10 dots)
+                    if !isZoomed && photoURLs.count > 1 {
+                        let maxDots = 10
+                        let showAllDots = photoURLs.count <= maxDots
+
+                        HStack(spacing: 8) {
+                            if showAllDots {
+                                // Show all dots if count is <= max
+                                ForEach(0..<photoURLs.count, id: \.self) { index in
+                                    Circle()
+                                        .fill(index == currentIndex ? Color.white : Color.white.opacity(0.5))
+                                        .frame(width: 8, height: 8)
+                                }
+                            } else {
+                                // Show limited dots with current position indicator
+                                ForEach(0..<maxDots, id: \.self) { index in
+                                    Circle()
+                                        .fill(Color.white.opacity(0.3))
+                                        .frame(width: 6, height: 6)
+                                }
+                                // Highlight current position proportionally
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 10, height: 10)
+                                    .offset(x: CGFloat(currentIndex) / CGFloat(photoURLs.count - 1) * CGFloat((maxDots - 1) * 14) - CGFloat((maxDots - 1) * 7))
+                            }
+                        }
+                        .padding(.bottom, 20)
+                    }
                 }
+                .opacity(dragOffset == 0 ? 1 : 0)
             }
         }
         .statusBar(hidden: true)

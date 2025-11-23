@@ -26,7 +26,10 @@ struct Photo: Identifiable, Codable {
     var imageURL: String
     var caption: String
     var uploadedBy: String
-    var createdAt: Date
+    var createdAt: Date // When uploaded
+    var capturedAt: Date? // Original date from image metadata (falls back to createdAt if unavailable)
+    var eventId: String? // Reference to calendar event if photo is linked to an event
+    var folderId: String? // Reference to custom folder if photo is in a folder
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -34,6 +37,36 @@ struct Photo: Identifiable, Codable {
         case caption
         case uploadedBy
         case createdAt
+        case capturedAt
+        case eventId
+        case folderId
+    }
+}
+
+// MARK: - Folder Model
+struct PhotoFolder: Identifiable, Codable {
+    @DocumentID var id: String?
+    var name: String
+    var createdAt: Date
+    var type: FolderType // System folders vs custom folders
+    var eventId: String? // If this is an event folder, link to the event
+    var isSpecialEvent: Bool? // If this is a special event folder
+
+    enum FolderType: String, Codable {
+        case allPhotos = "all_photos" // Virtual folder - shows all photos
+        case events = "events" // Virtual parent folder for all event folders
+        case specialEvents = "special_events" // Virtual parent folder for special event folders
+        case eventFolder = "event_folder" // Individual event folder
+        case custom = "custom" // User-created folder
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case createdAt
+        case type
+        case eventId
+        case isSpecialEvent
     }
 }
 
