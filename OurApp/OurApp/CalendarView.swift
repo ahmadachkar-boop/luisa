@@ -296,20 +296,108 @@ struct CalendarView: View {
         }
     }
 
+    private var backgroundGradient: some View {
+        LinearGradient(
+            colors: [
+                Color(red: 0.98, green: 0.96, blue: 1.0),
+                Color(red: 0.96, green: 0.94, blue: 0.99),
+                Color.white
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private var eventsListSection: some View {
+        if filteredEvents.isEmpty {
+            EmptyStateView(isUpcoming: selectedTab == 0)
+                .padding(.top, 60)
+        } else {
+            LazyVStack(spacing: 12) {
+                ForEach(filteredEvents) { event in
+                    ModernEventCard(
+                        event: event,
+                        onTap: {
+                            selectedEventForDetail = event
+                            expandedCardId = nil
+                        },
+                        onDelete: {
+                            Task {
+                                do {
+                                    try await viewModel.deleteEvent(event)
+                                } catch {
+                                    errorMessage = "Failed to delete event: \(error.localizedDescription)"
+                                    showError = true
+                                }
+                            }
+                        },
+                        expandedCardId: $expandedCardId
+                    )
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            Task {
+                                do {
+                                    try await viewModel.deleteEvent(event)
+                                } catch {
+                                    errorMessage = "Failed to delete event: \(error.localizedDescription)"
+                                    showError = true
+                                }
+                            }
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 100)
+        }
+    }
+
+    @ViewBuilder
+    private var toolDrawerOverlay: some View {
+        if showingToolDrawer {
+            Color.black.opacity(0.3)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.3)) {
+                        showingToolDrawer = false
+                    }
+                }
+
+            VStack(spacing: 0) {
+                ToolDrawerView(
+                    showingSearch: $showingSearch,
+                    showingFilterSheet: $showingFilterSheet,
+                    onNewPlan: {
+                        showingToolDrawer = false
+                        showingAddEvent = true
+                    },
+                    onRefresh: {
+                        Task {
+                            await refreshCalendar()
+                        }
+                    },
+                    onClose: {
+                        withAnimation(.spring(response: 0.3)) {
+                            showingToolDrawer = false
+                        }
+                    }
+                )
+                .padding(.top, 50)
+                .transition(.move(edge: .top).combined(with: .opacity))
+
+                Spacer()
+            }
+        }
+    }
+
     var body: some View {
         NavigationView {
             ZStack {
-                // Sophisticated background
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.98, green: 0.96, blue: 1.0),
-                        Color(red: 0.96, green: 0.94, blue: 0.99),
-                        Color.white
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
+                backgroundGradient
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
@@ -409,52 +497,7 @@ struct CalendarView: View {
                         }
 
                         // Events list
-                        let eventsToShow = filteredEvents
-
-                        if eventsToShow.isEmpty {
-                            EmptyStateView(isUpcoming: selectedTab == 0)
-                                .padding(.top, 60)
-                        } else {
-                            LazyVStack(spacing: 12) {
-                                ForEach(eventsToShow) { event in
-                                    ModernEventCard(
-                                        event: event,
-                                        onTap: {
-                                            selectedEventForDetail = event
-                                            // Close expansion when opening detail
-                                            expandedCardId = nil
-                                        },
-                                        onDelete: {
-                                            Task {
-                                                do {
-                                                    try await viewModel.deleteEvent(event)
-                                                } catch {
-                                                    errorMessage = "Failed to delete event: \(error.localizedDescription)"
-                                                    showError = true
-                                                }
-                                            }
-                                        },
-                                        expandedCardId: $expandedCardId
-                                    )
-                                    .contextMenu {
-                                        Button(role: .destructive) {
-                                            Task {
-                                                do {
-                                                    try await viewModel.deleteEvent(event)
-                                                } catch {
-                                                    errorMessage = "Failed to delete event: \(error.localizedDescription)"
-                                                    showError = true
-                                                }
-                                            }
-                                        } label: {
-                                            Label("Delete", systemImage: "trash")
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(.horizontal)
-                            .padding(.bottom, 100)
-                        }
+                        eventsListSection
                     }
                 }
                 .blur(radius: showingToolDrawer ? 3 : 0)
@@ -472,40 +515,7 @@ struct CalendarView: View {
                 )
 
                 // TOOL DRAWER OVERLAY
-                if showingToolDrawer {
-                    Color.black.opacity(0.3)
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.3)) {
-                                showingToolDrawer = false
-                            }
-                        }
-
-                    VStack(spacing: 0) {
-                        ToolDrawerView(
-                            showingSearch: $showingSearch,
-                            showingFilterSheet: $showingFilterSheet,
-                            onNewPlan: {
-                                showingToolDrawer = false
-                                showingAddEvent = true
-                            },
-                            onRefresh: {
-                                Task {
-                                    await refreshCalendar()
-                                }
-                            },
-                            onClose: {
-                                withAnimation(.spring(response: 0.3)) {
-                                    showingToolDrawer = false
-                                }
-                            }
-                        )
-                        .padding(.top, 50)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-
-                        Spacer()
-                    }
-                }
+                toolDrawerOverlay
             }
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView(initialDate: selectedDate) { event in
