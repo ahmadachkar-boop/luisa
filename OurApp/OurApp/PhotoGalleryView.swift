@@ -65,7 +65,7 @@ struct PhotoGalleryView: View {
             return formatter.string(from: dateToUse)
         }
 
-        // Sort by date (newest first)
+        // Sort months by date (newest first), and photos within each month by capture date (newest first)
         return grouped.sorted { first, second in
             let formatter = DateFormatter()
             formatter.dateFormat = "MMMM yyyy"
@@ -74,7 +74,15 @@ struct PhotoGalleryView: View {
                 return first.key > second.key
             }
             return date1 > date2
-        }.map { (key: $0.key, photos: $0.value) }
+        }.map { month in
+            // Sort photos within each month by capture date (newest first)
+            let sortedPhotos = month.value.sorted { photo1, photo2 in
+                let date1 = photo1.capturedAt ?? photo1.createdAt
+                let date2 = photo2.capturedAt ?? photo2.createdAt
+                return date1 > date2
+            }
+            return (key: month.key, photos: sortedPhotos)
+        }
     }
 
     // Flat array of photos in display order (newest months first, newest photos first within each month)
