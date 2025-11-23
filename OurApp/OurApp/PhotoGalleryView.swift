@@ -37,6 +37,7 @@ struct PhotoGalleryView: View {
     @State private var showingSaveError = false
     @State private var saveErrorMessage = ""
     @State private var savedPhotoCount = 0
+    @State private var showingToolDrawer = false
 
     let columns = [
         GridItem(.flexible(), spacing: 8),
@@ -171,7 +172,19 @@ struct PhotoGalleryView: View {
                     photoGridView
                 }
             }
-            .navigationTitle("Our Photos 💜")
+            .blur(radius: showingToolDrawer ? 3 : 0)
+            .allowsHitTesting(!showingToolDrawer)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 20)
+                    .onEnded { value in
+                        // Pull down from top to open drawer
+                        if value.translation.height > 50 && value.startLocation.y < 100 {
+                            withAnimation(.spring(response: 0.3)) {
+                                showingToolDrawer = true
+                            }
+                        }
+                    }
+            )
             .toolbar {
                 if selectionMode {
                     ToolbarItem(placement: .navigationBarLeading) {
@@ -195,19 +208,6 @@ struct PhotoGalleryView: View {
                                     .foregroundColor(.red)
                             }
                             .disabled(selectedPhotoIndices.isEmpty)
-                        }
-                    }
-                } else {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        if isUploading {
-                            ProgressView()
-                                .tint(Color(red: 0.8, green: 0.7, blue: 1.0))
-                        } else {
-                            PhotosPicker(selection: $selectedItems, matching: .images) {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.title2)
-                                    .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
-                            }
                         }
                     }
                 }
@@ -278,6 +278,34 @@ struct PhotoGalleryView: View {
                     },
                     captureDates: viewModel.photos.map { $0.capturedAt ?? $0.createdAt }
                 )
+            }
+
+            // TOOL DRAWER OVERLAY
+            if showingToolDrawer {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.3)) {
+                            showingToolDrawer = false
+                        }
+                    }
+
+                VStack(spacing: 0) {
+                    PhotoToolDrawerView(
+                        selectedItems: $selectedItems,
+                        isUploading: isUploading,
+                        selectionMode: $selectionMode,
+                        onClose: {
+                            withAnimation(.spring(response: 0.3)) {
+                                showingToolDrawer = false
+                            }
+                        }
+                    )
+                    .padding(.top, 50)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+
+                    Spacer()
+                }
             }
         }
     }
@@ -575,6 +603,101 @@ class PhotoGalleryViewModel: ObservableObject {
 
     func deletePhoto(_ photo: Photo) async throws {
         try await firebaseManager.deletePhoto(photo)
+    }
+}
+
+struct PhotoToolDrawerView: View {
+    @Binding var selectedItems: [PhotosPickerItem]
+    let isUploading: Bool
+    @Binding var selectionMode: Bool
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Drag handle
+            Capsule()
+                .fill(Color.white.opacity(0.5))
+                .frame(width: 40, height: 5)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+
+            VStack(spacing: 16) {
+                // ADD PHOTOS BUTTON (top priority)
+                PhotosPicker(selection: $selectedItems, matching: .images) {
+                    HStack {
+                        if isUploading {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.title2)
+                        }
+                        Text(isUploading ? "Uploading..." : "Add Photos")
+                            .font(.headline)
+                        Spacer()
+                    }
+                    .foregroundColor(.white)
+                    .padding()
+                    .background(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.7, green: 0.4, blue: 0.95),
+                                Color(red: 0.55, green: 0.3, blue: 0.85)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .cornerRadius(16)
+                }
+                .disabled(isUploading)
+
+                Divider()
+                    .background(Color.white.opacity(0.3))
+
+                // QUICK ACTIONS
+                HStack(spacing: 12) {
+                    // Select Photos button
+                    Button(action: {
+                        onClose()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            selectionMode = true
+                        }
+                    }) {
+                        HStack {
+                            Image(systemName: "checkmark.circle")
+                            Text("Select")
+                                .font(.subheadline)
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.white.opacity(0.15))
+                        .cornerRadius(12)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
+        }
+        .background(
+            ZStack {
+                // Frosted glass effect
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.95),
+                                Color(red: 0.5, green: 0.3, blue: 0.75).opacity(0.95)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .shadow(color: Color.black.opacity(0.3), radius: 20, x: 0, y: 10)
+            }
+        )
+        .padding(.horizontal, 16)
     }
 }
 
