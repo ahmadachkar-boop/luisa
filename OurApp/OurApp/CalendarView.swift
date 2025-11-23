@@ -172,6 +172,12 @@ struct CalendarView: View {
     @State private var showingToolDrawer = false
     @State private var expandedCardId: String? = nil
 
+    // Calendar grid ID to force refresh when events change
+    private var calendarGridId: String {
+        let eventIds = viewModel.events.compactMap { $0.id }.joined()
+        return "\(currentMonth.timeIntervalSince1970)-\(eventIds.hashValue)"
+    }
+
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
         let baseEvents: [CalendarEvent]
@@ -329,6 +335,7 @@ struct CalendarView: View {
                             selectedDay: $selectedDay,
                             selectedTab: $selectedTab
                         )
+                        .id(calendarGridId)
                         .padding(.horizontal)
                         .padding(.bottom, 16)
                         .gesture(
