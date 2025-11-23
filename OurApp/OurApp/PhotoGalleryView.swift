@@ -38,6 +38,10 @@ struct PhotoGalleryView: View {
     @State private var saveErrorMessage = ""
     @State private var savedPhotoCount = 0
     @State private var showingToolDrawer = false
+    @State private var currentFolderView: FolderViewType = .allPhotos
+    @State private var folderNavStack: [FolderViewType] = []
+    @State private var showingCreateFolder = false
+    @State private var newFolderName = ""
 
     let columns = [
         GridItem(.flexible(), spacing: 8),
@@ -45,9 +49,14 @@ struct PhotoGalleryView: View {
         GridItem(.flexible(), spacing: 8)
     ]
 
+    // Get photos for current folder view
+    private var filteredPhotos: [Photo] {
+        viewModel.photos(for: currentFolderView)
+    }
+
     // Group photos by month/year (using original capture date from metadata)
     private var photosByMonth: [(key: String, photos: [Photo])] {
-        let grouped = Dictionary(grouping: viewModel.photos) { photo -> String in
+        let grouped = Dictionary(grouping: filteredPhotos) { photo -> String in
             let formatter = DateFormatter()
             formatter.dateFormat = "MMMM yyyy"
             // Use capturedAt if available, otherwise fall back to createdAt
@@ -67,47 +76,194 @@ struct PhotoGalleryView: View {
         }.map { (key: $0.key, photos: $0.value) }
     }
 
-    private var photoGridView: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 20, pinnedViews: [.sectionHeaders]) {
-                ForEach(photosByMonth, id: \.key) { monthGroup in
-                    Section {
-                        LazyVGrid(columns: columns, spacing: 8) {
-                            ForEach(Array(monthGroup.photos.enumerated()), id: \.element.id) { _, photo in
-                                let globalIndex = viewModel.photos.firstIndex(where: { $0.id == photo.id }) ?? 0
+    // Current folder title for display
+    private var folderTitle: String {
+        switch currentFolderView {
+        case .allPhotos:
+            return "All Photos"
+        case .events:
+            return "Events"
+        case .specialEvents:
+            return "Special Events"
+        case .event(let eventId):
+            if let event = viewModel.events.first(where: { $0.id == eventId }) {
+                return event.title
+            }
+            return "Event"
+        case .custom(let folderId):
+            if let folder = viewModel.folders.first(where: { $0.id == folderId }) {
+                return folder.name
+            }
+            return "Folder"
+        }
+    }
 
-                                PhotoGridCell(
-                                    photo: photo,
-                                    index: globalIndex,
-                                    selectionMode: selectionMode,
-                                    isSelected: selectedPhotoIndices.contains(globalIndex),
-                                    onTap: {
-                                        if selectionMode {
-                                            if selectedPhotoIndices.contains(globalIndex) {
-                                                selectedPhotoIndices.remove(globalIndex)
-                                            } else {
-                                                selectedPhotoIndices.insert(globalIndex)
-                                            }
-                                        } else {
-                                            selectedPhotoIndex = PhotoIndex(value: globalIndex)
-                                        }
-                                    },
-                                    onLongPress: {
-                                        if !selectionMode {
-                                            selectionMode = true
-                                            selectedPhotoIndices.insert(globalIndex)
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                    } header: {
-                        monthHeaderView(monthGroup: monthGroup)
-                    }
+    private var contentView: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                // Folder navigation bar
+                folderNavigationBar
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+
+                // Show folders or photos based on current view
+                if currentFolderView == .events || currentFolderView == .specialEvents {
+                    folderListView
+                } else {
+                    photoGridView
                 }
             }
-            .padding(.top, 8)
+        }
+    }
+
+    private var folderNavigationBar: some View {
+        HStack(spacing: 12) {
+            // Back button if we're in a subfolder
+            if currentFolderView != .allPhotos {
+                Button(action: {
+                    currentFolderView = folderNavStack.popLast() ?? .allPhotos
+                }) {
+                    Image(systemName: "chevron.left")
+                        .font(.title3)
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+            }
+
+            // Current folder title
+            Text(folderTitle)
+                .font(.title2)
+                .fontWeight(.bold)
+                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+            Spacer()
+
+            // Folder menu button
+            Menu {
+                Button(action: { currentFolderView = .allPhotos; folderNavStack.removeAll() }) {
+                    Label("All Photos", systemImage: "photo.on.rectangle")
+                }
+                Button(action: { navigateToFolder(.events) }) {
+                    Label("Events", systemImage: "calendar")
+                }
+                Button(action: { navigateToFolder(.specialEvents) }) {
+                    Label("Special Events", systemImage: "star.circle")
+                }
+
+                if !viewModel.folders.filter({ $0.type == .custom }).isEmpty {
+                    Divider()
+                    ForEach(viewModel.folders.filter { $0.type == .custom }, id: \.id) { folder in
+                        Button(action: { navigateToFolder(.custom(folder.id!)) }) {
+                            Label(folder.name, systemImage: "folder")
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "folder.badge.gearshape")
+                    .font(.title3)
+                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+            }
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white.opacity(0.9))
+                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+        )
+    }
+
+    private var folderListView: some View {
+        LazyVStack(spacing: 12) {
+            let folders = currentFolderView == .events ?
+                viewModel.eventFolders(specialOnly: false) :
+                viewModel.eventFolders(specialOnly: true)
+
+            ForEach(folders, id: \.event.id) { eventData in
+                Button(action: {
+                    if let eventId = eventData.event.id {
+                        navigateToFolder(.event(eventId))
+                    }
+                }) {
+                    HStack(spacing: 12) {
+                        Image(systemName: eventData.event.isSpecial ? "star.circle.fill" : "calendar.circle.fill")
+                            .font(.title)
+                            .foregroundColor(Color(red: 0.7, green: 0.5, blue: 0.9))
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(eventData.event.title)
+                                .font(.headline)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                            Text("\(eventData.photoCount) photo\(eventData.photoCount == 1 ? "" : "s")")
+                                .font(.caption)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white)
+                            .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .padding(.horizontal)
+        .padding(.top, 12)
+    }
+
+    private var photoGridView: some View {
+        LazyVStack(alignment: .leading, spacing: 20, pinnedViews: [.sectionHeaders]) {
+            ForEach(photosByMonth, id: \.key) { monthGroup in
+                Section {
+                    LazyVGrid(columns: columns, spacing: 8) {
+                        ForEach(Array(monthGroup.photos.enumerated()), id: \.element.id) { _, photo in
+                            let globalIndex = viewModel.photos.firstIndex(where: { $0.id == photo.id }) ?? 0
+
+                            PhotoGridCell(
+                                photo: photo,
+                                index: globalIndex,
+                                selectionMode: selectionMode,
+                                isSelected: selectedPhotoIndices.contains(globalIndex),
+                                onTap: {
+                                    if selectionMode {
+                                        if selectedPhotoIndices.contains(globalIndex) {
+                                            selectedPhotoIndices.remove(globalIndex)
+                                        } else {
+                                            selectedPhotoIndices.insert(globalIndex)
+                                        }
+                                    } else {
+                                        selectedPhotoIndex = PhotoIndex(value: globalIndex)
+                                    }
+                                },
+                                onLongPress: {
+                                    if !selectionMode {
+                                        selectionMode = true
+                                        selectedPhotoIndices.insert(globalIndex)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                } header: {
+                    monthHeaderView(monthGroup: monthGroup)
+                }
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    private func navigateToFolder(_ folder: FolderViewType) {
+        folderNavStack.append(currentFolderView)
+        withAnimation(.easeInOut(duration: 0.3)) {
+            currentFolderView = folder
         }
     }
 
@@ -154,7 +310,7 @@ struct PhotoGalleryView: View {
                     )
                     .ignoresSafeArea()
 
-                    if viewModel.photos.isEmpty {
+                    if viewModel.photos.isEmpty && currentFolderView == .allPhotos {
                         VStack(spacing: 20) {
                             Image(systemName: "heart.text.square.fill")
                                 .font(.system(size: 80))
@@ -170,7 +326,7 @@ struct PhotoGalleryView: View {
                                 .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
                         }
                     } else {
-                        photoGridView
+                        contentView
                     }
                 }
                 .blur(radius: showingToolDrawer ? 3 : 0)
@@ -297,6 +453,7 @@ struct PhotoGalleryView: View {
                         selectedItems: $selectedItems,
                         isUploading: isUploading,
                         selectionMode: $selectionMode,
+                        showingCreateFolder: $showingCreateFolder,
                         onClose: {
                             withAnimation(.spring(response: 0.3)) {
                                 showingToolDrawer = false
@@ -309,6 +466,25 @@ struct PhotoGalleryView: View {
                     Spacer()
                 }
             }
+        }
+        .alert("Create Folder", isPresented: $showingCreateFolder) {
+            TextField("Folder Name", text: $newFolderName)
+            Button("Cancel", role: .cancel) {
+                newFolderName = ""
+            }
+            Button("Create") {
+                Task {
+                    do {
+                        _ = try await viewModel.createFolder(name: newFolderName, type: .custom)
+                        newFolderName = ""
+                    } catch {
+                        errorMessage = "Failed to create folder: \(error.localizedDescription)"
+                        showError = true
+                    }
+                }
+            }
+        } message: {
+            Text("Enter a name for your new folder")
         }
     }
 
@@ -577,11 +753,15 @@ struct PhotoGridCell: View {
 
 class PhotoGalleryViewModel: ObservableObject {
     @Published var photos: [Photo] = []
+    @Published var folders: [PhotoFolder] = []
+    @Published var events: [CalendarEvent] = []
 
     private let firebaseManager = FirebaseManager.shared
 
     init() {
         loadPhotos()
+        loadFolders()
+        loadEvents()
     }
 
     func loadPhotos() {
@@ -594,24 +774,97 @@ class PhotoGalleryViewModel: ObservableObject {
         }
     }
 
-    func uploadPhoto(imageData: Data, capturedAt: Date? = nil) async throws {
+    func loadFolders() {
+        Task {
+            for try await folders in firebaseManager.getFolders() {
+                await MainActor.run {
+                    self.folders = folders
+                }
+            }
+        }
+    }
+
+    func loadEvents() {
+        Task {
+            for try await events in firebaseManager.getCalendarEvents() {
+                await MainActor.run {
+                    self.events = events
+                }
+            }
+        }
+    }
+
+    func uploadPhoto(imageData: Data, capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws {
         _ = try await firebaseManager.uploadPhoto(
             imageData: imageData,
             caption: "",
             uploadedBy: "You",
-            capturedAt: capturedAt
+            capturedAt: capturedAt,
+            eventId: eventId,
+            folderId: folderId
         )
     }
 
     func deletePhoto(_ photo: Photo) async throws {
         try await firebaseManager.deletePhoto(photo)
     }
+
+    func createFolder(name: String, type: PhotoFolder.FolderType) async throws -> String {
+        return try await firebaseManager.createFolder(name: name, type: type)
+    }
+
+    func deleteFolder(_ folder: PhotoFolder) async throws {
+        try await firebaseManager.deleteFolder(folder)
+    }
+
+    // Get photos for a specific folder
+    func photos(for folderType: FolderViewType) -> [Photo] {
+        switch folderType {
+        case .allPhotos:
+            return photos
+        case .events:
+            return photos.filter { $0.eventId != nil }
+        case .specialEvents:
+            return photos.filter { photo in
+                guard let eventId = photo.eventId else { return false }
+                return events.first(where: { $0.id == eventId })?.isSpecial == true
+            }
+        case .event(let eventId):
+            return photos.filter { $0.eventId == eventId }
+        case .custom(let folderId):
+            return photos.filter { $0.folderId == folderId }
+        }
+    }
+
+    // Get event folders (auto-created from calendar events with photos)
+    func eventFolders(specialOnly: Bool = false) -> [(event: CalendarEvent, photoCount: Int)] {
+        let relevantEvents = events.filter { event in
+            guard let eventId = event.id else { return false }
+            let hasPhotos = photos.contains(where: { $0.eventId == eventId })
+            return hasPhotos && (!specialOnly || event.isSpecial)
+        }
+
+        return relevantEvents.map { event in
+            let count = photos.filter { $0.eventId == event.id }.count
+            return (event: event, photoCount: count)
+        }
+    }
+}
+
+// Folder view types for navigation
+enum FolderViewType: Hashable {
+    case allPhotos
+    case events // Parent category
+    case specialEvents // Parent category
+    case event(String) // Specific event folder
+    case custom(String) // Custom folder
 }
 
 struct PhotoToolDrawerView: View {
     @Binding var selectedItems: [PhotosPickerItem]
     let isUploading: Bool
     @Binding var selectionMode: Bool
+    @Binding var showingCreateFolder: Bool
     let onClose: () -> Void
 
     var body: some View {
@@ -669,6 +922,25 @@ struct PhotoToolDrawerView: View {
                         HStack {
                             Image(systemName: "checkmark.circle")
                             Text("Select")
+                                .font(.subheadline)
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.white.opacity(0.15))
+                        .cornerRadius(12)
+                    }
+
+                    // Create Folder button
+                    Button(action: {
+                        onClose()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showingCreateFolder = true
+                        }
+                    }) {
+                        HStack {
+                            Image(systemName: "folder.badge.plus")
+                            Text("Folder")
                                 .font(.subheadline)
                         }
                         .foregroundColor(.white)
