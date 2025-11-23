@@ -1189,9 +1189,15 @@ struct EventDetailView: View {
                     onDismiss: { selectedPhotoIndex = nil },
                     onDelete: { indexToDelete in
                         if indexToDelete < currentEvent.photoURLs.count {
+                            let photoURLToDelete = currentEvent.photoURLs[indexToDelete]
                             var updatedPhotoURLs = currentEvent.photoURLs
                             updatedPhotoURLs.remove(at: indexToDelete)
                             Task {
+                                // Delete the photo document from Firestore and Storage
+                                // This ensures proper cross-tab synchronization
+                                try? await FirebaseManager.shared.deletePhotoByURL(photoURLToDelete)
+
+                                // Update the event with the new photoURLs array
                                 var updatedEvent = currentEvent
                                 updatedEvent.photoURLs = updatedPhotoURLs
                                 try? await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
