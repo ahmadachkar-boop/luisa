@@ -174,16 +174,31 @@ struct CalendarView: View {
 
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
-        // When viewing a past month, only show memories from that month
         let baseEvents: [CalendarEvent]
+
         if isMonthInPast(currentMonth) {
-            // Filter past events to only show events from the selected month
+            // Past month: only show memories from that specific month
             baseEvents = viewModel.pastEvents.filter { event in
                 Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
             }
+        } else if isMonthInFuture(currentMonth) {
+            // Future month: only show upcoming events from that specific month
+            baseEvents = viewModel.upcomingEvents.filter { event in
+                Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
+            }
         } else {
-            // For current/future months, use tab selection
-            baseEvents = selectedTab == 0 ? viewModel.upcomingEvents : viewModel.pastEvents
+            // Current month: filter both upcoming and memories to current month only
+            if selectedTab == 0 {
+                // Upcoming tab: filter to current month
+                baseEvents = viewModel.upcomingEvents.filter { event in
+                    Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
+                }
+            } else {
+                // Memories tab: filter to current month
+                baseEvents = viewModel.pastEvents.filter { event in
+                    Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
+                }
+            }
         }
 
         var filtered = baseEvents
@@ -231,31 +246,36 @@ struct CalendarView: View {
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
                         // Upcoming Events Banner (only show when on current/future month)
-                        if !isMonthInPast(currentMonth) && !viewModel.upcomingEvents.isEmpty {
-                            let nextEvent = viewModel.upcomingEvents.first!
-                            HStack(spacing: 12) {
-                                Image(systemName: nextEvent.isSpecial ? "star.fill" : "calendar")
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(.white)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(nextEvent.title)
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundColor(.white)
-                                        .lineLimit(1)
-                                    Text(countdownText(for: nextEvent))
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.white.opacity(0.9))
-                                }
-
-                                Spacer()
-
-                                if viewModel.upcomingEvents.count > 1 {
-                                    Text("+\(viewModel.upcomingEvents.count - 1)")
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(.white.opacity(0.8))
-                                }
+                        if !isMonthInPast(currentMonth) {
+                            let monthEvents = viewModel.upcomingEvents.filter { event in
+                                Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
                             }
+
+                            if !monthEvents.isEmpty {
+                                let nextEvent = monthEvents.first!
+                                HStack(spacing: 12) {
+                                    Image(systemName: nextEvent.isSpecial ? "star.fill" : "calendar")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(.white)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(nextEvent.title)
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(.white)
+                                            .lineLimit(1)
+                                        Text(countdownText(for: nextEvent))
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.white.opacity(0.9))
+                                    }
+
+                                    Spacer()
+
+                                    if monthEvents.count > 1 {
+                                        Text("+\(monthEvents.count - 1)")
+                                            .font(.system(size: 11, weight: .medium))
+                                            .foregroundColor(.white.opacity(0.8))
+                                    }
+                                }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
                             .background(
@@ -275,6 +295,7 @@ struct CalendarView: View {
                             .padding(.bottom, 8)
                             .onTapGesture {
                                 selectedEventForDetail = nextEvent
+                            }
                             }
                         }
 
@@ -343,8 +364,8 @@ struct CalendarView: View {
                             .padding(.bottom, 16)
                         }
 
-                        // Custom Tab Selector (only show for current/future months)
-                        if !isMonthInPast(currentMonth) {
+                        // Custom Tab Selector (only show for current month)
+                        if !isMonthInPast(currentMonth) && !isMonthInFuture(currentMonth) {
                             ModernTabSelector(selectedTab: $selectedTab)
                                 .padding(.horizontal)
                                 .padding(.bottom, 12)
@@ -564,6 +585,13 @@ struct CalendarView: View {
         let currentMonthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: now))!
         let selectedMonthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: date))!
         return selectedMonthStart < currentMonthStart
+    }
+
+    func isMonthInFuture(_ date: Date) -> Bool {
+        let now = Date()
+        let currentMonthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: now))!
+        let selectedMonthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: date))!
+        return selectedMonthStart > currentMonthStart
     }
 
     func countdownText(for event: CalendarEvent) -> String {
