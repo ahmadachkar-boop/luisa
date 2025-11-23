@@ -173,10 +173,10 @@ struct CalendarView: View {
     @State private var showingToolDrawer = false
     @State private var expandedCardId: String? = nil
 
-    // Calendar grid ID to force refresh when events change
+    // Calendar grid ID to force refresh only when month changes
+    // Don't include events to avoid recreating when switching tabs
     private var calendarGridId: String {
-        let eventIds = viewModel.events.compactMap { $0.id }.joined()
-        return "\(currentMonth.timeIntervalSince1970)-\(eventIds.hashValue)"
+        return "\(currentMonth.timeIntervalSince1970)"
     }
 
     // Memoized filtered events - computed only when dependencies change
@@ -2697,22 +2697,15 @@ struct MonthSummaryCard: View {
                                         image
                                             .resizable()
                                             .scaledToFill()
-                                            .frame(maxWidth: .infinity)
-                                            .frame(height: 140)
-                                            .clipped()
                                     } else {
                                         Color.gray.opacity(0.2)
-                                            .frame(maxWidth: .infinity)
-                                            .frame(height: 140)
                                             .overlay(ProgressView())
                                     }
                                 }
-                                .aspectRatio(1, contentMode: .fill)
+                                .frame(height: 140)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                             .buttonStyle(PlainButtonStyle())
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 140)
                             .contentShape(Rectangle())
                             .rotation3DEffect(
                                 .degrees(animatingPosition == index ? 180 : 0),
