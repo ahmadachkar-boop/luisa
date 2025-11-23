@@ -42,6 +42,7 @@ struct PhotoGalleryView: View {
     @State private var folderNavStack: [FolderViewType] = []
     @State private var showingCreateFolder = false
     @State private var newFolderName = ""
+    @State private var showingFoldersOverview = false
 
     let columns = [
         GridItem(.flexible(), spacing: 8),
@@ -120,14 +121,24 @@ struct PhotoGalleryView: View {
         .simultaneousGesture(
             DragGesture(minimumDistance: 30)
                 .onEnded { value in
-                    // Swipe from left to right (back gesture)
                     let horizontalAmount = value.translation.width
                     let verticalAmount = abs(value.translation.height)
 
-                    // Only trigger if it's more horizontal than vertical and swipes right
-                    if horizontalAmount > 50 && horizontalAmount > verticalAmount * 2 && currentFolderView != .allPhotos {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            currentFolderView = folderNavStack.popLast() ?? .allPhotos
+                    // Only trigger if it's more horizontal than vertical
+                    if abs(horizontalAmount) > 50 && abs(horizontalAmount) > verticalAmount * 2 {
+                        if horizontalAmount > 0 {
+                            // Swipe right
+                            if currentFolderView == .allPhotos {
+                                // Show folders overview
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    showingFoldersOverview = true
+                                }
+                            } else {
+                                // Navigate back
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    currentFolderView = folderNavStack.popLast() ?? .allPhotos
+                                }
+                            }
                         }
                     }
                 }
@@ -236,6 +247,115 @@ struct PhotoGalleryView: View {
         .padding(.top, 12)
     }
 
+    private var foldersOverviewView: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                // Header
+                HStack {
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showingFoldersOverview = false
+                        }
+                    }) {
+                        Image(systemName: "chevron.left")
+                            .font(.title3)
+                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                    }
+
+                    Text("Folders")
+                        .font(.title)
+                        .fontWeight(.bold)
+                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .padding(.top, 8)
+
+                // All Photos
+                FolderCard(
+                    title: "All Photos",
+                    icon: "photo.on.rectangle",
+                    count: viewModel.photos.count,
+                    color: Color(red: 0.7, green: 0.5, blue: 0.9)
+                ) {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        showingFoldersOverview = false
+                    }
+                }
+
+                // Events
+                let eventPhotosCount = viewModel.photos.filter { $0.eventId != nil }.count
+                if eventPhotosCount > 0 {
+                    FolderCard(
+                        title: "Events",
+                        icon: "calendar",
+                        count: eventPhotosCount,
+                        color: Color(red: 0.6, green: 0.4, blue: 0.85)
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showingFoldersOverview = false
+                            navigateToFolder(.events)
+                        }
+                    }
+                }
+
+                // Special Events
+                let specialEventPhotosCount = viewModel.photos.filter { photo in
+                    guard let eventId = photo.eventId else { return false }
+                    return viewModel.events.first(where: { $0.id == eventId })?.isSpecial == true
+                }.count
+                if specialEventPhotosCount > 0 {
+                    FolderCard(
+                        title: "Special Events",
+                        icon: "star.circle",
+                        count: specialEventPhotosCount,
+                        color: Color(red: 0.8, green: 0.6, blue: 0.95)
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showingFoldersOverview = false
+                            navigateToFolder(.specialEvents)
+                        }
+                    }
+                }
+
+                // Custom Folders
+                let customFolders = viewModel.folders.filter { $0.type == .custom }
+                if !customFolders.isEmpty {
+                    Divider()
+                        .padding(.horizontal)
+
+                    Text("Custom Folders")
+                        .font(.headline)
+                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+
+                    ForEach(customFolders, id: \.id) { folder in
+                        let folderPhotosCount = viewModel.photos.filter { $0.folderId == folder.id }.count
+                        FolderCard(
+                            title: folder.name,
+                            icon: "folder.fill",
+                            count: folderPhotosCount,
+                            color: Color(red: 0.65, green: 0.45, blue: 0.8)
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                showingFoldersOverview = false
+                                if let folderId = folder.id {
+                                    navigateToFolder(.custom(folderId))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.vertical)
+        }
+        .safeAreaInset(edge: .top) {
+            Color.clear.frame(height: 0)
+        }
+    }
+
     private var photoGridView: some View {
         LazyVStack(alignment: .leading, spacing: 20, pinnedViews: []) {
             ForEach(photosByMonth, id: \.key) { monthGroup in
@@ -302,16 +422,7 @@ struct PhotoGalleryView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(red: 0.95, green: 0.9, blue: 1.0).opacity(0.95),
-                    Color.white.opacity(0.95)
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-        )
+        .background(Color.white.opacity(0.8))
     }
 
     var body: some View {
@@ -329,7 +440,9 @@ struct PhotoGalleryView: View {
                     )
                     .ignoresSafeArea()
 
-                    if viewModel.photos.isEmpty && currentFolderView == .allPhotos {
+                    if showingFoldersOverview {
+                        foldersOverviewView
+                    } else if viewModel.photos.isEmpty && currentFolderView == .allPhotos {
                         VStack(spacing: 20) {
                             Image(systemName: "heart.text.square.fill")
                                 .font(.system(size: 80))
@@ -767,6 +880,53 @@ struct PhotoGridCell: View {
                     .allowsHitTesting(false)
             }
         }
+    }
+}
+
+struct FolderCard: View {
+    let title: String
+    let icon: String
+    let count: Int
+    let color: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 16) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(color.opacity(0.15))
+                        .frame(width: 60, height: 60)
+
+                    Image(systemName: icon)
+                        .font(.system(size: 28))
+                        .foregroundColor(color)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                    Text("\(count) photo\(count == 1 ? "" : "s")")
+                        .font(.subheadline)
+                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.white)
+                    .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
+            )
+            .padding(.horizontal)
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 
