@@ -173,10 +173,14 @@ struct CalendarView: View {
     @State private var showingToolDrawer = false
     @State private var expandedCardId: String? = nil
 
-    // Calendar grid ID to force refresh only when month changes
-    // Don't include events to avoid recreating when switching tabs
+    // Calendar grid ID to force refresh when month changes or events for that month change
+    // Use event count for current month to avoid recreating when switching tabs
+    // (tab switches don't change the event count for the displayed month)
     private var calendarGridId: String {
-        return "\(currentMonth.timeIntervalSince1970)"
+        let monthEvents = viewModel.events.filter { event in
+            Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
+        }
+        return "\(currentMonth.timeIntervalSince1970)-\(monthEvents.count)"
     }
 
     // Memoized filtered events - computed only when dependencies change
@@ -2431,19 +2435,22 @@ struct CalendarGridView: View {
     }
 
     func handleDayTap(date: Date) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-            if selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!) {
-                selectedDay = nil // Deselect if tapping same day
-            } else {
-                selectedDay = date
+        // Set selection immediately without animation to ensure state is updated
+        if selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!) {
+            selectedDay = nil // Deselect if tapping same day
+        } else {
+            selectedDay = date
 
-                // Auto-switch tabs based on date
-                let isPastDate = date < Date()
-                if isPastDate && selectedTab == 0 {
-                    // Switch to Memories tab for past dates
+            // Auto-switch tabs based on date
+            let isPastDate = date < Date()
+            if isPastDate && selectedTab == 0 {
+                // Switch to Memories tab for past dates
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     selectedTab = 1
-                } else if !isPastDate && selectedTab == 1 {
-                    // Switch to Upcoming tab for future dates
+                }
+            } else if !isPastDate && selectedTab == 1 {
+                // Switch to Upcoming tab for future dates
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     selectedTab = 0
                 }
             }

@@ -77,6 +77,11 @@ struct PhotoGalleryView: View {
         }.map { (key: $0.key, photos: $0.value) }
     }
 
+    // Flat array of photos in display order (newest months first, newest photos first within each month)
+    private var photosInDisplayOrder: [Photo] {
+        photosByMonth.flatMap { $0.photos }
+    }
+
     // Current folder title for display
     private var folderTitle: String {
         switch currentFolderView {
@@ -389,28 +394,28 @@ struct PhotoGalleryView: View {
 
                     LazyVGrid(columns: columns, spacing: 8) {
                         ForEach(Array(monthGroup.photos.enumerated()), id: \.element.id) { _, photo in
-                            let globalIndex = viewModel.photos.firstIndex(where: { $0.id == photo.id }) ?? 0
+                            let displayIndex = photosInDisplayOrder.firstIndex(where: { $0.id == photo.id }) ?? 0
 
                             PhotoGridCell(
                                 photo: photo,
-                                index: globalIndex,
+                                index: displayIndex,
                                 selectionMode: selectionMode,
-                                isSelected: selectedPhotoIndices.contains(globalIndex),
+                                isSelected: selectedPhotoIndices.contains(displayIndex),
                                 onTap: {
                                     if selectionMode {
-                                        if selectedPhotoIndices.contains(globalIndex) {
-                                            selectedPhotoIndices.remove(globalIndex)
+                                        if selectedPhotoIndices.contains(displayIndex) {
+                                            selectedPhotoIndices.remove(displayIndex)
                                         } else {
-                                            selectedPhotoIndices.insert(globalIndex)
+                                            selectedPhotoIndices.insert(displayIndex)
                                         }
                                     } else {
-                                        selectedPhotoIndex = PhotoIndex(value: globalIndex)
+                                        selectedPhotoIndex = PhotoIndex(value: displayIndex)
                                     }
                                 },
                                 onLongPress: {
                                     if !selectionMode {
                                         selectionMode = true
-                                        selectedPhotoIndices.insert(globalIndex)
+                                        selectedPhotoIndices.insert(displayIndex)
                                     }
                                 }
                             )
@@ -575,18 +580,18 @@ struct PhotoGalleryView: View {
             }
             .fullScreenCover(item: $selectedPhotoIndex) { photoIndex in
                 FullScreenPhotoViewer(
-                    photoURLs: viewModel.photos.map { $0.imageURL },
+                    photoURLs: photosInDisplayOrder.map { $0.imageURL },
                     initialIndex: photoIndex.value,
                     onDismiss: { selectedPhotoIndex = nil },
                     onDelete: { indexToDelete in
-                        if indexToDelete < viewModel.photos.count {
-                            let photoToDelete = viewModel.photos[indexToDelete]
+                        if indexToDelete < photosInDisplayOrder.count {
+                            let photoToDelete = photosInDisplayOrder[indexToDelete]
                             Task {
                                 try? await viewModel.deletePhoto(photoToDelete)
                             }
                         }
                     },
-                    captureDates: viewModel.photos.map { $0.capturedAt ?? $0.createdAt }
+                    captureDates: photosInDisplayOrder.map { $0.capturedAt ?? $0.createdAt }
                 )
             }
             }
@@ -651,8 +656,8 @@ struct PhotoGalleryView: View {
             var errorOccurred = false
 
             for index in selectedPhotoIndices.sorted() {
-                guard index < viewModel.photos.count else { continue }
-                let photo = viewModel.photos[index]
+                guard index < photosInDisplayOrder.count else { continue }
+                let photo = photosInDisplayOrder[index]
 
                 // Load image
                 if let cachedImage = ImageCache.shared.get(forKey: photo.imageURL) {
@@ -714,8 +719,8 @@ struct PhotoGalleryView: View {
 
         Task {
             for index in selectedPhotoIndices.sorted().reversed() {
-                guard index < viewModel.photos.count else { continue }
-                let photo = viewModel.photos[index]
+                guard index < photosInDisplayOrder.count else { continue }
+                let photo = photosInDisplayOrder[index]
                 try? await viewModel.deletePhoto(photo)
             }
 
