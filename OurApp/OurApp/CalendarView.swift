@@ -486,8 +486,6 @@ struct CalendarView: View {
                     }
                 }
             }
-            .navigationBarHidden(true) // Hide navigation bar to allow banner at absolute top
-            .statusBar(hidden: true) // Hide status bar to use that space for Dynamic Island banner
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView(initialDate: selectedDate) { event in
                     do {
