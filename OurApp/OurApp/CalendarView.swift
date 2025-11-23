@@ -173,14 +173,10 @@ struct CalendarView: View {
     @State private var showingToolDrawer = false
     @State private var expandedCardId: String? = nil
 
-    // Calendar grid ID to force refresh when month changes or events for that month change
-    // Use event count for current month to avoid recreating when switching tabs
-    // (tab switches don't change the event count for the displayed month)
+    // Calendar grid ID - only refresh when month changes
+    // Events parameter will trigger natural SwiftUI updates without ID change
     private var calendarGridId: String {
-        let monthEvents = viewModel.events.filter { event in
-            Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
-        }
-        return "\(currentMonth.timeIntervalSince1970)-\(monthEvents.count)"
+        return "\(currentMonth.timeIntervalSince1970)"
     }
 
     // Memoized filtered events - computed only when dependencies change
