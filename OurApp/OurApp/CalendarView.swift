@@ -3,6 +3,7 @@ import PhotosUI
 import MapKit
 import WeatherKit
 import CoreLocation
+import ImageIO
 
 // MARK: - Timeout Helper
 struct TimeoutError: Error {}
@@ -22,6 +23,20 @@ func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws 
         group.cancelAll()
         return result
     }
+}
+
+// MARK: - EXIF Metadata Helper
+func extractCaptureDate(from imageData: Data) -> Date? {
+    guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, nil),
+          let imageProperties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [String: Any],
+          let exifDict = imageProperties[kCGImagePropertyExifDictionary as String] as? [String: Any],
+          let dateTimeOriginal = exifDict[kCGImagePropertyExifDateTimeOriginal as String] as? String else {
+        return nil
+    }
+
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+    return formatter.date(from: dateTimeOriginal)
 }
 
 // MARK: - Design Constants
@@ -1671,6 +1686,14 @@ struct EventDetailView: View {
 
                 print("🔵 [UPLOAD] Processing image: \(uiImage.size)")
 
+                // Extract original capture date from EXIF metadata
+                let capturedAt = extractCaptureDate(from: data)
+                if let capturedAt = capturedAt {
+                    print("🔵 [UPLOAD] Extracted capture date: \(capturedAt)")
+                } else {
+                    print("🔵 [UPLOAD] No EXIF capture date found")
+                }
+
                 // Resize and compress
                 let resized = uiImage.resized(toMaxDimension: 1920)
                 print("🔵 [UPLOAD] Resized to: \(resized.size)")
@@ -1689,7 +1712,7 @@ struct EventDetailView: View {
                     imageData: compressedData,
                     caption: "",
                     uploadedBy: "You",
-                    capturedAt: nil,
+                    capturedAt: capturedAt,
                     eventId: currentEvent.id,
                     folderId: nil
                 )
