@@ -460,6 +460,7 @@ struct CalendarView: View {
                             recapPhotoData = RecapPhotoData(photoURLs: photoURLs, initialIndex: index)
                         }
                     )
+                    .id(currentMonth)
                     .padding(.horizontal)
                     .padding(.bottom, 16)
                 }
@@ -2831,13 +2832,6 @@ struct MonthSummaryCard: View {
             // Initialize photos when card is expanded
             if newValue && displayedPhotoURLs.isEmpty {
                 initializePhotos()
-            }
-        }
-        .onChange(of: month) { oldValue, newValue in
-            // Reinitialize photos when month changes
-            initializePhotos()
-            if isExpanded {
-                startShuffleTimer()
             }
         }
         .sheet(isPresented: $showingAllPhotos) {
