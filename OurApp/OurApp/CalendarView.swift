@@ -1064,7 +1064,7 @@ struct ModernEventCard: View {
         )
         .shadow(color: event.isSpecial ? Color.purple.opacity(0.15) : Color.black.opacity(0.06),
                 radius: 15, x: 0, y: 4)
-        .contentShape(Rectangle())
+        .contentShape(RoundedRectangle(cornerRadius: 24))
         .onTapGesture {
             // Toggle expansion state
             withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
@@ -1077,6 +1077,7 @@ struct ModernEventCard: View {
                 }
             }
         }
+        .id(event.id) // Ensure stable identity for lazy loading
     }
 }
 
