@@ -85,6 +85,26 @@ struct PhotoGalleryView: View {
         }
     }
 
+    // Group photos by date within each month
+    private func photosByDate(for monthPhotos: [Photo]) -> [(key: String, photos: [Photo])] {
+        let grouped = Dictionary(grouping: monthPhotos) { photo -> String in
+            let formatter = DateFormatter()
+            formatter.dateFormat = "EEEE, MMMM d" // "Monday, January 15"
+            let dateToUse = photo.capturedAt ?? photo.createdAt
+            return formatter.string(from: dateToUse)
+        }
+
+        return grouped.sorted { first, second in
+            let formatter = DateFormatter()
+            formatter.dateFormat = "EEEE, MMMM d"
+            guard let date1 = formatter.date(from: first.key),
+                  let date2 = formatter.date(from: second.key) else {
+                return first.key > second.key
+            }
+            return date1 > date2
+        }
+    }
+
     // Flat array of photos in display order (newest first)
     private var photosInDisplayOrder: [Photo] {
         photosByMonth.flatMap { $0.photos }
@@ -397,40 +417,53 @@ struct PhotoGalleryView: View {
         LazyVStack(alignment: .leading, spacing: 20, pinnedViews: []) {
             ForEach(photosByMonth, id: \.key) { monthGroup in
                 Section {
-                    // Month header (not pinned anymore)
+                    // Month header (prominent)
                     monthHeaderView(monthGroup: monthGroup)
 
-                    LazyVGrid(columns: columns, spacing: 8) {
-                        ForEach(Array(monthGroup.photos.enumerated()), id: \.element.id) { _, photo in
-                            let displayIndex = photosInDisplayOrder.firstIndex(where: { $0.id == photo.id }) ?? 0
+                    // Group by date within this month
+                    let dateGroups = photosByDate(for: monthGroup.photos)
 
-                            PhotoGridCell(
-                                photo: photo,
-                                index: displayIndex,
-                                selectionMode: selectionMode,
-                                isSelected: selectedPhotoIndices.contains(displayIndex),
-                                onTap: {
-                                    if selectionMode {
-                                        if selectedPhotoIndices.contains(displayIndex) {
-                                            selectedPhotoIndices.remove(displayIndex)
-                                        } else {
-                                            selectedPhotoIndices.insert(displayIndex)
+                    ForEach(dateGroups, id: \.key) { dateGroup in
+                        VStack(alignment: .leading, spacing: 8) {
+                            // Subtle date header
+                            Text(dateGroup.key)
+                                .font(.caption)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.7))
+                                .padding(.horizontal, 16)
+                                .padding(.top, dateGroup.key == dateGroups.first?.key ? 8 : 16)
+
+                            LazyVGrid(columns: columns, spacing: 8) {
+                                ForEach(Array(dateGroup.photos.enumerated()), id: \.element.id) { _, photo in
+                                    let displayIndex = photosInDisplayOrder.firstIndex(where: { $0.id == photo.id }) ?? 0
+
+                                    PhotoGridCell(
+                                        photo: photo,
+                                        index: displayIndex,
+                                        selectionMode: selectionMode,
+                                        isSelected: selectedPhotoIndices.contains(displayIndex),
+                                        onTap: {
+                                            if selectionMode {
+                                                if selectedPhotoIndices.contains(displayIndex) {
+                                                    selectedPhotoIndices.remove(displayIndex)
+                                                } else {
+                                                    selectedPhotoIndices.insert(displayIndex)
+                                                }
+                                            } else {
+                                                selectedPhotoIndex = PhotoIndex(value: displayIndex)
+                                            }
+                                        },
+                                        onLongPress: {
+                                            if !selectionMode {
+                                                selectionMode = true
+                                                selectedPhotoIndices.insert(displayIndex)
+                                            }
                                         }
-                                    } else {
-                                        selectedPhotoIndex = PhotoIndex(value: displayIndex)
-                                    }
-                                },
-                                onLongPress: {
-                                    if !selectionMode {
-                                        selectionMode = true
-                                        selectedPhotoIndices.insert(displayIndex)
-                                    }
+                                    )
                                 }
-                            )
+                            }
+                            .padding(.horizontal, 8)
                         }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.top, 8)
                 }
             }
         }
