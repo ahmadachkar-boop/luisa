@@ -533,6 +533,93 @@ class GoogleCalendarManager: ObservableObject {
             throw GoogleCalendarError.apiError("Failed to update event")
         }
     }
+
+    // MARK: - Cleanup
+
+    func cleanupDuplicateEvents() async throws -> Int {
+        guard isSignedIn else {
+            throw GoogleCalendarError.notSignedIn
+        }
+
+        guard let user = GIDSignIn.sharedInstance.currentUser else {
+            throw GoogleCalendarError.notSignedIn
+        }
+
+        guard let calendarId = ourAppCalendarId else {
+            throw GoogleCalendarError.apiError("OurApp calendar not found")
+        }
+
+        try await refreshTokenIfNeeded(user: user)
+
+        // Fetch all events from Google Calendar (past 2 years to present + 1 year future)
+        let calendar = Calendar.current
+        let startDate = calendar.date(byAdding: .year, value: -2, to: Date()) ?? Date()
+        let endDate = calendar.date(byAdding: .year, value: 1, to: Date()) ?? Date()
+
+        let events = try await fetchGoogleCalendarEvents(
+            user: user,
+            calendarId: calendarId,
+            startDate: startDate,
+            endDate: endDate
+        )
+
+        // Group events by title and start date
+        var eventGroups: [String: [[String: Any]]] = [:]
+
+        for event in events {
+            guard let summary = event["summary"] as? String,
+                  let start = event["start"] as? [String: Any],
+                  let dateTimeString = start["dateTime"] as? String else {
+                continue
+            }
+
+            // Create a key combining title and date (ignoring time for grouping)
+            let key = "\(summary)|\(dateTimeString.prefix(10))"
+
+            if eventGroups[key] == nil {
+                eventGroups[key] = []
+            }
+            eventGroups[key]?.append(event)
+        }
+
+        // Delete duplicates (keep first, delete rest)
+        var deletedCount = 0
+
+        for (_, group) in eventGroups where group.count > 1 {
+            // Skip first event, delete the rest
+            for event in group.dropFirst() {
+                if let eventId = event["id"] as? String {
+                    do {
+                        try await deleteGoogleEvent(calendarId: calendarId, eventId: eventId, user: user)
+                        deletedCount += 1
+                    } catch {
+                        print("⚠️ [GOOGLE CLEANUP] Failed to delete duplicate event: \(error)")
+                    }
+                }
+            }
+        }
+
+        return deletedCount
+    }
+
+    private func deleteGoogleEvent(calendarId: String, eventId: String, user: GIDGoogleUser) async throws {
+        let accessToken = user.accessToken.tokenString
+
+        let encodedCalendarId = calendarId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? calendarId
+        let encodedEventId = eventId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? eventId
+        let url = URL(string: "https://www.googleapis.com/calendar/v3/calendars/\(encodedCalendarId)/events/\(encodedEventId)")!
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw GoogleCalendarError.apiError("Failed to delete event")
+        }
+    }
 }
 
 // MARK: - Errors

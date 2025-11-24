@@ -123,10 +123,32 @@ struct SettingsView: View {
                         }
                     }
                     .disabled(isCleaningUp)
+
+                    if googleCalendarManager.isSignedIn {
+                        Button(action: {
+                            Task {
+                                await cleanupDuplicateGoogleEvents()
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "calendar.badge.exclamationmark")
+                                Text("Clean Up Google Calendar Duplicates")
+                                Spacer()
+                                if googleCalendarManager.isSyncing {
+                                    ProgressView()
+                                }
+                            }
+                        }
+                        .disabled(googleCalendarManager.isSyncing)
+                    }
                 } header: {
                     Text("Maintenance")
                 } footer: {
-                    Text("Remove photo entries that no longer have associated files. This fixes eternal gray loading screens.")
+                    if googleCalendarManager.isSignedIn {
+                        Text("Remove photo entries that no longer have associated files. Clean up duplicate events in Google Calendar.")
+                    } else {
+                        Text("Remove photo entries that no longer have associated files. This fixes eternal gray loading screens.")
+                    }
                 }
 
                 // App Info
@@ -187,6 +209,21 @@ struct SettingsView: View {
                 cleanupMessage = "Successfully removed \(deletedCount) orphaned photo\(deletedCount == 1 ? "" : "s")."
             } else {
                 cleanupMessage = "No orphaned photos found. Your photos are all in good shape!"
+            }
+            showingCleanupAlert = true
+        } catch {
+            cleanupMessage = "Cleanup failed: \(error.localizedDescription)"
+            showingCleanupAlert = true
+        }
+    }
+
+    func cleanupDuplicateGoogleEvents() async {
+        do {
+            let deletedCount = try await googleCalendarManager.cleanupDuplicateEvents()
+            if deletedCount > 0 {
+                cleanupMessage = "Successfully removed \(deletedCount) duplicate event\(deletedCount == 1 ? "" : "s") from Google Calendar."
+            } else {
+                cleanupMessage = "No duplicate events found. Your Google Calendar is clean!"
             }
             showingCleanupAlert = true
         } catch {
