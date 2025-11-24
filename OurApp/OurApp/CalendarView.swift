@@ -2498,16 +2498,12 @@ struct CalendarGridView: View {
             // Auto-switch tabs based on date
             if isPastDate && selectedTab == 0 {
                 // Switch to Memories tab for past dates
-                print("   📱 Switching to Memories tab (animated)")
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                    selectedTab = 1
-                }
+                print("   📱 Switching to Memories tab")
+                selectedTab = 1
             } else if !isPastDate && selectedTab == 1 {
                 // Switch to Upcoming tab for future dates
-                print("   📱 Switching to Upcoming tab (animated)")
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                    selectedTab = 0
-                }
+                print("   📱 Switching to Upcoming tab")
+                selectedTab = 0
             } else {
                 print("   📱 No tab switch needed")
             }
