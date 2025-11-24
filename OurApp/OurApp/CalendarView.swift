@@ -2320,6 +2320,7 @@ struct EditEventView: View {
 // MARK: - View Models
 class CalendarViewModel: ObservableObject {
     @Published var events: [CalendarEvent] = []
+    @Published var photos: [Photo] = []
 
     private let firebaseManager = FirebaseManager.shared
 
@@ -2335,6 +2336,7 @@ class CalendarViewModel: ObservableObject {
 
     init() {
         loadEvents()
+        loadPhotos()
     }
 
     func loadEvents() {
@@ -2342,6 +2344,16 @@ class CalendarViewModel: ObservableObject {
             for try await events in firebaseManager.getCalendarEvents() {
                 await MainActor.run {
                     self.events = events
+                }
+            }
+        }
+    }
+
+    func loadPhotos() {
+        Task {
+            for try await photos in firebaseManager.getPhotos() {
+                await MainActor.run {
+                    self.photos = photos
                 }
             }
         }
