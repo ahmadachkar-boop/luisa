@@ -427,7 +427,6 @@ struct CalendarView: View {
                     selectedDay: $selectedDay,
                     selectedTab: $selectedTab
                 )
-                .id(currentMonth)
                 .padding(.horizontal)
                 .padding(.bottom, 16)
                 .gesture(
@@ -2738,14 +2737,20 @@ struct MonthSummaryCard: View {
                                     onPhotoTap(allPhotoURLs, globalIndex)
                                 }
                             }) {
-                                AsyncImage(url: URL(string: photoURL)) { phase in
-                                    if let image = phase.image {
-                                        image
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                    } else {
-                                        Color.gray.opacity(0.2)
-                                            .overlay(ProgressView())
+                                ZStack {
+                                    AsyncImage(url: URL(string: photoURL)) { phase in
+                                        if let image = phase.image {
+                                            image
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fill)
+                                                .frame(maxWidth: .infinity)
+                                                .frame(height: 140)
+                                        } else {
+                                            Color.gray.opacity(0.2)
+                                                .overlay(ProgressView())
+                                                .frame(maxWidth: .infinity)
+                                                .frame(height: 140)
+                                        }
                                     }
                                 }
                                 .frame(maxWidth: .infinity)
