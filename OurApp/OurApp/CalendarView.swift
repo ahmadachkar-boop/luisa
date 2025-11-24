@@ -428,7 +428,7 @@ struct CalendarView: View {
                     selectedDay: $selectedDay,
                     selectedTab: $selectedTab
                 )
-                .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)")
+                .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)-\(selectedDay?.timeIntervalSince1970 ?? 0)")
                 .padding(.horizontal)
                 .padding(.bottom, 16)
                 .gesture(
