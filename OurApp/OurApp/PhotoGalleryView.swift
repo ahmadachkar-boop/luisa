@@ -163,7 +163,16 @@ struct PhotoGalleryView: View {
                             // Swipe right - navigate back
                             if currentFolderView != .allPhotos {
                                 withAnimation(.easeInOut(duration: 0.3)) {
-                                    currentFolderView = folderNavStack.popLast() ?? .allPhotos
+                                    let previousView = folderNavStack.popLast() ?? .allPhotos
+
+                                    // If navigating back from Events or Special Events parent folders to All Photos,
+                                    // show folders overview instead
+                                    if (currentFolderView == .events || currentFolderView == .specialEvents) && previousView == .allPhotos {
+                                        currentFolderView = .allPhotos
+                                        showingFoldersOverview = true
+                                    } else {
+                                        currentFolderView = previousView
+                                    }
                                 }
                             }
                         } else if horizontalAmount < 0 {
@@ -184,7 +193,16 @@ struct PhotoGalleryView: View {
             // Back button if we're in a subfolder
             if currentFolderView != .allPhotos {
                 Button(action: {
-                    currentFolderView = folderNavStack.popLast() ?? .allPhotos
+                    let previousView = folderNavStack.popLast() ?? .allPhotos
+
+                    // If navigating back from Events or Special Events parent folders to All Photos,
+                    // show folders overview instead
+                    if (currentFolderView == .events || currentFolderView == .specialEvents) && previousView == .allPhotos {
+                        currentFolderView = .allPhotos
+                        showingFoldersOverview = true
+                    } else {
+                        currentFolderView = previousView
+                    }
                 }) {
                     Image(systemName: "chevron.left")
                         .font(.title3)
