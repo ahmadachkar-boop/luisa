@@ -427,6 +427,7 @@ struct CalendarView: View {
                     selectedDay: $selectedDay,
                     selectedTab: $selectedTab
                 )
+                .id(currentMonth)
                 .padding(.horizontal)
                 .padding(.bottom, 16)
                 .gesture(
