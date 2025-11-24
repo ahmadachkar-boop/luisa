@@ -166,6 +166,8 @@ struct CalendarView: View {
     @State private var summaryCardExpanded = true // Start expanded
     @State private var recapPhotoData: RecapPhotoData?
     @State private var countdownBannerIndex = 0
+    @State private var lastBannerInteractionTime = Date()
+    @State private var bannerInactivityTimer: Timer?
     @State private var searchText = ""
     @State private var selectedTags: Set<String> = []
     @State private var showingFilterSheet = false
@@ -231,63 +233,69 @@ struct CalendarView: View {
     }
 
     // Helper computed property for upcoming events in current month
-    private var currentMonthUpcomingEvents: [CalendarEvent] {
-        guard !isMonthInPast(currentMonth) else { return [] }
-        return viewModel.upcomingEvents.filter { event in
-            Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
-        }
-    }
-
-    private var shouldShowUpcomingBanner: Bool {
-        !currentMonthUpcomingEvents.isEmpty
+    private var next5UpcomingEvents: [CalendarEvent] {
+        Array(viewModel.upcomingEvents.prefix(5))
     }
 
     @ViewBuilder
     private var upcomingEventsBanner: some View {
-        if let nextEvent = currentMonthUpcomingEvents.first {
-            HStack(spacing: 12) {
-                Image(systemName: nextEvent.isSpecial ? "star.fill" : "calendar")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
+        if !next5UpcomingEvents.isEmpty {
+            VStack(spacing: 0) {
+                TabView(selection: $countdownBannerIndex) {
+                    ForEach(Array(next5UpcomingEvents.enumerated()), id: \.element.id) { index, event in
+                        HStack(spacing: 12) {
+                            Image(systemName: event.isSpecial ? "star.fill" : "calendar")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.white)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(nextEvent.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                    Text(countdownText(for: nextEvent))
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.9))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(event.title)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .lineLimit(1)
+                                Text(countdownText(for: event))
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.9))
+                            }
+
+                            Spacer()
+
+                            if next5UpcomingEvents.count > 1 {
+                                Text("\(index + 1)/\(next5UpcomingEvents.count)")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.8))
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.6, green: 0.5, blue: 0.8),
+                                    Color(red: 0.7, green: 0.6, blue: 0.9)
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .cornerRadius(12)
+                        .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+                        .onTapGesture {
+                            selectedEventForDetail = event
+                        }
+                        .tag(index)
+                    }
                 }
-
-                Spacer()
-
-                if currentMonthUpcomingEvents.count > 1 {
-                    Text("+\(currentMonthUpcomingEvents.count - 1)")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.8))
+                .tabViewStyle(.page(indexDisplayMode: next5UpcomingEvents.count > 1 ? .always : .never))
+                .frame(height: 60)
+                .onChange(of: countdownBannerIndex) { oldValue, newValue in
+                    // Reset inactivity timer when user swipes
+                    resetBannerInactivityTimer()
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.6, green: 0.5, blue: 0.8),
-                        Color(red: 0.7, green: 0.6, blue: 0.9)
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            .cornerRadius(12)
-            .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
             .padding(.horizontal)
             .padding(.top, 12)
             .padding(.bottom, 8)
-            .onTapGesture {
-                selectedEventForDetail = nextEvent
-            }
         }
     }
 
@@ -393,10 +401,8 @@ struct CalendarView: View {
     private var calendarScrollContent: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
-                // Upcoming Events Banner (only show when on current/future month)
-                if shouldShowUpcomingBanner {
-                    upcomingEventsBanner
-                }
+                // Upcoming Events Banner (persistent across all months)
+                upcomingEventsBanner
 
                 // Sync indicator
                 if googleCalendarManager.isSyncing {
@@ -600,6 +606,14 @@ struct CalendarView: View {
                 // Fetch weather for existing events when view appears
                 await viewModel.fetchWeatherForEvents()
             }
+            .onAppear {
+                // Start inactivity timer when view appears
+                resetBannerInactivityTimer()
+            }
+            .onDisappear {
+                // Clean up timer when view disappears
+                bannerInactivityTimer?.invalidate()
+            }
         }
         .navigationTitle("Our Plans 💜")
         .navigationBarTitleDisplayMode(.large)
@@ -649,8 +663,12 @@ struct CalendarView: View {
         return ""
     }
 
-    func startCountdownResetTimer() {
-        TimerManager.shared.schedule(id: "countdownReset", interval: 10.0, repeats: false) {
+    func resetBannerInactivityTimer() {
+        // Invalidate existing timer
+        bannerInactivityTimer?.invalidate()
+
+        // Start new timer that resets to first event after 1 minute of inactivity
+        bannerInactivityTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: false) { _ in
             withAnimation(.easeInOut(duration: 0.5)) {
                 countdownBannerIndex = 0
             }
