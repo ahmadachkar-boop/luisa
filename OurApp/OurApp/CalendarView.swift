@@ -286,7 +286,7 @@ struct CalendarView: View {
                         .tag(index)
                     }
                 }
-                .tabViewStyle(.page(indexDisplayMode: next5UpcomingEvents.count > 1 ? .always : .never))
+                .tabViewStyle(.page(indexDisplayMode: .never))
                 .frame(height: 60)
                 .onChange(of: countdownBannerIndex) { oldValue, newValue in
                     // Reset inactivity timer when user swipes
