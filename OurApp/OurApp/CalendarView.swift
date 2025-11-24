@@ -675,10 +675,6 @@ struct CalendarView: View {
         }
     }
 
-    func resetCountdownTimer() {
-        startCountdownResetTimer()
-    }
-
     func refreshCalendar() async {
         // Sync with Google Calendar if signed in
         if googleCalendarManager.isSignedIn {
