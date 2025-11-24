@@ -2742,13 +2742,15 @@ struct MonthSummaryCard: View {
                                     if let image = phase.image {
                                         image
                                             .resizable()
-                                            .scaledToFill()
+                                            .aspectRatio(contentMode: .fill)
                                     } else {
                                         Color.gray.opacity(0.2)
                                             .overlay(ProgressView())
                                     }
                                 }
+                                .frame(maxWidth: .infinity)
                                 .frame(height: 140)
+                                .clipped()
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                             .buttonStyle(PlainButtonStyle())
