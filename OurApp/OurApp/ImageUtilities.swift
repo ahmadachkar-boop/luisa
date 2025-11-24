@@ -353,30 +353,42 @@ struct FullScreenPhotoViewer: View {
                         // Use chronological position for dot highlighting, or fall back to current index
                         let dotPosition = chronologicalPositions?[currentIndex] ?? (currentIndex + 1)
 
-                        HStack(spacing: 8) {
-                            if showAllDots {
-                                // Show all dots if count is <= max
+                        if showAllDots {
+                            // Show all dots if count is <= max
+                            HStack(spacing: 8) {
                                 // Highlight based on chronological position (1-based)
                                 ForEach(1...photoURLs.count, id: \.self) { position in
                                     Circle()
                                         .fill(position == dotPosition ? Color.white : Color.white.opacity(0.5))
                                         .frame(width: 8, height: 8)
                                 }
-                            } else {
-                                // Show limited dots with current position indicator
-                                ForEach(0..<maxDots, id: \.self) { index in
-                                    Circle()
-                                        .fill(Color.white.opacity(0.3))
-                                        .frame(width: 6, height: 6)
+                            }
+                            .padding(.bottom, 20)
+                        } else {
+                            // Show limited dots with scrolling highlighted dot
+                            ZStack(alignment: .leading) {
+                                // Background dots (always visible, dimmed)
+                                HStack(spacing: 8) {
+                                    ForEach(0..<maxDots, id: \.self) { index in
+                                        Circle()
+                                            .fill(Color.white.opacity(0.3))
+                                            .frame(width: 6, height: 6)
+                                    }
                                 }
-                                // Highlight current position proportionally based on chronological position
+
+                                // Highlighted dot that moves based on position
+                                // Map position (1 to count) to dot range (0 to maxDots-1)
+                                let progress = CGFloat(dotPosition - 1) / CGFloat(photoURLs.count - 1)
+                                let dotOffset = progress * CGFloat((maxDots - 1)) * 14.0 // 6px dot + 8px gap
+
                                 Circle()
                                     .fill(Color.white)
                                     .frame(width: 10, height: 10)
-                                    .offset(x: CGFloat(dotPosition - 1) / CGFloat(photoURLs.count - 1) * CGFloat((maxDots - 1) * 14) - CGFloat((maxDots - 1) * 7))
+                                    .offset(x: dotOffset)
                             }
+                            .frame(maxWidth: .infinity)
+                            .padding(.bottom, 20)
                         }
-                        .padding(.bottom, 20)
                     }
                 }
                 .opacity(dragOffset == 0 ? 1 : 0)
