@@ -172,6 +172,7 @@ struct CalendarView: View {
     @State private var showingSearch = false
     @State private var showingToolDrawer = false
     @State private var expandedCardId: String? = nil
+    @State private var eventsLoadedGeneration = 0 // Increments when events first load
 
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
@@ -427,6 +428,7 @@ struct CalendarView: View {
                     selectedDay: $selectedDay,
                     selectedTab: $selectedTab
                 )
+                .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)")
                 .padding(.horizontal)
                 .padding(.bottom, 16)
                 .gesture(
@@ -586,6 +588,12 @@ struct CalendarView: View {
                 // Reset countdown banner index if events changed
                 if countdownBannerIndex >= newValue {
                     countdownBannerIndex = 0
+                }
+            }
+            .onChange(of: viewModel.events.count) { oldValue, newValue in
+                // Increment generation when events load to force calendar refresh
+                if oldValue == 0 && newValue > 0 {
+                    eventsLoadedGeneration += 1
                 }
             }
             .task {
@@ -2737,25 +2745,21 @@ struct MonthSummaryCard: View {
                                     onPhotoTap(allPhotoURLs, globalIndex)
                                 }
                             }) {
-                                ZStack {
+                                GeometryReader { geometry in
                                     AsyncImage(url: URL(string: photoURL)) { phase in
                                         if let image = phase.image {
                                             image
                                                 .resizable()
                                                 .aspectRatio(contentMode: .fill)
-                                                .frame(maxWidth: .infinity)
-                                                .frame(height: 140)
+                                                .frame(width: geometry.size.width, height: geometry.size.height)
+                                                .clipped()
                                         } else {
                                             Color.gray.opacity(0.2)
                                                 .overlay(ProgressView())
-                                                .frame(maxWidth: .infinity)
-                                                .frame(height: 140)
                                         }
                                     }
                                 }
-                                .frame(maxWidth: .infinity)
                                 .frame(height: 140)
-                                .clipped()
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                             .buttonStyle(PlainButtonStyle())
