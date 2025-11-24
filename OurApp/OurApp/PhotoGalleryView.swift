@@ -102,7 +102,7 @@ struct PhotoGalleryView: View {
                 return first.key > second.key
             }
             return date1 > date2
-        }
+        }.map { (key: $0.key, photos: $0.value) }
     }
 
     // Flat array of photos in display order (newest first)
