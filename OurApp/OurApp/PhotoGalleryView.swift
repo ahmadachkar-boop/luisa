@@ -1096,7 +1096,10 @@ class PhotoGalleryViewModel: ObservableObject {
             return hasPhotos && (specialOnly ? event.isSpecial : !event.isSpecial)
         }
 
-        return relevantEvents.map { event in
+        // Sort by date (latest/newest first)
+        let sortedEvents = relevantEvents.sorted { $0.date > $1.date }
+
+        return sortedEvents.map { event in
             let count = photos.filter { $0.eventId == event.id }.count
             return (event: event, photoCount: count)
         }
