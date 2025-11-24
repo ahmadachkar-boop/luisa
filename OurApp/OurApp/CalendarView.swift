@@ -2422,11 +2422,9 @@ struct CalendarGridView: View {
                         let isSelectedValue = selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!)
                         let dayNum = calendar.component(.day, from: date)
                         let hasEvents = !eventsForDay(date).isEmpty
-
-                        // Log only for days with events to reduce noise
                         let _ = hasEvents ? print("🟢 Creating CalendarDayCell - Day \(dayNum), isSelected: \(isSelectedValue), selectedDay: \(selectedDay.map { calendar.component(.day, from: $0) } ?? 0)") : ()
 
-                        return CalendarDayCell(
+                        CalendarDayCell(
                             date: date,
                             events: eventsForDay(date),
                             isSelected: isSelectedValue,
