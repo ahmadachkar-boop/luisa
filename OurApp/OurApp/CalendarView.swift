@@ -173,12 +173,6 @@ struct CalendarView: View {
     @State private var showingToolDrawer = false
     @State private var expandedCardId: String? = nil
 
-    // Calendar grid ID - only refresh when month changes
-    // Events parameter will trigger natural SwiftUI updates without ID change
-    private var calendarGridId: String {
-        return "\(currentMonth.timeIntervalSince1970)"
-    }
-
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
         let baseEvents: [CalendarEvent]
@@ -433,7 +427,6 @@ struct CalendarView: View {
                     selectedDay: $selectedDay,
                     selectedTab: $selectedTab
                 )
-                .id(calendarGridId)
                 .padding(.horizontal)
                 .padding(.bottom, 16)
                 .gesture(
@@ -2837,6 +2830,13 @@ struct MonthSummaryCard: View {
             // Initialize photos when card is expanded
             if newValue && displayedPhotoURLs.isEmpty {
                 initializePhotos()
+            }
+        }
+        .onChange(of: month) { oldValue, newValue in
+            // Reinitialize photos when month changes
+            initializePhotos()
+            if isExpanded {
+                startShuffleTimer()
             }
         }
         .sheet(isPresented: $showingAllPhotos) {
