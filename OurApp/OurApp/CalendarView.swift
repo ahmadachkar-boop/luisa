@@ -2419,10 +2419,17 @@ struct CalendarGridView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 8) {
                 ForEach(daysInMonth(), id: \.self) { date in
                     if let date = date {
-                        CalendarDayCell(
+                        let isSelectedValue = selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!)
+                        let dayNum = calendar.component(.day, from: date)
+                        let hasEvents = !eventsForDay(date).isEmpty
+
+                        // Log only for days with events to reduce noise
+                        let _ = hasEvents ? print("🟢 Creating CalendarDayCell - Day \(dayNum), isSelected: \(isSelectedValue), selectedDay: \(selectedDay.map { calendar.component(.day, from: $0) } ?? 0)") : ()
+
+                        return CalendarDayCell(
                             date: date,
                             events: eventsForDay(date),
-                            isSelected: selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!),
+                            isSelected: isSelectedValue,
                             isToday: calendar.isDateInToday(date),
                             onTap: {
                                 handleDayTap(date: date)
@@ -2470,26 +2477,47 @@ struct CalendarGridView: View {
     }
 
     func handleDayTap(date: Date) {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "MMM d, yyyy HH:mm"
+        let isPastDate = date < Date()
+
+        print("🔵 handleDayTap called")
+        print("   Date tapped: \(dateFormatter.string(from: date))")
+        print("   Is past date: \(isPastDate)")
+        print("   Current selectedDay: \(selectedDay.map { dateFormatter.string(from: $0) } ?? "nil")")
+        print("   Current tab: \(selectedTab)")
+
         // Set selection immediately without animation to ensure state is updated
         if selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!) {
+            print("   ❌ Deselecting (same day tapped)")
             selectedDay = nil // Deselect if tapping same day
         } else {
+            print("   ✅ Setting selectedDay to: \(dateFormatter.string(from: date))")
             selectedDay = date
 
+            print("   New selectedDay value: \(selectedDay.map { dateFormatter.string(from: $0) } ?? "nil")")
+
             // Auto-switch tabs based on date
-            let isPastDate = date < Date()
             if isPastDate && selectedTab == 0 {
                 // Switch to Memories tab for past dates
+                print("   📱 Switching to Memories tab (animated)")
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     selectedTab = 1
                 }
             } else if !isPastDate && selectedTab == 1 {
                 // Switch to Upcoming tab for future dates
+                print("   📱 Switching to Upcoming tab (animated)")
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     selectedTab = 0
                 }
+            } else {
+                print("   📱 No tab switch needed")
             }
         }
+
+        print("   Final selectedDay: \(selectedDay.map { dateFormatter.string(from: $0) } ?? "nil")")
+        print("   Final tab: \(selectedTab)")
+        print("🔵 handleDayTap completed")
     }
 }
 
@@ -2504,7 +2532,11 @@ struct CalendarDayCell: View {
     @State private var showTooltip = false
 
     var body: some View {
-        Button(action: {
+        let dayNum = Calendar.current.component(.day, from: date)
+        let isPastDate = date < Date()
+        let _ = print("🟡 CalendarDayCell body - Day \(dayNum), isPast: \(isPastDate), isSelected: \(isSelected), hasEvents: \(!events.isEmpty)")
+
+        return Button(action: {
             if events.isEmpty {
                 // Show brief feedback for empty days
                 withAnimation(.spring(response: 0.2)) {
