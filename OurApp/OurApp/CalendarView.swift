@@ -211,8 +211,20 @@ struct CalendarView: View {
 
         // Only filter by selected day if one is selected
         if let selectedDay = selectedDay {
+            let calendar = Calendar.current
             filtered = filtered.filter { event in
-                Calendar.current.isDate(event.date, equalTo: selectedDay, toGranularity: .day)
+                // Check if selected day is the start date
+                if calendar.isDate(event.date, inSameDayAs: selectedDay) {
+                    return true
+                }
+                // Check if selected day falls within multi-day event range
+                if let endDate = event.endDate {
+                    let startOfEventDay = calendar.startOfDay(for: event.date)
+                    let startOfEndDay = calendar.startOfDay(for: endDate)
+                    let startOfSelectedDay = calendar.startOfDay(for: selectedDay)
+                    return startOfSelectedDay >= startOfEventDay && startOfSelectedDay <= startOfEndDay
+                }
+                return false
             }
         }
 
@@ -2809,7 +2821,7 @@ struct CalendarDayCell: View {
                 }
             )
             .overlay(
-                // "Add Event" prompt overlay
+                // Quick add prompt overlay - just plus icon
                 Group {
                     if showQuickAddPrompt {
                         Button(action: {
@@ -2818,32 +2830,13 @@ struct CalendarDayCell: View {
                             }
                             onQuickAdd?()
                         }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.system(size: 10))
-                                Text("Add")
-                                    .font(.system(size: 10, weight: .semibold))
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(
-                                Capsule()
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [
-                                                Color(red: 0.6, green: 0.4, blue: 0.85),
-                                                Color(red: 0.5, green: 0.3, blue: 0.75)
-                                            ],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    )
-                            )
-                            .shadow(color: Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.4), radius: 4, x: 0, y: 2)
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 22))
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                .shadow(color: Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.4), radius: 4, x: 0, y: 2)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .offset(y: -35)
+                        .offset(y: -30)
                         .transition(.scale.combined(with: .opacity))
                     }
                 }

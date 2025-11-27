@@ -52,7 +52,8 @@ struct PhotoGalleryView: View {
     @State private var showingSaveError = false
     @State private var saveErrorMessage = ""
     @State private var savedPhotoCount = 0
-    @State private var showingToolDrawer = false
+    @State private var showingExpandedHeader = false
+    @State private var searchText = ""
     @State private var currentFolderView: FolderViewType = .allPhotos
     @State private var folderNavStack: [FolderViewType] = []
     @State private var showingCreateFolder = false
@@ -207,6 +208,11 @@ struct PhotoGalleryView: View {
     private var contentView: some View {
         ScrollView {
             VStack(spacing: 0) {
+                // Expandable header (like iOS Messages search)
+                expandableHeader
+                    .padding(.horizontal)
+                    .padding(.top, 4)
+
                 // Folder navigation bar
                 folderNavigationBar
                     .padding(.horizontal)
@@ -383,6 +389,220 @@ struct PhotoGalleryView: View {
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color.white.opacity(0.9))
                 .shadow(color: Color.black.opacity(0.05), radius: 3, x: 0, y: 1)
+        )
+    }
+
+    // MARK: - Expandable Header (iOS Messages style)
+    private var expandableHeader: some View {
+        VStack(spacing: 12) {
+            // Pull indicator / tap to expand
+            Button(action: {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    showingExpandedHeader.toggle()
+                }
+            }) {
+                VStack(spacing: 6) {
+                    // Drag indicator capsule
+                    Capsule()
+                        .fill(Color(red: 0.7, green: 0.6, blue: 0.85).opacity(0.4))
+                        .frame(width: 36, height: 4)
+
+                    // Collapsed state: show hint text
+                    if !showingExpandedHeader {
+                        Text("Pull down for more options")
+                            .font(.caption2)
+                            .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.75))
+                    }
+                }
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            // Expanded content
+            if showingExpandedHeader {
+                VStack(spacing: 14) {
+                    // Search bar
+                    HStack(spacing: 10) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.subheadline)
+                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+
+                        TextField("Search photos...", text: $searchText)
+                            .font(.subheadline)
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                        if !searchText.isEmpty {
+                            Button(action: { searchText = "" }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.subheadline)
+                                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.75))
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                    )
+
+                    // Quick actions row
+                    HStack(spacing: 10) {
+                        // Add Photos
+                        PhotosPicker(selection: $selectedItems, matching: .images) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.subheadline)
+                                Text("Add")
+                                    .font(.subheadline.weight(.medium))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 0.7, green: 0.45, blue: 0.95),
+                                        Color(red: 0.55, green: 0.35, blue: 0.85)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .cornerRadius(10)
+                        }
+                        .disabled(isUploading)
+
+                        // Select
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3)) {
+                                showingExpandedHeader = false
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                selectionMode = true
+                            }
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark.circle")
+                                    .font(.subheadline)
+                                Text("Select")
+                                    .font(.subheadline.weight(.medium))
+                            }
+                            .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                            )
+                        }
+
+                        // Create Folder
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3)) {
+                                showingExpandedHeader = false
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                showingCreateFolder = true
+                            }
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "folder.badge.plus")
+                                    .font(.subheadline)
+                                Text("Folder")
+                                    .font(.subheadline.weight(.medium))
+                            }
+                            .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                            )
+                        }
+
+                        Spacer()
+                    }
+
+                    // Sort and Filter row
+                    HStack(spacing: 10) {
+                        // Sort button
+                        Button(action: { showingSortOptions = true }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.up.arrow.down")
+                                    .font(.caption)
+                                Text(sortOption.rawValue)
+                                    .font(.caption)
+                            }
+                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .strokeBorder(Color(red: 0.7, green: 0.6, blue: 0.85).opacity(0.5), lineWidth: 1)
+                            )
+                        }
+
+                        // Date filter button
+                        Button(action: { showingDateFilter = true }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "calendar")
+                                    .font(.caption)
+                                Text(hasDateFilter ? "Filtered" : "Filter by date")
+                                    .font(.caption)
+                            }
+                            .foregroundColor(hasDateFilter ? .white : Color(red: 0.5, green: 0.4, blue: 0.7))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(hasDateFilter ? Color(red: 0.6, green: 0.4, blue: 0.85) : Color.clear)
+                            )
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(Color(red: 0.7, green: 0.6, blue: 0.85).opacity(hasDateFilter ? 0 : 0.5), lineWidth: 1)
+                            )
+                        }
+
+                        // Column count indicator
+                        HStack(spacing: 4) {
+                            Image(systemName: "square.grid.3x3")
+                                .font(.caption)
+                            Text("\(columnCount)")
+                                .font(.caption.bold())
+                        }
+                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .strokeBorder(Color(red: 0.7, green: 0.6, blue: 0.85).opacity(0.5), lineWidth: 1)
+                        )
+
+                        Spacer()
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white.opacity(showingExpandedHeader ? 0.95 : 0))
+                .shadow(color: Color.black.opacity(showingExpandedHeader ? 0.05 : 0), radius: 5, x: 0, y: 2)
+        )
+        .gesture(
+            DragGesture(minimumDistance: 10)
+                .onEnded { value in
+                    if value.translation.height > 30 && !showingExpandedHeader {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            showingExpandedHeader = true
+                        }
+                    } else if value.translation.height < -30 && showingExpandedHeader {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            showingExpandedHeader = false
+                        }
+                    }
+                }
         )
     }
 
@@ -818,19 +1038,6 @@ struct PhotoGalleryView: View {
                         contentView
                     }
                 }
-                .blur(radius: showingToolDrawer ? 3 : 0)
-                .allowsHitTesting(!showingToolDrawer)
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 20)
-                        .onEnded { value in
-                            // Pull down from top to open drawer
-                            if value.translation.height > 50 && value.startLocation.y < 100 {
-                                withAnimation(.spring(response: 0.3)) {
-                                    showingToolDrawer = true
-                                }
-                            }
-                        }
-                )
                 .toolbar {
                     if selectionMode {
                         ToolbarItem(placement: .navigationBarLeading) {
@@ -980,35 +1187,6 @@ struct PhotoGalleryView: View {
                     }
                 )
             }
-            }
-
-            // TOOL DRAWER OVERLAY
-            if showingToolDrawer {
-                Color.black.opacity(0.3)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.3)) {
-                            showingToolDrawer = false
-                        }
-                    }
-
-                VStack(spacing: 0) {
-                    PhotoToolDrawerView(
-                        selectedItems: $selectedItems,
-                        isUploading: isUploading,
-                        selectionMode: $selectionMode,
-                        showingCreateFolder: $showingCreateFolder,
-                        onClose: {
-                            withAnimation(.spring(response: 0.3)) {
-                                showingToolDrawer = false
-                            }
-                        }
-                    )
-                    .padding(.top, 50)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-
-                    Spacer()
-                }
             }
         }
         .alert("Create Folder", isPresented: $showingCreateFolder) {
@@ -1580,121 +1758,6 @@ enum FolderViewType: Hashable {
     case specialEvents // Parent category
     case event(String) // Specific event folder
     case custom(String) // Custom folder
-}
-
-struct PhotoToolDrawerView: View {
-    @Binding var selectedItems: [PhotosPickerItem]
-    let isUploading: Bool
-    @Binding var selectionMode: Bool
-    @Binding var showingCreateFolder: Bool
-    let onClose: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Drag handle
-            Capsule()
-                .fill(Color.white.opacity(0.5))
-                .frame(width: 40, height: 5)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-
-            VStack(spacing: 16) {
-                // ADD PHOTOS BUTTON (top priority)
-                PhotosPicker(selection: $selectedItems, matching: .images) {
-                    HStack {
-                        if isUploading {
-                            ProgressView()
-                                .tint(.white)
-                        } else {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.title2)
-                        }
-                        Text(isUploading ? "Uploading..." : "Add Photos")
-                            .font(.headline)
-                        Spacer()
-                    }
-                    .foregroundColor(.white)
-                    .padding()
-                    .background(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.7, green: 0.4, blue: 0.95),
-                                Color(red: 0.55, green: 0.3, blue: 0.85)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .cornerRadius(16)
-                }
-                .disabled(isUploading)
-
-                Divider()
-                    .background(Color.white.opacity(0.3))
-
-                // QUICK ACTIONS
-                HStack(spacing: 12) {
-                    // Select Photos button
-                    Button(action: {
-                        onClose()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            selectionMode = true
-                        }
-                    }) {
-                        HStack {
-                            Image(systemName: "checkmark.circle")
-                            Text("Select")
-                                .font(.subheadline)
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.white.opacity(0.15))
-                        .cornerRadius(12)
-                    }
-
-                    // Create Folder button
-                    Button(action: {
-                        onClose()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            showingCreateFolder = true
-                        }
-                    }) {
-                        HStack {
-                            Image(systemName: "folder.badge.plus")
-                            Text("Folder")
-                                .font(.subheadline)
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.white.opacity(0.15))
-                        .cornerRadius(12)
-                    }
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
-        }
-        .background(
-            ZStack {
-                // Frosted glass effect
-                RoundedRectangle(cornerRadius: 24)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.95),
-                                Color(red: 0.5, green: 0.3, blue: 0.75).opacity(0.95)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .shadow(color: Color.black.opacity(0.3), radius: 20, x: 0, y: 10)
-            }
-        )
-        .padding(.horizontal, 16)
-    }
 }
 
 // MARK: - Date Filter Sheet
