@@ -4,6 +4,9 @@ struct SettingsView: View {
     @StateObject private var googleCalendarManager = GoogleCalendarManager.shared
     @State private var showingSyncAlert = false
     @State private var syncAlertMessage = ""
+    @State private var isCleaningUp = false
+    @State private var showingCleanupAlert = false
+    @State private var cleanupMessage = ""
 
     var body: some View {
         NavigationView {
@@ -103,6 +106,51 @@ struct SettingsView: View {
                     }
                 }
 
+                // Data Management
+                Section {
+                    Button(action: {
+                        Task {
+                            await cleanupOrphanedPhotos()
+                        }
+                    }) {
+                        HStack {
+                            Image(systemName: "trash.circle")
+                            Text("Clean Up Orphaned Photos")
+                            Spacer()
+                            if isCleaningUp {
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(isCleaningUp)
+
+                    if googleCalendarManager.isSignedIn {
+                        Button(action: {
+                            Task {
+                                await cleanupDuplicateGoogleEvents()
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "calendar.badge.exclamationmark")
+                                Text("Clean Up Google Calendar Duplicates")
+                                Spacer()
+                                if googleCalendarManager.isSyncing {
+                                    ProgressView()
+                                }
+                            }
+                        }
+                        .disabled(googleCalendarManager.isSyncing)
+                    }
+                } header: {
+                    Text("Maintenance")
+                } footer: {
+                    if googleCalendarManager.isSignedIn {
+                        Text("Remove photo entries that no longer have associated files. Clean up duplicate events in Google Calendar.")
+                    } else {
+                        Text("Remove photo entries that no longer have associated files. This fixes eternal gray loading screens.")
+                    }
+                }
+
                 // App Info
                 Section {
                     HStack {
@@ -120,6 +168,11 @@ struct SettingsView: View {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text(syncAlertMessage)
+            }
+            .alert("Cleanup Complete", isPresented: $showingCleanupAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(cleanupMessage)
             }
         }
     }
@@ -143,6 +196,39 @@ struct SettingsView: View {
         } catch {
             syncAlertMessage = "Sync failed: \(error.localizedDescription)"
             showingSyncAlert = true
+        }
+    }
+
+    func cleanupOrphanedPhotos() async {
+        isCleaningUp = true
+        defer { isCleaningUp = false }
+
+        do {
+            let deletedCount = try await FirebaseManager.shared.cleanupOrphanedPhotos()
+            if deletedCount > 0 {
+                cleanupMessage = "Successfully removed \(deletedCount) orphaned photo\(deletedCount == 1 ? "" : "s")."
+            } else {
+                cleanupMessage = "No orphaned photos found. Your photos are all in good shape!"
+            }
+            showingCleanupAlert = true
+        } catch {
+            cleanupMessage = "Cleanup failed: \(error.localizedDescription)"
+            showingCleanupAlert = true
+        }
+    }
+
+    func cleanupDuplicateGoogleEvents() async {
+        do {
+            let deletedCount = try await googleCalendarManager.cleanupDuplicateEvents()
+            if deletedCount > 0 {
+                cleanupMessage = "Successfully removed \(deletedCount) duplicate event\(deletedCount == 1 ? "" : "s") from Google Calendar."
+            } else {
+                cleanupMessage = "No duplicate events found. Your Google Calendar is clean!"
+            }
+            showingCleanupAlert = true
+        } catch {
+            cleanupMessage = "Cleanup failed: \(error.localizedDescription)"
+            showingCleanupAlert = true
         }
     }
 }

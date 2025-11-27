@@ -65,7 +65,7 @@ struct PhotoGalleryView: View {
             return formatter.string(from: dateToUse)
         }
 
-        // Sort by date (newest first)
+        // Sort months by date (newest first), and photos within each month by capture date (newest first)
         return grouped.sorted { first, second in
             let formatter = DateFormatter()
             formatter.dateFormat = "MMMM yyyy"
@@ -74,7 +74,40 @@ struct PhotoGalleryView: View {
                 return first.key > second.key
             }
             return date1 > date2
+        }.map { month in
+            // Sort photos within each month by capture date (newest first)
+            let sortedPhotos = month.value.sorted { photo1, photo2 in
+                let date1 = photo1.capturedAt ?? photo1.createdAt
+                let date2 = photo2.capturedAt ?? photo2.createdAt
+                return date1 > date2
+            }
+            return (key: month.key, photos: sortedPhotos)
+        }
+    }
+
+    // Group photos by date within each month
+    private func photosByDate(for monthPhotos: [Photo]) -> [(key: String, photos: [Photo])] {
+        let grouped = Dictionary(grouping: monthPhotos) { photo -> String in
+            let formatter = DateFormatter()
+            formatter.dateFormat = "EEEE, MMMM d" // "Monday, January 15"
+            let dateToUse = photo.capturedAt ?? photo.createdAt
+            return formatter.string(from: dateToUse)
+        }
+
+        return grouped.sorted { first, second in
+            let formatter = DateFormatter()
+            formatter.dateFormat = "EEEE, MMMM d"
+            guard let date1 = formatter.date(from: first.key),
+                  let date2 = formatter.date(from: second.key) else {
+                return first.key > second.key
+            }
+            return date1 > date2
         }.map { (key: $0.key, photos: $0.value) }
+    }
+
+    // Flat array of photos in display order (newest first)
+    private var photosInDisplayOrder: [Photo] {
+        photosByMonth.flatMap { $0.photos }
     }
 
     // Current folder title for display
@@ -130,7 +163,16 @@ struct PhotoGalleryView: View {
                             // Swipe right - navigate back
                             if currentFolderView != .allPhotos {
                                 withAnimation(.easeInOut(duration: 0.3)) {
-                                    currentFolderView = folderNavStack.popLast() ?? .allPhotos
+                                    let previousView = folderNavStack.popLast() ?? .allPhotos
+
+                                    // If navigating back from Events or Special Events parent folders to All Photos,
+                                    // show folders overview instead
+                                    if (currentFolderView == .events || currentFolderView == .specialEvents) && previousView == .allPhotos {
+                                        currentFolderView = .allPhotos
+                                        showingFoldersOverview = true
+                                    } else {
+                                        currentFolderView = previousView
+                                    }
                                 }
                             }
                         } else if horizontalAmount < 0 {
@@ -151,7 +193,16 @@ struct PhotoGalleryView: View {
             // Back button if we're in a subfolder
             if currentFolderView != .allPhotos {
                 Button(action: {
-                    currentFolderView = folderNavStack.popLast() ?? .allPhotos
+                    let previousView = folderNavStack.popLast() ?? .allPhotos
+
+                    // If navigating back from Events or Special Events parent folders to All Photos,
+                    // show folders overview instead
+                    if (currentFolderView == .events || currentFolderView == .specialEvents) && previousView == .allPhotos {
+                        currentFolderView = .allPhotos
+                        showingFoldersOverview = true
+                    } else {
+                        currentFolderView = previousView
+                    }
                 }) {
                     Image(systemName: "chevron.left")
                         .font(.title3)
@@ -304,8 +355,12 @@ struct PhotoGalleryView: View {
                     }
                 }
 
-                // Events
-                let eventPhotosCount = viewModel.photos.filter { $0.eventId != nil }.count
+                // Events (excluding special events to match folder content)
+                let eventPhotosCount = viewModel.photos.filter { photo in
+                    guard let eventId = photo.eventId else { return false }
+                    // Only count photos from non-special events
+                    return viewModel.events.first(where: { $0.id == eventId })?.isSpecial == false
+                }.count
                 if eventPhotosCount > 0 {
                     FolderCard(
                         title: "Events",
@@ -380,40 +435,53 @@ struct PhotoGalleryView: View {
         LazyVStack(alignment: .leading, spacing: 20, pinnedViews: []) {
             ForEach(photosByMonth, id: \.key) { monthGroup in
                 Section {
-                    // Month header (not pinned anymore)
+                    // Month header (prominent)
                     monthHeaderView(monthGroup: monthGroup)
 
-                    LazyVGrid(columns: columns, spacing: 8) {
-                        ForEach(Array(monthGroup.photos.enumerated()), id: \.element.id) { _, photo in
-                            let globalIndex = viewModel.photos.firstIndex(where: { $0.id == photo.id }) ?? 0
+                    // Group by date within this month
+                    let dateGroups = photosByDate(for: monthGroup.photos)
 
-                            PhotoGridCell(
-                                photo: photo,
-                                index: globalIndex,
-                                selectionMode: selectionMode,
-                                isSelected: selectedPhotoIndices.contains(globalIndex),
-                                onTap: {
-                                    if selectionMode {
-                                        if selectedPhotoIndices.contains(globalIndex) {
-                                            selectedPhotoIndices.remove(globalIndex)
-                                        } else {
-                                            selectedPhotoIndices.insert(globalIndex)
+                    ForEach(dateGroups, id: \.key) { dateGroup in
+                        VStack(alignment: .leading, spacing: 8) {
+                            // Subtle date header
+                            Text(dateGroup.key)
+                                .font(.caption)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.7))
+                                .padding(.horizontal, 16)
+                                .padding(.top, dateGroup.key == dateGroups.first?.key ? 8 : 16)
+
+                            LazyVGrid(columns: columns, spacing: 8) {
+                                ForEach(Array(dateGroup.photos.enumerated()), id: \.element.id) { _, photo in
+                                    let displayIndex = photosInDisplayOrder.firstIndex(where: { $0.id == photo.id }) ?? 0
+
+                                    PhotoGridCell(
+                                        photo: photo,
+                                        index: displayIndex,
+                                        selectionMode: selectionMode,
+                                        isSelected: selectedPhotoIndices.contains(displayIndex),
+                                        onTap: {
+                                            if selectionMode {
+                                                if selectedPhotoIndices.contains(displayIndex) {
+                                                    selectedPhotoIndices.remove(displayIndex)
+                                                } else {
+                                                    selectedPhotoIndices.insert(displayIndex)
+                                                }
+                                            } else {
+                                                selectedPhotoIndex = PhotoIndex(value: displayIndex)
+                                            }
+                                        },
+                                        onLongPress: {
+                                            if !selectionMode {
+                                                selectionMode = true
+                                                selectedPhotoIndices.insert(displayIndex)
+                                            }
                                         }
-                                    } else {
-                                        selectedPhotoIndex = PhotoIndex(value: globalIndex)
-                                    }
-                                },
-                                onLongPress: {
-                                    if !selectionMode {
-                                        selectionMode = true
-                                        selectedPhotoIndices.insert(globalIndex)
-                                    }
+                                    )
                                 }
-                            )
+                            }
+                            .padding(.horizontal, 8)
                         }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.top, 8)
                 }
             }
         }
@@ -422,9 +490,7 @@ struct PhotoGalleryView: View {
 
     private func navigateToFolder(_ folder: FolderViewType) {
         folderNavStack.append(currentFolderView)
-        withAnimation(.easeInOut(duration: 0.3)) {
-            currentFolderView = folder
-        }
+        currentFolderView = folder
     }
 
     private func monthHeaderView(monthGroup: (key: String, photos: [Photo])) -> some View {
@@ -442,7 +508,6 @@ struct PhotoGalleryView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(Color.white.opacity(0.8))
     }
 
     var body: some View {
@@ -573,19 +638,23 @@ struct PhotoGalleryView: View {
                 Text(saveErrorMessage)
             }
             .fullScreenCover(item: $selectedPhotoIndex) { photoIndex in
+                // Create display positions array: maps each position to 1-based numbering (newest = 1)
+                let displayPositions = (1...photosInDisplayOrder.count).map { $0 }
+
                 FullScreenPhotoViewer(
-                    photoURLs: viewModel.photos.map { $0.imageURL },
+                    photoURLs: photosInDisplayOrder.map { $0.imageURL },
                     initialIndex: photoIndex.value,
                     onDismiss: { selectedPhotoIndex = nil },
                     onDelete: { indexToDelete in
-                        if indexToDelete < viewModel.photos.count {
-                            let photoToDelete = viewModel.photos[indexToDelete]
+                        if indexToDelete < photosInDisplayOrder.count {
+                            let photoToDelete = photosInDisplayOrder[indexToDelete]
                             Task {
                                 try? await viewModel.deletePhoto(photoToDelete)
                             }
                         }
                     },
-                    captureDates: viewModel.photos.map { $0.capturedAt ?? $0.createdAt }
+                    captureDates: photosInDisplayOrder.map { $0.capturedAt ?? $0.createdAt },
+                    chronologicalPositions: displayPositions
                 )
             }
             }
@@ -650,8 +719,8 @@ struct PhotoGalleryView: View {
             var errorOccurred = false
 
             for index in selectedPhotoIndices.sorted() {
-                guard index < viewModel.photos.count else { continue }
-                let photo = viewModel.photos[index]
+                guard index < photosInDisplayOrder.count else { continue }
+                let photo = photosInDisplayOrder[index]
 
                 // Load image
                 if let cachedImage = ImageCache.shared.get(forKey: photo.imageURL) {
@@ -713,8 +782,8 @@ struct PhotoGalleryView: View {
 
         Task {
             for index in selectedPhotoIndices.sorted().reversed() {
-                guard index < viewModel.photos.count else { continue }
-                let photo = viewModel.photos[index]
+                guard index < photosInDisplayOrder.count else { continue }
+                let photo = photosInDisplayOrder[index]
                 try? await viewModel.deletePhoto(photo)
             }
 
@@ -1040,10 +1109,15 @@ class PhotoGalleryViewModel: ObservableObject {
         let relevantEvents = events.filter { event in
             guard let eventId = event.id else { return false }
             let hasPhotos = photos.contains(where: { $0.eventId == eventId })
-            return hasPhotos && (!specialOnly || event.isSpecial)
+            // If specialOnly is true, only show special events
+            // If specialOnly is false, only show non-special events (to avoid duplication)
+            return hasPhotos && (specialOnly ? event.isSpecial : !event.isSpecial)
         }
 
-        return relevantEvents.map { event in
+        // Sort by date (latest/newest first)
+        let sortedEvents = relevantEvents.sorted { $0.date > $1.date }
+
+        return sortedEvents.map { event in
             let count = photos.filter { $0.eventId == event.id }.count
             return (event: event, photoCount: count)
         }

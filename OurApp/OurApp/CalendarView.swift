@@ -25,20 +25,6 @@ func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws 
     }
 }
 
-// MARK: - EXIF Metadata Helper
-func extractCaptureDate(from imageData: Data) -> Date? {
-    guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, nil),
-          let imageProperties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [String: Any],
-          let exifDict = imageProperties[kCGImagePropertyExifDictionary as String] as? [String: Any],
-          let dateTimeOriginal = exifDict[kCGImagePropertyExifDateTimeOriginal as String] as? String else {
-        return nil
-    }
-
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
-    return formatter.date(from: dateTimeOriginal)
-}
-
 // MARK: - Design Constants
 extension CGFloat {
     static let cornerRadiusSmall: CGFloat = 12
@@ -180,18 +166,15 @@ struct CalendarView: View {
     @State private var summaryCardExpanded = true // Start expanded
     @State private var recapPhotoData: RecapPhotoData?
     @State private var countdownBannerIndex = 0
+    @State private var lastBannerInteractionTime = Date()
+    @State private var bannerInactivityTimer: Timer?
     @State private var searchText = ""
     @State private var selectedTags: Set<String> = []
     @State private var showingFilterSheet = false
     @State private var showingSearch = false
     @State private var showingToolDrawer = false
     @State private var expandedCardId: String? = nil
-
-    // Calendar grid ID to force refresh when events change
-    private var calendarGridId: String {
-        let eventIds = viewModel.events.compactMap { $0.id }.joined()
-        return "\(currentMonth.timeIntervalSince1970)-\(eventIds.hashValue)"
-    }
+    @State private var eventsLoadedGeneration = 0 // Increments when events first load
 
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
@@ -249,264 +232,294 @@ struct CalendarView: View {
         return Array(Set(tags)).sorted()
     }
 
+    // Helper computed property for upcoming events in current month
+    private var next5UpcomingEvents: [CalendarEvent] {
+        Array(viewModel.upcomingEvents.prefix(5))
+    }
+
+    @ViewBuilder
+    private var upcomingEventsBanner: some View {
+        if !next5UpcomingEvents.isEmpty {
+            VStack(spacing: 0) {
+                TabView(selection: $countdownBannerIndex) {
+                    ForEach(Array(next5UpcomingEvents.enumerated()), id: \.element.id) { index, event in
+                        HStack(spacing: 12) {
+                            Image(systemName: event.isSpecial ? "star.fill" : "calendar")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.white)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(event.title)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .lineLimit(1)
+                                Text(countdownText(for: event))
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.9))
+                            }
+
+                            Spacer()
+
+                            if next5UpcomingEvents.count > 1 {
+                                Text("\(index + 1)/\(next5UpcomingEvents.count)")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.8))
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.6, green: 0.5, blue: 0.8),
+                                    Color(red: 0.7, green: 0.6, blue: 0.9)
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .cornerRadius(12)
+                        .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+                        .onTapGesture {
+                            selectedEventForDetail = event
+                        }
+                        .tag(index)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(height: 60)
+                .onChange(of: countdownBannerIndex) { oldValue, newValue in
+                    // Reset inactivity timer when user swipes
+                    resetBannerInactivityTimer()
+                }
+            }
+            .padding(.horizontal)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+        }
+    }
+
+    private var backgroundGradient: some View {
+        LinearGradient(
+            colors: [
+                Color(red: 0.98, green: 0.96, blue: 1.0),
+                Color(red: 0.96, green: 0.94, blue: 0.99),
+                Color.white
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private var eventsListSection: some View {
+        if filteredEvents.isEmpty {
+            EmptyStateView(isUpcoming: selectedTab == 0)
+                .padding(.top, 60)
+        } else {
+            LazyVStack(spacing: 12) {
+                ForEach(filteredEvents) { event in
+                    ModernEventCard(
+                        event: event,
+                        onTap: {
+                            selectedEventForDetail = event
+                            expandedCardId = nil
+                        },
+                        onDelete: {
+                            Task {
+                                do {
+                                    try await viewModel.deleteEvent(event)
+                                } catch {
+                                    errorMessage = "Failed to delete event: \(error.localizedDescription)"
+                                    showError = true
+                                }
+                            }
+                        },
+                        expandedCardId: $expandedCardId
+                    )
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            Task {
+                                do {
+                                    try await viewModel.deleteEvent(event)
+                                } catch {
+                                    errorMessage = "Failed to delete event: \(error.localizedDescription)"
+                                    showError = true
+                                }
+                            }
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 100)
+        }
+    }
+
+    @ViewBuilder
+    private var toolDrawerOverlay: some View {
+        if showingToolDrawer {
+            Color.black.opacity(0.3)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.3)) {
+                        showingToolDrawer = false
+                    }
+                }
+
+            VStack(spacing: 0) {
+                ToolDrawerView(
+                    showingSearch: $showingSearch,
+                    showingFilterSheet: $showingFilterSheet,
+                    onNewPlan: {
+                        showingToolDrawer = false
+                        showingAddEvent = true
+                    },
+                    onRefresh: {
+                        Task {
+                            await refreshCalendar()
+                        }
+                    },
+                    onClose: {
+                        withAnimation(.spring(response: 0.3)) {
+                            showingToolDrawer = false
+                        }
+                    }
+                )
+                .padding(.top, 50)
+                .transition(.move(edge: .top).combined(with: .opacity))
+
+                Spacer()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var calendarScrollContent: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 0) {
+                // Upcoming Events Banner (persistent across all months)
+                upcomingEventsBanner
+
+                // Sync indicator
+                if googleCalendarManager.isSyncing {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Syncing with Google Calendar...")
+                            .font(.caption)
+                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                    }
+                    .padding(.vertical, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                // Month indicator for calendar
+                Text(currentMonth, format: .dateTime.month(.wide).year())
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
+
+                // Calendar Grid
+                CalendarGridView(
+                    currentMonth: currentMonth,
+                    events: viewModel.events,
+                    selectedDay: $selectedDay,
+                    selectedTab: $selectedTab
+                )
+                .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)-\(selectedDay?.timeIntervalSince1970 ?? 0)")
+                .padding(.horizontal)
+                .padding(.bottom, 16)
+                .gesture(
+                    DragGesture(minimumDistance: 30)
+                        .onEnded { value in
+                            let horizontalAmount = value.translation.width
+
+                            if horizontalAmount < -50 {
+                                // Swipe left - next month
+                                withAnimation(.spring(response: 0.3)) {
+                                    currentMonth = Calendar.current.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
+                                }
+                            } else if horizontalAmount > 50 {
+                                // Swipe right - previous month
+                                withAnimation(.spring(response: 0.3)) {
+                                    currentMonth = Calendar.current.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
+                                }
+                            }
+                        }
+                )
+
+                // Month Summary Card (only for past months)
+                if isMonthInPast(currentMonth) {
+                    MonthSummaryCard(
+                        month: currentMonth,
+                        events: eventsForCurrentMonth(),
+                        photos: viewModel.photos,
+                        isExpanded: $summaryCardExpanded,
+                        onPhotoTap: { photoURLs, index in
+                            recapPhotoData = RecapPhotoData(photoURLs: photoURLs, initialIndex: index)
+                        }
+                    )
+                    .id(currentMonth)
+                    .padding(.horizontal)
+                    .padding(.bottom, 16)
+                }
+
+                // Custom Tab Selector (only show for current month)
+                if !isMonthInPast(currentMonth) && !isMonthInFuture(currentMonth) {
+                    ModernTabSelector(selectedTab: $selectedTab)
+                        .padding(.horizontal)
+                        .padding(.bottom, 12)
+                }
+
+                // Filter indicator
+                if let selectedDay = selectedDay {
+                    FilterHeaderView(
+                        selectedDay: selectedDay,
+                        eventCount: filteredEvents.count,
+                        onClear: {
+                            withAnimation(.spring(response: 0.3)) {
+                                self.selectedDay = nil
+                            }
+                        }
+                    )
+                    .padding(.horizontal)
+                    .padding(.bottom, 12)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                // Events list
+                eventsListSection
+            }
+        }
+        .blur(radius: showingToolDrawer ? 3 : 0)
+        .allowsHitTesting(!showingToolDrawer)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { value in
+                    // Pull down from top to open drawer
+                    if value.translation.height > 50 && value.startLocation.y < 100 {
+                        withAnimation(.spring(response: 0.3)) {
+                            showingToolDrawer = true
+                        }
+                    }
+                }
+        )
+    }
+
     var body: some View {
         NavigationView {
             ZStack {
-                // Sophisticated background
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.98, green: 0.96, blue: 1.0),
-                        Color(red: 0.96, green: 0.94, blue: 0.99),
-                        Color.white
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
-
-                ScrollView(showsIndicators: false) {
-                    VStack(spacing: 0) {
-                        // Upcoming Events Banner (only show when on current/future month)
-                        if !isMonthInPast(currentMonth) {
-                            let monthEvents = viewModel.upcomingEvents.filter { event in
-                                Calendar.current.isDate(event.date, equalTo: currentMonth, toGranularity: .month)
-                            }
-
-                            if !monthEvents.isEmpty {
-                                let nextEvent = monthEvents.first!
-                                HStack(spacing: 12) {
-                                    Image(systemName: nextEvent.isSpecial ? "star.fill" : "calendar")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(.white)
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(nextEvent.title)
-                                            .font(.system(size: 13, weight: .semibold))
-                                            .foregroundColor(.white)
-                                            .lineLimit(1)
-                                        Text(countdownText(for: nextEvent))
-                                            .font(.system(size: 11))
-                                            .foregroundColor(.white.opacity(0.9))
-                                    }
-
-                                    Spacer()
-
-                                    if monthEvents.count > 1 {
-                                        Text("+\(monthEvents.count - 1)")
-                                            .font(.system(size: 11, weight: .medium))
-                                            .foregroundColor(.white.opacity(0.8))
-                                    }
-                                }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(
-                                LinearGradient(
-                                    colors: [
-                                        Color(red: 0.6, green: 0.5, blue: 0.8),
-                                        Color(red: 0.7, green: 0.6, blue: 0.9)
-                                    ],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .cornerRadius(12)
-                            .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
-                            .padding(.horizontal)
-                            .padding(.top, 12)
-                            .padding(.bottom, 8)
-                            .onTapGesture {
-                                selectedEventForDetail = nextEvent
-                            }
-                            }
-                        }
-
-                        // Sync indicator
-                        if googleCalendarManager.isSyncing {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text("Syncing with Google Calendar...")
-                                    .font(.caption)
-                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                            }
-                            .padding(.vertical, 8)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                        }
-
-                        // Month indicator for calendar
-                        Text(currentMonth, format: .dateTime.month(.wide).year())
-                            .font(.title3)
-                            .fontWeight(.semibold)
-                            .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal)
-                            .padding(.top, 8)
-                            .padding(.bottom, 12)
-
-                        // Calendar Grid
-                        CalendarGridView(
-                            currentMonth: currentMonth,
-                            events: viewModel.events,
-                            selectedDay: $selectedDay,
-                            selectedTab: $selectedTab
-                        )
-                        .id(calendarGridId)
-                        .padding(.horizontal)
-                        .padding(.bottom, 16)
-                        .gesture(
-                            DragGesture(minimumDistance: 30)
-                                .onEnded { value in
-                                    let horizontalAmount = value.translation.width
-
-                                    if horizontalAmount < -50 {
-                                        // Swipe left - next month
-                                        withAnimation(.spring(response: 0.3)) {
-                                            currentMonth = Calendar.current.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
-                                        }
-                                    } else if horizontalAmount > 50 {
-                                        // Swipe right - previous month
-                                        withAnimation(.spring(response: 0.3)) {
-                                            currentMonth = Calendar.current.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
-                                        }
-                                    }
-                                }
-                        )
-
-                        // Month Summary Card (only for past months)
-                        if isMonthInPast(currentMonth) {
-                            MonthSummaryCard(
-                                month: currentMonth,
-                                events: eventsForCurrentMonth(),
-                                isExpanded: $summaryCardExpanded,
-                                onPhotoTap: { photoURLs, index in
-                                    recapPhotoData = RecapPhotoData(photoURLs: photoURLs, initialIndex: index)
-                                }
-                            )
-                            .padding(.horizontal)
-                            .padding(.bottom, 16)
-                        }
-
-                        // Custom Tab Selector (only show for current month)
-                        if !isMonthInPast(currentMonth) && !isMonthInFuture(currentMonth) {
-                            ModernTabSelector(selectedTab: $selectedTab)
-                                .padding(.horizontal)
-                                .padding(.bottom, 12)
-                        }
-
-                        // Filter indicator
-                        if let selectedDay = selectedDay {
-                            FilterHeaderView(
-                                selectedDay: selectedDay,
-                                eventCount: filteredEvents.count,
-                                onClear: {
-                                    withAnimation(.spring(response: 0.3)) {
-                                        self.selectedDay = nil
-                                    }
-                                }
-                            )
-                            .padding(.horizontal)
-                            .padding(.bottom, 12)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                        }
-
-                        // Events list
-                        let eventsToShow = filteredEvents
-
-                        if eventsToShow.isEmpty {
-                            EmptyStateView(isUpcoming: selectedTab == 0)
-                                .padding(.top, 60)
-                        } else {
-                            LazyVStack(spacing: 12) {
-                                ForEach(eventsToShow) { event in
-                                    ModernEventCard(
-                                        event: event,
-                                        onTap: {
-                                            selectedEventForDetail = event
-                                            // Close expansion when opening detail
-                                            expandedCardId = nil
-                                        },
-                                        onDelete: {
-                                            Task {
-                                                do {
-                                                    try await viewModel.deleteEvent(event)
-                                                } catch {
-                                                    errorMessage = "Failed to delete event: \(error.localizedDescription)"
-                                                    showError = true
-                                                }
-                                            }
-                                        },
-                                        expandedCardId: $expandedCardId
-                                    )
-                                    .contextMenu {
-                                        Button(role: .destructive) {
-                                            Task {
-                                                do {
-                                                    try await viewModel.deleteEvent(event)
-                                                } catch {
-                                                    errorMessage = "Failed to delete event: \(error.localizedDescription)"
-                                                    showError = true
-                                                }
-                                            }
-                                        } label: {
-                                            Label("Delete", systemImage: "trash")
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(.horizontal)
-                            .padding(.bottom, 100)
-                        }
-                    }
-                }
-                .blur(radius: showingToolDrawer ? 3 : 0)
-                .allowsHitTesting(!showingToolDrawer)
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 20)
-                        .onEnded { value in
-                            // Pull down from top to open drawer
-                            if value.translation.height > 50 && value.startLocation.y < 100 {
-                                withAnimation(.spring(response: 0.3)) {
-                                    showingToolDrawer = true
-                                }
-                            }
-                        }
-                )
-
-                // TOOL DRAWER OVERLAY
-                if showingToolDrawer {
-                    Color.black.opacity(0.3)
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.3)) {
-                                showingToolDrawer = false
-                            }
-                        }
-
-                    VStack(spacing: 0) {
-                        ToolDrawerView(
-                            showingSearch: $showingSearch,
-                            showingFilterSheet: $showingFilterSheet,
-                            onNewPlan: {
-                                showingToolDrawer = false
-                                showingAddEvent = true
-                            },
-                            onRefresh: {
-                                Task {
-                                    await refreshCalendar()
-                                }
-                            },
-                            onClose: {
-                                withAnimation(.spring(response: 0.3)) {
-                                    showingToolDrawer = false
-                                }
-                            }
-                        )
-                        .padding(.top, 50)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-
-                        Spacer()
-                    }
-                }
+                backgroundGradient
+                calendarScrollContent
+                toolDrawerOverlay
             }
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView(initialDate: selectedDate) { event in
@@ -583,9 +596,23 @@ struct CalendarView: View {
                     countdownBannerIndex = 0
                 }
             }
+            .onChange(of: viewModel.events.count) { oldValue, newValue in
+                // Increment generation when events load to force calendar refresh
+                if oldValue == 0 && newValue > 0 {
+                    eventsLoadedGeneration += 1
+                }
+            }
             .task {
                 // Fetch weather for existing events when view appears
                 await viewModel.fetchWeatherForEvents()
+            }
+            .onAppear {
+                // Start inactivity timer when view appears
+                resetBannerInactivityTimer()
+            }
+            .onDisappear {
+                // Clean up timer when view disappears
+                bannerInactivityTimer?.invalidate()
             }
         }
         .navigationTitle("Our Plans 💜")
@@ -636,16 +663,16 @@ struct CalendarView: View {
         return ""
     }
 
-    func startCountdownResetTimer() {
-        TimerManager.shared.schedule(id: "countdownReset", interval: 10.0, repeats: false) {
+    func resetBannerInactivityTimer() {
+        // Invalidate existing timer
+        bannerInactivityTimer?.invalidate()
+
+        // Start new timer that resets to first event after 1 minute of inactivity
+        bannerInactivityTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: false) { _ in
             withAnimation(.easeInOut(duration: 0.5)) {
                 countdownBannerIndex = 0
             }
         }
-    }
-
-    func resetCountdownTimer() {
-        startCountdownResetTimer()
     }
 
     func refreshCalendar() async {
@@ -1037,7 +1064,7 @@ struct ModernEventCard: View {
         )
         .shadow(color: event.isSpecial ? Color.purple.opacity(0.15) : Color.black.opacity(0.06),
                 radius: 15, x: 0, y: 4)
-        .contentShape(Rectangle())
+        .contentShape(RoundedRectangle(cornerRadius: 24))
         .onTapGesture {
             // Toggle expansion state
             withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
@@ -1050,6 +1077,7 @@ struct ModernEventCard: View {
                 }
             }
         }
+        .id(event.id) // Ensure stable identity for lazy loading
     }
 }
 
@@ -1189,9 +1217,15 @@ struct EventDetailView: View {
                     onDismiss: { selectedPhotoIndex = nil },
                     onDelete: { indexToDelete in
                         if indexToDelete < currentEvent.photoURLs.count {
+                            let photoURLToDelete = currentEvent.photoURLs[indexToDelete]
                             var updatedPhotoURLs = currentEvent.photoURLs
                             updatedPhotoURLs.remove(at: indexToDelete)
                             Task {
+                                // Delete the photo document from Firestore and Storage
+                                // This ensures proper cross-tab synchronization
+                                try? await FirebaseManager.shared.deletePhotoByURL(photoURLToDelete)
+
+                                // Update the event with the new photoURLs array
                                 var updatedEvent = currentEvent
                                 updatedEvent.photoURLs = updatedPhotoURLs
                                 try? await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
@@ -1290,7 +1324,7 @@ struct EventDetailView: View {
 
                                 // Add photos button for past events
                                 if isPastEvent {
-                                    PhotosPicker(selection: $photoPickerItems, maxSelectionCount: 5, matching: .images) {
+                                    PhotosPicker(selection: $photoPickerItems, matching: .images) {
                                         HStack(spacing: 4) {
                                             if isUploadingPhotos {
                                                 ProgressView()
@@ -2303,6 +2337,7 @@ struct EditEventView: View {
 // MARK: - View Models
 class CalendarViewModel: ObservableObject {
     @Published var events: [CalendarEvent] = []
+    @Published var photos: [Photo] = []
 
     private let firebaseManager = FirebaseManager.shared
 
@@ -2318,6 +2353,7 @@ class CalendarViewModel: ObservableObject {
 
     init() {
         loadEvents()
+        loadPhotos()
     }
 
     func loadEvents() {
@@ -2325,6 +2361,16 @@ class CalendarViewModel: ObservableObject {
             for try await events in firebaseManager.getCalendarEvents() {
                 await MainActor.run {
                     self.events = events
+                }
+            }
+        }
+    }
+
+    func loadPhotos() {
+        Task {
+            for try await photos in firebaseManager.getPhotos() {
+                await MainActor.run {
+                    self.photos = photos
                 }
             }
         }
@@ -2388,10 +2434,15 @@ struct CalendarGridView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 8) {
                 ForEach(daysInMonth(), id: \.self) { date in
                     if let date = date {
+                        let isSelectedValue = selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!)
+                        let dayNum = calendar.component(.day, from: date)
+                        let hasEvents = !eventsForDay(date).isEmpty
+                        let _ = hasEvents ? print("🟢 Creating CalendarDayCell - Day \(dayNum), isSelected: \(isSelectedValue), selectedDay: \(selectedDay.map { calendar.component(.day, from: $0) } ?? 0)") : ()
+
                         CalendarDayCell(
                             date: date,
                             events: eventsForDay(date),
-                            isSelected: selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!),
+                            isSelected: isSelectedValue,
                             isToday: calendar.isDateInToday(date),
                             onTap: {
                                 handleDayTap(date: date)
@@ -2439,23 +2490,47 @@ struct CalendarGridView: View {
     }
 
     func handleDayTap(date: Date) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-            if selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!) {
-                selectedDay = nil // Deselect if tapping same day
-            } else {
-                selectedDay = date
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "MMM d, yyyy HH:mm"
+        let isPastDate = date < Date()
 
-                // Auto-switch tabs based on date
-                let isPastDate = date < Date()
-                if isPastDate && selectedTab == 0 {
-                    // Switch to Memories tab for past dates
+        print("🔵 handleDayTap called")
+        print("   Date tapped: \(dateFormatter.string(from: date))")
+        print("   Is past date: \(isPastDate)")
+        print("   Current selectedDay: \(selectedDay.map { dateFormatter.string(from: $0) } ?? "nil")")
+        print("   Current tab: \(selectedTab)")
+
+        // Set selection immediately without animation to ensure state is updated
+        if selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!) {
+            print("   ❌ Deselecting (same day tapped)")
+            selectedDay = nil // Deselect if tapping same day
+        } else {
+            print("   ✅ Setting selectedDay to: \(dateFormatter.string(from: date))")
+            selectedDay = date
+
+            print("   New selectedDay value: \(selectedDay.map { dateFormatter.string(from: $0) } ?? "nil")")
+
+            // Auto-switch tabs based on date
+            if isPastDate && selectedTab == 0 {
+                // Switch to Memories tab for past dates
+                print("   📱 Switching to Memories tab (animated)")
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     selectedTab = 1
-                } else if !isPastDate && selectedTab == 1 {
-                    // Switch to Upcoming tab for future dates
+                }
+            } else if !isPastDate && selectedTab == 1 {
+                // Switch to Upcoming tab for future dates
+                print("   📱 Switching to Upcoming tab (animated)")
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     selectedTab = 0
                 }
+            } else {
+                print("   📱 No tab switch needed")
             }
         }
+
+        print("   Final selectedDay: \(selectedDay.map { dateFormatter.string(from: $0) } ?? "nil")")
+        print("   Final tab: \(selectedTab)")
+        print("🔵 handleDayTap completed")
     }
 }
 
@@ -2470,7 +2545,11 @@ struct CalendarDayCell: View {
     @State private var showTooltip = false
 
     var body: some View {
-        Button(action: {
+        let dayNum = Calendar.current.component(.day, from: date)
+        let isPastDate = date < Date()
+        let _ = print("🟡 CalendarDayCell body - Day \(dayNum), isPast: \(isPastDate), isSelected: \(isSelected), hasEvents: \(!events.isEmpty)")
+
+        return Button(action: {
             if events.isEmpty {
                 // Show brief feedback for empty days
                 withAnimation(.spring(response: 0.2)) {
@@ -2598,6 +2677,7 @@ struct EventDotsView: View {
 struct MonthSummaryCard: View {
     let month: Date
     let events: [CalendarEvent]
+    let photos: [Photo] // All photos to filter from
     @Binding var isExpanded: Bool
     let onPhotoTap: ([String], Int) -> Void
 
@@ -2612,10 +2692,20 @@ struct MonthSummaryCard: View {
     }
 
     var eventCount: Int { events.count }
-    var photoCount: Int { events.flatMap { $0.photoURLs }.count }
     var specialEventCount: Int { events.filter { $0.isSpecial }.count }
+
+    // Filter photos to only those captured in this month
+    var photosForMonth: [Photo] {
+        let calendar = Calendar.current
+        return photos.filter { photo in
+            let captureDate = photo.capturedAt ?? photo.createdAt
+            return calendar.isDate(captureDate, equalTo: month, toGranularity: .month)
+        }
+    }
+
+    var photoCount: Int { photosForMonth.count }
     var allPhotoURLs: [String] {
-        events.flatMap { $0.photoURLs }
+        photosForMonth.map { $0.imageURL }
     }
 
     var body: some View {
@@ -2700,27 +2790,24 @@ struct MonthSummaryCard: View {
                                     onPhotoTap(allPhotoURLs, globalIndex)
                                 }
                             }) {
-                                AsyncImage(url: URL(string: photoURL)) { phase in
-                                    if let image = phase.image {
-                                        image
-                                            .resizable()
-                                            .scaledToFill()
-                                            .frame(maxWidth: .infinity)
-                                            .frame(height: 140)
-                                            .clipped()
-                                    } else {
-                                        Color.gray.opacity(0.2)
-                                            .frame(maxWidth: .infinity)
-                                            .frame(height: 140)
-                                            .overlay(ProgressView())
+                                GeometryReader { geometry in
+                                    AsyncImage(url: URL(string: photoURL)) { phase in
+                                        if let image = phase.image {
+                                            image
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fill)
+                                                .frame(width: geometry.size.width, height: geometry.size.height)
+                                                .clipped()
+                                        } else {
+                                            Color.gray.opacity(0.2)
+                                                .overlay(ProgressView())
+                                        }
                                     }
                                 }
-                                .aspectRatio(1, contentMode: .fill)
+                                .frame(height: 140)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                             .buttonStyle(PlainButtonStyle())
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 140)
                             .contentShape(Rectangle())
                             .rotation3DEffect(
                                 .degrees(animatingPosition == index ? 180 : 0),

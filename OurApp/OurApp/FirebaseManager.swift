@@ -130,6 +130,56 @@ class FirebaseManager: ObservableObject {
         try await db.collection("photos").document(id).delete()
     }
 
+    func deletePhotoByURL(_ photoURL: String) async throws {
+        // Query for the photo document with this URL
+        let photosSnapshot = try await db.collection("photos")
+            .whereField("imageURL", isEqualTo: photoURL)
+            .getDocuments()
+
+        // Delete all matching photos (should be just one, but handle multiple just in case)
+        for doc in photosSnapshot.documents {
+            // Delete from Storage
+            do {
+                let storageRef = storage.reference(forURL: photoURL)
+                try await storageRef.delete()
+            } catch {
+                print("Error deleting photo from storage: \(error)")
+                // Continue with Firestore deletion even if Storage deletion fails
+            }
+
+            // Delete from Firestore
+            try await db.collection("photos").document(doc.documentID).delete()
+        }
+    }
+
+    func cleanupOrphanedPhotos() async throws -> Int {
+        print("🧹 [CLEANUP] Starting orphaned photos cleanup...")
+        var deletedCount = 0
+
+        // Get all photos from Firestore
+        let photosSnapshot = try await db.collection("photos").getDocuments()
+
+        for doc in photosSnapshot.documents {
+            guard let photo = try? doc.data(as: Photo.self) else { continue }
+
+            // Try to get metadata for the photo in Storage
+            do {
+                let storageRef = storage.reference(forURL: photo.imageURL)
+                _ = try await storageRef.getMetadata()
+                // Photo exists in Storage, skip it
+            } catch {
+                // Photo doesn't exist in Storage (404 or other error)
+                // Delete the orphaned Firestore document
+                print("🗑️ [CLEANUP] Deleting orphaned photo document: \(photo.imageURL)")
+                try? await db.collection("photos").document(doc.documentID).delete()
+                deletedCount += 1
+            }
+        }
+
+        print("🟢 [CLEANUP] Cleanup complete. Deleted \(deletedCount) orphaned photo documents")
+        return deletedCount
+    }
+
     // MARK: - Photo Folders
     func createFolder(name: String, type: PhotoFolder.FolderType, eventId: String? = nil, isSpecialEvent: Bool? = nil) async throws -> String {
         let folder = PhotoFolder(
@@ -286,6 +336,26 @@ class FirebaseManager: ObservableObject {
                 try await storageRef.delete()
             } catch {
                 print("Error deleting event photo: \(error)")
+            }
+        }
+
+        // Delete photo documents from Firestore collection that reference this event
+        // This ensures the photos collection is cleaned up and cross-tab sync works correctly
+        let photosSnapshot = try await db.collection("photos")
+            .whereField("eventId", isEqualTo: id)
+            .getDocuments()
+
+        for doc in photosSnapshot.documents {
+            do {
+                // Also delete the photo from storage if it exists
+                if let photo = try? doc.data(as: Photo.self) {
+                    let storageRef = storage.reference(forURL: photo.imageURL)
+                    try? await storageRef.delete()
+                }
+                // Delete the photo document from Firestore
+                try await db.collection("photos").document(doc.documentID).delete()
+            } catch {
+                print("Error deleting photo document: \(error)")
             }
         }
 
