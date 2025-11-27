@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import CommonCrypto
 
 // MARK: - Array Extension for Safe Subscripting
 extension Array {
@@ -20,30 +21,238 @@ extension View {
     }
 }
 
-// MARK: - Image Cache Manager
+// MARK: - Image Cache Manager with LRU and Disk Caching
 class ImageCache {
     static let shared = ImageCache()
-    private var cache = NSCache<NSString, UIImage>()
+    private var memoryCache = NSCache<NSString, CacheEntry>()
+    private var accessOrder: [String] = [] // Track access order for LRU
+    private let accessQueue = DispatchQueue(label: "com.ourapp.imagecache.access", attributes: .concurrent)
+    private let diskCacheURL: URL
+    private let maxMemoryCount = 100
+    private let maxMemoryBytes = 100 * 1024 * 1024 // 100 MB
+    private let maxDiskBytes = 500 * 1024 * 1024 // 500 MB for disk cache
+
+    // Wrapper to track access time
+    private class CacheEntry {
+        let image: UIImage
+        var lastAccessed: Date
+
+        init(image: UIImage) {
+            self.image = image
+            self.lastAccessed = Date()
+        }
+    }
 
     private init() {
-        cache.countLimit = 100 // Limit to 100 images
-        cache.totalCostLimit = 100 * 1024 * 1024 // 100 MB
+        memoryCache.countLimit = maxMemoryCount
+        memoryCache.totalCostLimit = maxMemoryBytes
+
+        // Setup disk cache directory
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        diskCacheURL = cacheDir.appendingPathComponent("ImageCache", isDirectory: true)
+
+        // Create directory if needed
+        try? FileManager.default.createDirectory(at: diskCacheURL, withIntermediateDirectories: true)
+
+        // Clean up disk cache on init if too large
+        Task {
+            await cleanupDiskCacheIfNeeded()
+        }
     }
 
     func get(forKey key: String) -> UIImage? {
-        return cache.object(forKey: key as NSString)
+        // Check memory cache first
+        if let entry = memoryCache.object(forKey: key as NSString) {
+            entry.lastAccessed = Date()
+            updateAccessOrder(key)
+            return entry.image
+        }
+
+        // Check disk cache
+        if let image = loadFromDisk(key: key) {
+            // Promote to memory cache
+            let entry = CacheEntry(image: image)
+            memoryCache.setObject(entry, forKey: key as NSString)
+            updateAccessOrder(key)
+            return image
+        }
+
+        return nil
     }
 
     func set(_ image: UIImage, forKey key: String) {
-        cache.setObject(image, forKey: key as NSString)
+        let entry = CacheEntry(image: image)
+        memoryCache.setObject(entry, forKey: key as NSString)
+        updateAccessOrder(key)
+
+        // Also save to disk cache asynchronously
+        Task {
+            await saveToDisk(image: image, key: key)
+        }
     }
 
     func remove(forKey key: String) {
-        cache.removeObject(forKey: key as NSString)
+        memoryCache.removeObject(forKey: key as NSString)
+        accessQueue.async(flags: .barrier) {
+            self.accessOrder.removeAll { $0 == key }
+        }
+
+        // Remove from disk too
+        let fileURL = diskCacheURL.appendingPathComponent(key.sha256Hash)
+        try? FileManager.default.removeItem(at: fileURL)
     }
 
     func clear() {
-        cache.removeAllObjects()
+        memoryCache.removeAllObjects()
+        accessQueue.async(flags: .barrier) {
+            self.accessOrder.removeAll()
+        }
+
+        // Clear disk cache
+        try? FileManager.default.removeItem(at: diskCacheURL)
+        try? FileManager.default.createDirectory(at: diskCacheURL, withIntermediateDirectories: true)
+    }
+
+    // MARK: - LRU Management
+    private func updateAccessOrder(_ key: String) {
+        accessQueue.async(flags: .barrier) {
+            self.accessOrder.removeAll { $0 == key }
+            self.accessOrder.append(key)
+
+            // Evict LRU items if over limit
+            while self.accessOrder.count > self.maxMemoryCount {
+                if let oldestKey = self.accessOrder.first {
+                    self.accessOrder.removeFirst()
+                    self.memoryCache.removeObject(forKey: oldestKey as NSString)
+                }
+            }
+        }
+    }
+
+    // MARK: - Disk Cache Operations
+    private func diskCacheKey(for key: String) -> String {
+        return key.sha256Hash
+    }
+
+    private func saveToDisk(image: UIImage, key: String) async {
+        guard let data = image.jpegData(compressionQuality: 0.8) else { return }
+        let fileURL = diskCacheURL.appendingPathComponent(diskCacheKey(for: key))
+
+        do {
+            try data.write(to: fileURL)
+        } catch {
+            print("Failed to save image to disk cache: \(error)")
+        }
+    }
+
+    private func loadFromDisk(key: String) -> UIImage? {
+        let fileURL = diskCacheURL.appendingPathComponent(diskCacheKey(for: key))
+
+        guard let data = try? Data(contentsOf: fileURL),
+              let image = UIImage(data: data) else {
+            return nil
+        }
+
+        // Update access date
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: fileURL.path)
+        return image
+    }
+
+    private func cleanupDiskCacheIfNeeded() async {
+        let fileManager = FileManager.default
+
+        guard let files = try? fileManager.contentsOfDirectory(at: diskCacheURL, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else {
+            return
+        }
+
+        var totalSize: Int64 = 0
+        var fileInfos: [(url: URL, size: Int64, date: Date)] = []
+
+        for file in files {
+            guard let attrs = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                  let size = attrs.fileSize,
+                  let date = attrs.contentModificationDate else {
+                continue
+            }
+            totalSize += Int64(size)
+            fileInfos.append((url: file, size: Int64(size), date: date))
+        }
+
+        // If over limit, delete oldest files
+        if totalSize > maxDiskBytes {
+            // Sort by date, oldest first
+            fileInfos.sort { $0.date < $1.date }
+
+            for fileInfo in fileInfos {
+                try? fileManager.removeItem(at: fileInfo.url)
+                totalSize -= fileInfo.size
+                if totalSize <= Int64(Double(maxDiskBytes) * 0.8) { // Clean to 80%
+                    break
+                }
+            }
+        }
+    }
+
+    // MARK: - Prefetching
+    func prefetch(urls: [String]) {
+        Task {
+            for url in urls {
+                // Skip if already cached
+                if get(forKey: url) != nil { continue }
+
+                // Download and cache
+                guard let imageURL = URL(string: url) else { continue }
+                do {
+                    let (data, _) = try await URLSession.shared.data(from: imageURL)
+                    if let image = UIImage(data: data) {
+                        await MainActor.run {
+                            self.set(image, forKey: url)
+                        }
+                    }
+                } catch {
+                    // Silently fail prefetch
+                }
+            }
+        }
+    }
+
+    // Prefetch with priority (first items get priority)
+    func prefetchWithPriority(urls: [String], priority: TaskPriority = .background) {
+        Task(priority: priority) {
+            for (index, url) in urls.enumerated() {
+                // Skip if already cached
+                if get(forKey: url) != nil { continue }
+
+                // Rate limit to prevent overwhelming network
+                if index > 0 {
+                    try? await Task.sleep(nanoseconds: 50_000_000) // 50ms delay
+                }
+
+                guard let imageURL = URL(string: url) else { continue }
+                do {
+                    let (data, _) = try await URLSession.shared.data(from: imageURL)
+                    if let image = UIImage(data: data) {
+                        await MainActor.run {
+                            self.set(image, forKey: url)
+                        }
+                    }
+                } catch {
+                    // Silently fail prefetch
+                }
+            }
+        }
+    }
+}
+
+// MARK: - String Extension for Hashing
+extension String {
+    var sha256Hash: String {
+        guard let data = self.data(using: .utf8) else { return self }
+        var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        data.withUnsafeBytes {
+            _ = CC_SHA256($0.baseAddress, CC_LONG(data.count), &hash)
+        }
+        return hash.map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -52,16 +261,19 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
     let url: URL?
     let content: (Image) -> Content
     let placeholder: () -> Placeholder
+    let thumbnailSize: CGFloat? // Optional: set to nil for full resolution
 
     @State private var image: UIImage?
     @State private var isLoading = false
 
     init(
         url: URL?,
+        thumbnailSize: CGFloat? = nil,
         @ViewBuilder content: @escaping (Image) -> Content,
         @ViewBuilder placeholder: @escaping () -> Placeholder
     ) {
         self.url = url
+        self.thumbnailSize = thumbnailSize
         self.content = content
         self.placeholder = placeholder
     }
@@ -82,7 +294,8 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
     private func loadImage() {
         guard let url = url, !isLoading else { return }
 
-        let cacheKey = url.absoluteString
+        // Use different cache keys for thumbnails vs full resolution
+        let cacheKey = thumbnailSize != nil ? "\(url.absoluteString)_thumb_\(Int(thumbnailSize!))" : url.absoluteString
 
         // Check cache first
         if let cachedImage = ImageCache.shared.get(forKey: cacheKey) {
@@ -92,11 +305,21 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
 
         // Download image
         isLoading = true
-        Task {
+        Task(priority: .userInitiated) {
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
-                if let downloadedImage = UIImage(data: data) {
-                    // Cache the image
+
+                // Use downsampling for better performance with large images
+                if let thumbnailSize = thumbnailSize {
+                    if let downsampledImage = downsampleImage(data: data, toSize: thumbnailSize) {
+                        ImageCache.shared.set(downsampledImage, forKey: cacheKey)
+                        await MainActor.run {
+                            self.image = downsampledImage
+                            self.isLoading = false
+                        }
+                    }
+                } else if let downloadedImage = UIImage(data: data) {
+                    // Cache the full image
                     ImageCache.shared.set(downloadedImage, forKey: cacheKey)
                     await MainActor.run {
                         self.image = downloadedImage
@@ -110,6 +333,30 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
                 }
             }
         }
+    }
+
+    // Efficient image downsampling using ImageIO
+    private func downsampleImage(data: Data, toSize maxDimension: CGFloat) -> UIImage? {
+        let imageSourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let imageSource = CGImageSourceCreateWithData(data as CFData, imageSourceOptions) else {
+            return nil
+        }
+
+        let scale = UIScreen.main.scale
+        let maxDimensionInPixels = maxDimension * scale
+
+        let downsampleOptions = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDimensionInPixels
+        ] as CFDictionary
+
+        guard let downsampledImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, downsampleOptions) else {
+            return nil
+        }
+
+        return UIImage(cgImage: downsampledImage)
     }
 }
 
@@ -193,6 +440,8 @@ struct FullScreenPhotoViewer: View {
     let onDelete: ((Int) -> Void)?
     let captureDates: [Date?]? // Optional capture dates for each photo
     let chronologicalPositions: [Int]? // Optional chronological position (1-based) for each photo
+    let favoriteStates: [Bool]? // Optional favorite states for each photo
+    let onToggleFavorite: ((Int) -> Void)? // Optional callback to toggle favorite
 
     // Use a unique ID to force complete view recreation
     @State private var viewID = UUID()
@@ -208,18 +457,23 @@ struct FullScreenPhotoViewer: View {
     @State private var selectionMode = false
     @State private var selectedIndices: Set<Int> = []
     @State private var loadedImages: [Int: UIImage] = [:]
+    @State private var localFavoriteStates: [Bool] = []
 
-    init(photoURLs: [String], initialIndex: Int, onDismiss: @escaping () -> Void, onDelete: ((Int) -> Void)? = nil, captureDates: [Date?]? = nil, chronologicalPositions: [Int]? = nil) {
+    init(photoURLs: [String], initialIndex: Int, onDismiss: @escaping () -> Void, onDelete: ((Int) -> Void)? = nil, captureDates: [Date?]? = nil, chronologicalPositions: [Int]? = nil, favoriteStates: [Bool]? = nil, onToggleFavorite: ((Int) -> Void)? = nil) {
         self.photoURLs = photoURLs
         self.initialIndex = initialIndex
         self.onDismiss = onDismiss
         self.onDelete = onDelete
         self.captureDates = captureDates
         self.chronologicalPositions = chronologicalPositions
+        self.favoriteStates = favoriteStates
+        self.onToggleFavorite = onToggleFavorite
 
         // Initialize directly with the index we want
         let safeIndex = max(0, min(initialIndex, photoURLs.count - 1))
         _currentIndex = State(initialValue: safeIndex)
+        // Initialize local favorite states
+        _localFavoriteStates = State(initialValue: favoriteStates ?? Array(repeating: false, count: photoURLs.count))
     }
 
     var body: some View {
@@ -393,6 +647,36 @@ struct FullScreenPhotoViewer: View {
                 }
                 .opacity(dragOffset == 0 ? 1 : 0)
             }
+
+            // Heart button overlay in bottom right
+            if onToggleFavorite != nil {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            // Toggle local state for immediate visual feedback
+                            if currentIndex < localFavoriteStates.count {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                    localFavoriteStates[currentIndex].toggle()
+                                }
+                            }
+                            // Call the callback
+                            onToggleFavorite?(currentIndex)
+                        }) {
+                            let isFavorite = currentIndex < localFavoriteStates.count ? localFavoriteStates[currentIndex] : false
+                            Image(systemName: isFavorite ? "heart.fill" : "heart")
+                                .font(.system(size: 28))
+                                .foregroundColor(isFavorite ? .red : .white)
+                                .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+                                .scaleEffect(isFavorite ? 1.1 : 1.0)
+                        }
+                        .padding(.trailing, 24)
+                        .padding(.bottom, 80)
+                    }
+                }
+                .opacity(dragOffset == 0 ? 1 : 0)
+            }
         }
         .statusBar(hidden: true)
         .onAppear {
@@ -402,6 +686,8 @@ struct FullScreenPhotoViewer: View {
             viewID = UUID() // Force view recreation
             dragOffset = 0
             isZoomed = false
+            // Sync local favorite states
+            localFavoriteStates = favoriteStates ?? Array(repeating: false, count: photoURLs.count)
         }
         .alert("Saved!", isPresented: $showingSaveSuccess) {
             Button("OK", role: .cancel) { }

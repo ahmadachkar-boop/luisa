@@ -4,6 +4,7 @@ import MapKit
 import WeatherKit
 import CoreLocation
 import ImageIO
+import WidgetKit
 
 // MARK: - Timeout Helper
 struct TimeoutError: Error {}
@@ -172,9 +173,10 @@ struct CalendarView: View {
     @State private var selectedTags: Set<String> = []
     @State private var showingFilterSheet = false
     @State private var showingSearch = false
-    @State private var showingToolDrawer = false
+    @State private var showingExpandedHeader = false
     @State private var expandedCardId: String? = nil
     @State private var eventsLoadedGeneration = 0 // Increments when events first load
+    @State private var quickAddDate: Date? = nil // For quick add from calendar tap
 
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
@@ -209,8 +211,20 @@ struct CalendarView: View {
 
         // Only filter by selected day if one is selected
         if let selectedDay = selectedDay {
+            let calendar = Calendar.current
             filtered = filtered.filter { event in
-                Calendar.current.isDate(event.date, equalTo: selectedDay, toGranularity: .day)
+                // Check if selected day is the start date
+                if calendar.isDate(event.date, inSameDayAs: selectedDay) {
+                    return true
+                }
+                // Check if selected day falls within multi-day event range
+                if let endDate = event.endDate {
+                    let startOfEventDay = calendar.startOfDay(for: event.date)
+                    let startOfEndDay = calendar.startOfDay(for: endDate)
+                    let startOfSelectedDay = calendar.startOfDay(for: selectedDay)
+                    return startOfSelectedDay >= startOfEventDay && startOfSelectedDay <= startOfEndDay
+                }
+                return false
             }
         }
 
@@ -253,9 +267,17 @@ struct CalendarView: View {
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundColor(.white)
                                     .lineLimit(1)
-                                Text(countdownText(for: event))
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.9))
+                                HStack(spacing: 4) {
+                                    Text(dateRangeText(for: event))
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.white.opacity(0.9))
+                                    Text("•")
+                                        .font(.system(size: 9))
+                                        .foregroundColor(.white.opacity(0.6))
+                                    Text(countdownText(for: event))
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.95))
+                                }
                             }
 
                             Spacer()
@@ -318,7 +340,7 @@ struct CalendarView: View {
             EmptyStateView(isUpcoming: selectedTab == 0)
                 .padding(.top, 60)
         } else {
-            LazyVStack(spacing: 12) {
+            VStack(spacing: 12) {
                 ForEach(filteredEvents) { event in
                     ModernEventCard(
                         event: event,
@@ -359,41 +381,130 @@ struct CalendarView: View {
         }
     }
 
+    // MARK: - Expandable Header (inline, hidden when collapsed)
     @ViewBuilder
-    private var toolDrawerOverlay: some View {
-        if showingToolDrawer {
-            Color.black.opacity(0.3)
-                .ignoresSafeArea()
-                .onTapGesture {
-                    withAnimation(.spring(response: 0.3)) {
-                        showingToolDrawer = false
+    private var expandableHeader: some View {
+        if showingExpandedHeader {
+            VStack(spacing: 16) {
+                // Quick actions row
+                HStack(spacing: 12) {
+                    // New Plan button
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3)) {
+                            showingExpandedHeader = false
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            showingAddEvent = true
+                        }
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.body)
+                            Text("New Plan")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.7, green: 0.45, blue: 0.95),
+                                    Color(red: 0.55, green: 0.35, blue: 0.85)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .cornerRadius(12)
+                    }
+
+                    // Search button
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3)) {
+                            showingExpandedHeader = false
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            showingSearch = true
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.body)
+                            Text("Search")
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                        )
                     }
                 }
 
-            VStack(spacing: 0) {
-                ToolDrawerView(
-                    showingSearch: $showingSearch,
-                    showingFilterSheet: $showingFilterSheet,
-                    onNewPlan: {
-                        showingToolDrawer = false
-                        showingAddEvent = true
-                    },
-                    onRefresh: {
+                // Filter and Refresh row
+                HStack(spacing: 12) {
+                    // Filter button
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3)) {
+                            showingExpandedHeader = false
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            showingFilterSheet = true
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "line.3.horizontal.decrease.circle")
+                                .font(.body)
+                            Text("Filters")
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                        )
+                    }
+
+                    // Refresh button
+                    Button(action: {
                         Task {
                             await refreshCalendar()
                         }
-                    },
-                    onClose: {
                         withAnimation(.spring(response: 0.3)) {
-                            showingToolDrawer = false
+                            showingExpandedHeader = false
                         }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.body)
+                            Text("Refresh")
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                        )
                     }
-                )
-                .padding(.top, 50)
-                .transition(.move(edge: .top).combined(with: .opacity))
-
-                Spacer()
+                }
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 20)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Color(red: 0.98, green: 0.96, blue: 1.0))
+                    .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 4)
+            )
+            .padding(.horizontal)
+            .padding(.top, 8)
+            .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 
@@ -401,6 +512,9 @@ struct CalendarView: View {
     private var calendarScrollContent: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
+                // Expandable header (hidden when collapsed)
+                expandableHeader
+
                 // Upcoming Events Banner (persistent across all months)
                 upcomingEventsBanner
 
@@ -432,7 +546,11 @@ struct CalendarView: View {
                     currentMonth: currentMonth,
                     events: viewModel.events,
                     selectedDay: $selectedDay,
-                    selectedTab: $selectedTab
+                    selectedTab: $selectedTab,
+                    onQuickAdd: { date in
+                        quickAddDate = date
+                        showingAddEvent = true
+                    }
                 )
                 .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)-\(selectedDay?.timeIntervalSince1970 ?? 0)")
                 .padding(.horizontal)
@@ -499,19 +617,22 @@ struct CalendarView: View {
                 eventsListSection
             }
         }
-        .blur(radius: showingToolDrawer ? 3 : 0)
-        .allowsHitTesting(!showingToolDrawer)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 20)
-                .onEnded { value in
-                    // Pull down from top to open drawer
-                    if value.translation.height > 50 && value.startLocation.y < 100 {
-                        withAnimation(.spring(response: 0.3)) {
-                            showingToolDrawer = true
-                        }
-                    }
+        .refreshable {
+            // Show the expanded header when user pulls down
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                showingExpandedHeader = true
+            }
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y
+        } action: { oldValue, newValue in
+            // Auto-hide header when scrolling down
+            if showingExpandedHeader && newValue > 50 {
+                withAnimation(.spring(response: 0.3)) {
+                    showingExpandedHeader = false
                 }
-        )
+            }
+        }
     }
 
     var body: some View {
@@ -519,16 +640,21 @@ struct CalendarView: View {
             ZStack {
                 backgroundGradient
                 calendarScrollContent
-                toolDrawerOverlay
             }
             .sheet(isPresented: $showingAddEvent) {
-                AddEventView(initialDate: selectedDate) { event in
+                AddEventView(initialDate: quickAddDate ?? selectedDate) { event in
                     do {
                         try await viewModel.addEvent(event)
+                        quickAddDate = nil // Reset after adding
                     } catch {
                         errorMessage = "Failed to add event: \(error.localizedDescription)"
                         showError = true
                     }
+                }
+            }
+            .onChange(of: showingAddEvent) { _, newValue in
+                if !newValue {
+                    quickAddDate = nil // Reset when sheet is dismissed
                 }
             }
             .sheet(item: $selectedEventForDetail) { event in
@@ -661,6 +787,41 @@ struct CalendarView: View {
             }
         }
         return ""
+    }
+
+    func dateRangeText(for event: CalendarEvent) -> String {
+        let formatter = DateFormatter()
+
+        if event.isMultiDay, let endDate = event.endDate {
+            let calendar = Calendar.current
+            let sameMonth = calendar.isDate(event.date, equalTo: endDate, toGranularity: .month)
+            let sameYear = calendar.isDate(event.date, equalTo: endDate, toGranularity: .year)
+
+            if sameMonth {
+                // Same month: "Dec 15 - 18"
+                formatter.dateFormat = "MMM d"
+                let startStr = formatter.string(from: event.date)
+                formatter.dateFormat = "d"
+                let endStr = formatter.string(from: endDate)
+                return "\(startStr) - \(endStr)"
+            } else if sameYear {
+                // Different months, same year: "Dec 28 - Jan 3"
+                formatter.dateFormat = "MMM d"
+                let startStr = formatter.string(from: event.date)
+                let endStr = formatter.string(from: endDate)
+                return "\(startStr) - \(endStr)"
+            } else {
+                // Different years: "Dec 28 '24 - Jan 3 '25"
+                formatter.dateFormat = "MMM d ''yy"
+                let startStr = formatter.string(from: event.date)
+                let endStr = formatter.string(from: endDate)
+                return "\(startStr) - \(endStr)"
+            }
+        } else {
+            // Single day event
+            formatter.dateFormat = "MMM d"
+            return formatter.string(from: event.date)
+        }
     }
 
     func resetBannerInactivityTimer() {
@@ -1287,21 +1448,27 @@ struct EventDetailView: View {
 
             // Date text overlay
             VStack(spacing: 8) {
-                Text(currentEvent.date, format: .dateTime.day())
-                    .font(.system(size: 60, weight: .bold))
-                    .foregroundColor(.white)
-                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+                if currentEvent.isMultiDay, let endDate = currentEvent.endDate {
+                    // Multi-day event: show date range
+                    dateRangeView(startDate: currentEvent.date, endDate: endDate)
+                } else {
+                    // Single day event
+                    Text(currentEvent.date, format: .dateTime.day())
+                        .font(.system(size: 60, weight: .bold))
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
 
-                Text(currentEvent.date, format: .dateTime.month(.wide).year())
-                    .font(.title3)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.white)
-                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+                    Text(currentEvent.date, format: .dateTime.month(.wide).year())
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
 
-                Text(currentEvent.date, format: .dateTime.weekday(.wide))
-                    .font(.subheadline)
-                    .foregroundColor(.white)
-                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+                    Text(currentEvent.date, format: .dateTime.weekday(.wide))
+                        .font(.subheadline)
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+                }
             }
             .padding(.vertical, 30)
         }
@@ -1807,6 +1974,63 @@ struct EventDetailView: View {
             endPoint: .bottomTrailing
         )
     }
+
+    @ViewBuilder
+    private func dateRangeView(startDate: Date, endDate: Date) -> some View {
+        let calendar = Calendar.current
+        let sameMonth = calendar.isDate(startDate, equalTo: endDate, toGranularity: .month)
+        let sameYear = calendar.isDate(startDate, equalTo: endDate, toGranularity: .year)
+
+        if sameMonth {
+            // Same month: "15 - 18"
+            HStack(spacing: 8) {
+                Text(startDate, format: .dateTime.day())
+                    .font(.system(size: 48, weight: .bold))
+                Text("-")
+                    .font(.system(size: 36, weight: .medium))
+                Text(endDate, format: .dateTime.day())
+                    .font(.system(size: 48, weight: .bold))
+            }
+            .foregroundColor(.white)
+            .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+
+            Text(startDate, format: .dateTime.month(.wide).year())
+                .font(.title3)
+                .fontWeight(.semibold)
+                .foregroundColor(.white)
+                .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+        } else if sameYear {
+            // Different months, same year: "Dec 28 - Jan 3"
+            HStack(spacing: 8) {
+                Text(startDate, format: .dateTime.month(.abbreviated).day())
+                    .font(.system(size: 28, weight: .bold))
+                Text("-")
+                    .font(.system(size: 24, weight: .medium))
+                Text(endDate, format: .dateTime.month(.abbreviated).day())
+                    .font(.system(size: 28, weight: .bold))
+            }
+            .foregroundColor(.white)
+            .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+
+            Text(startDate, format: .dateTime.year())
+                .font(.title3)
+                .fontWeight(.semibold)
+                .foregroundColor(.white)
+                .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+        } else {
+            // Different years: "Dec 28, 2024 - Jan 3, 2025"
+            VStack(spacing: 4) {
+                Text(startDate, format: .dateTime.month(.abbreviated).day().year())
+                    .font(.system(size: 20, weight: .bold))
+                Text("-")
+                    .font(.system(size: 16, weight: .medium))
+                Text(endDate, format: .dateTime.month(.abbreviated).day().year())
+                    .font(.system(size: 20, weight: .bold))
+            }
+            .foregroundColor(.white)
+            .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+        }
+    }
 }
 
 // MARK: - Add Event View (keeping existing)
@@ -1819,6 +2043,8 @@ struct AddEventView: View {
     @State private var description = ""
     @State private var location = ""
     @State private var date: Date
+    @State private var isMultiDay = false
+    @State private var endDate: Date
     @State private var isSpecial = false
     @State private var isSaving = false
     @State private var tags: [String] = []
@@ -1829,6 +2055,7 @@ struct AddEventView: View {
         self.initialDate = initialDate
         self.onSave = onSave
         _date = State(initialValue: initialDate)
+        _endDate = State(initialValue: Calendar.current.date(byAdding: .day, value: 1, to: initialDate) ?? initialDate)
     }
 
     var body: some View {
@@ -1841,7 +2068,26 @@ struct AddEventView: View {
                 }
 
                 Section("When & Where") {
-                    DatePicker("Date & Time", selection: $date)
+                    DatePicker(isMultiDay ? "Start Date" : "Date & Time", selection: $date)
+
+                    Toggle("Multi-Day Event", isOn: $isMultiDay)
+                        .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                    if isMultiDay {
+                        DatePicker("End Date", selection: $endDate, in: date..., displayedComponents: .date)
+                            .onChange(of: date) { _, newDate in
+                                // Ensure end date is not before start date
+                                if endDate < newDate {
+                                    endDate = Calendar.current.date(byAdding: .day, value: 1, to: newDate) ?? newDate
+                                }
+                            }
+
+                        // Show duration
+                        let days = Calendar.current.dateComponents([.day], from: date, to: endDate).day ?? 0
+                        Text("\(days + 1) day\(days > 0 ? "s" : "")")
+                            .font(.caption)
+                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                    }
 
                     HStack {
                         TextField("Location (optional)", text: $location)
@@ -1942,6 +2188,7 @@ struct AddEventView: View {
             title: title,
             description: description,
             date: date,
+            endDate: isMultiDay ? endDate : nil,
             location: location,
             createdBy: "You",
             isSpecial: isSpecial,
@@ -1972,6 +2219,8 @@ struct EditEventView: View {
     @State private var description: String
     @State private var location: String
     @State private var date: Date
+    @State private var isMultiDay: Bool
+    @State private var endDate: Date
     @State private var isSpecial: Bool
     @State private var isSaving = false
     @State private var backgroundImageItem: PhotosPickerItem?
@@ -1994,6 +2243,8 @@ struct EditEventView: View {
         _description = State(initialValue: event.description)
         _location = State(initialValue: event.location)
         _date = State(initialValue: event.date)
+        _isMultiDay = State(initialValue: event.endDate != nil)
+        _endDate = State(initialValue: event.endDate ?? Calendar.current.date(byAdding: .day, value: 1, to: event.date) ?? event.date)
         _isSpecial = State(initialValue: event.isSpecial)
         _backgroundImageURL = State(initialValue: event.backgroundImageURL)
         _backgroundOffsetX = State(initialValue: event.backgroundOffsetX ?? 0.0)
@@ -2043,7 +2294,24 @@ struct EditEventView: View {
 
     var whenWhereSection: some View {
         Section("When & Where") {
-            DatePicker("Date & Time", selection: $date)
+            DatePicker(isMultiDay ? "Start Date" : "Date & Time", selection: $date)
+
+            Toggle("Multi-Day Event", isOn: $isMultiDay)
+                .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+            if isMultiDay {
+                DatePicker("End Date", selection: $endDate, in: date..., displayedComponents: .date)
+                    .onChange(of: date) { _, newDate in
+                        if endDate < newDate {
+                            endDate = Calendar.current.date(byAdding: .day, value: 1, to: newDate) ?? newDate
+                        }
+                    }
+
+                let days = Calendar.current.dateComponents([.day], from: date, to: endDate).day ?? 0
+                Text("\(days + 1) day\(days > 0 ? "s" : "")")
+                    .font(.caption)
+                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+            }
 
             HStack {
                 TextField("Location (optional)", text: $location)
@@ -2319,6 +2587,7 @@ struct EditEventView: View {
         updatedEvent.title = title
         updatedEvent.description = description
         updatedEvent.date = date
+        updatedEvent.endDate = isMultiDay ? endDate : nil
         updatedEvent.location = location
         updatedEvent.isSpecial = isSpecial
         updatedEvent.backgroundImageURL = backgroundImageURL
@@ -2361,6 +2630,8 @@ class CalendarViewModel: ObservableObject {
             for try await events in firebaseManager.getCalendarEvents() {
                 await MainActor.run {
                     self.events = events
+                    // Sync to widget
+                    WidgetDataManager.shared.syncEvents(events)
                 }
             }
         }
@@ -2412,6 +2683,7 @@ struct CalendarGridView: View {
     let events: [CalendarEvent]
     @Binding var selectedDay: Date?
     @Binding var selectedTab: Int
+    var onQuickAdd: ((Date) -> Void)? = nil // Quick add callback
     @State private var hoveredDay: Date?
 
     private let calendar = Calendar.current
@@ -2446,6 +2718,9 @@ struct CalendarGridView: View {
                             isToday: calendar.isDateInToday(date),
                             onTap: {
                                 handleDayTap(date: date)
+                            },
+                            onQuickAdd: {
+                                onQuickAdd?(date)
                             }
                         )
                     } else {
@@ -2485,7 +2760,18 @@ struct CalendarGridView: View {
 
     func eventsForDay(_ date: Date) -> [CalendarEvent] {
         return events.filter { event in
-            calendar.isDate(event.date, inSameDayAs: date)
+            // Check if date is the start date
+            if calendar.isDate(event.date, inSameDayAs: date) {
+                return true
+            }
+            // Check if date falls within multi-day event range
+            if let endDate = event.endDate {
+                let startOfEventDay = calendar.startOfDay(for: event.date)
+                let startOfEndDay = calendar.startOfDay(for: endDate)
+                let startOfDate = calendar.startOfDay(for: date)
+                return startOfDate >= startOfEventDay && startOfDate <= startOfEndDay
+            }
+            return false
         }
     }
 
@@ -2541,8 +2827,10 @@ struct CalendarDayCell: View {
     let isSelected: Bool
     let isToday: Bool
     let onTap: () -> Void
+    var onQuickAdd: (() -> Void)? = nil // Quick add for empty days
 
     @State private var showTooltip = false
+    @State private var showQuickAddPrompt = false
 
     var body: some View {
         let dayNum = Calendar.current.component(.day, from: date)
@@ -2551,13 +2839,26 @@ struct CalendarDayCell: View {
 
         return Button(action: {
             if events.isEmpty {
-                // Show brief feedback for empty days
-                withAnimation(.spring(response: 0.2)) {
-                    showTooltip = true
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                if onQuickAdd != nil && !isPastDate {
+                    // Show "Add Event" prompt for empty future days
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                        showQuickAddPrompt = true
+                    }
+                    // Auto-dismiss after 3 seconds if not tapped
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                        withAnimation(.spring(response: 0.2)) {
+                            showQuickAddPrompt = false
+                        }
+                    }
+                } else {
+                    // Show brief feedback for empty past days
                     withAnimation(.spring(response: 0.2)) {
-                        showTooltip = false
+                        showTooltip = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        withAnimation(.spring(response: 0.2)) {
+                            showTooltip = false
+                        }
                     }
                 }
             } else {
@@ -2607,6 +2908,30 @@ struct CalendarDayCell: View {
                     } else if events.isEmpty && showTooltip {
                         RoundedRectangle(cornerRadius: 10)
                             .fill(Color.gray.opacity(0.05))
+                    } else if showQuickAddPrompt {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.15))
+                    }
+                }
+            )
+            .overlay(
+                // Quick add prompt overlay - just plus icon
+                Group {
+                    if showQuickAddPrompt {
+                        Button(action: {
+                            withAnimation(.spring(response: 0.2)) {
+                                showQuickAddPrompt = false
+                            }
+                            onQuickAdd?()
+                        }) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 22))
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                .shadow(color: Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.4), radius: 4, x: 0, y: 2)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .offset(y: -30)
+                        .transition(.scale.combined(with: .opacity))
                     }
                 }
             )
@@ -3399,131 +3724,6 @@ struct FilterTagsView: View {
     }
 }
 
-// MARK: - Tool Drawer
-struct ToolDrawerView: View {
-    @Binding var showingSearch: Bool
-    @Binding var showingFilterSheet: Bool
-    let onNewPlan: () -> Void
-    let onRefresh: () -> Void
-    let onClose: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Drag handle
-            Capsule()
-                .fill(Color.white.opacity(0.5))
-                .frame(width: 40, height: 5)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-
-            VStack(spacing: 16) {
-                // NEW PLAN BUTTON (top priority)
-                Button(action: onNewPlan) {
-                    HStack {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title2)
-                        Text("New Plan")
-                            .font(.headline)
-                        Spacer()
-                    }
-                    .foregroundColor(.white)
-                    .padding()
-                    .background(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.7, green: 0.4, blue: 0.95),
-                                Color(red: 0.55, green: 0.3, blue: 0.85)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .cornerRadius(16)
-                }
-
-                Divider()
-                    .background(Color.white.opacity(0.3))
-
-                // SEARCH BAR
-                Button(action: {
-                    onClose()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        showingSearch = true
-                    }
-                }) {
-                    HStack {
-                        Image(systemName: "magnifyingglass")
-                        Text("Search events...")
-                            .foregroundColor(.white.opacity(0.7))
-                        Spacer()
-                    }
-                    .foregroundColor(.white)
-                    .padding()
-                    .background(Color.white.opacity(0.15))
-                    .cornerRadius(12)
-                }
-
-                // QUICK ACTIONS
-                HStack(spacing: 12) {
-                    // Filter button
-                    Button(action: {
-                        onClose()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            showingFilterSheet = true
-                        }
-                    }) {
-                        HStack {
-                            Image(systemName: "line.3.horizontal.decrease.circle")
-                            Text("Filters")
-                                .font(.subheadline)
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.white.opacity(0.15))
-                        .cornerRadius(12)
-                    }
-
-                    // Refresh button
-                    Button(action: {
-                        onRefresh()
-                    }) {
-                        HStack {
-                            Image(systemName: "arrow.clockwise.circle")
-                            Text("Refresh")
-                                .font(.subheadline)
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.white.opacity(0.15))
-                        .cornerRadius(12)
-                    }
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
-        }
-        .background(
-            ZStack {
-                // Frosted glass effect
-                RoundedRectangle(cornerRadius: 24)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.95),
-                                Color(red: 0.5, green: 0.3, blue: 0.75).opacity(0.95)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .shadow(color: Color.black.opacity(0.3), radius: 20, x: 0, y: 10)
-            }
-        )
-        .padding(.horizontal, 16)
-    }
-}
 
 #Preview {
     CalendarView()

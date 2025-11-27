@@ -1,0 +1,72 @@
+import Foundation
+import WidgetKit
+
+// MARK: - Widget Data Manager
+// This class syncs events to the widget via App Groups shared UserDefaults
+
+class WidgetDataManager {
+    static let shared = WidgetDataManager()
+
+    private let appGroupIdentifier = "group.com.ourapp.shared"
+    private let eventsKey = "upcomingEvents"
+
+    private var sharedDefaults: UserDefaults? {
+        UserDefaults(suiteName: appGroupIdentifier)
+    }
+
+    private init() {}
+
+    // MARK: - Sync Events to Widget
+    func syncEvents(_ events: [CalendarEvent]) {
+        guard let sharedDefaults = sharedDefaults else {
+            print("WidgetDataManager: Unable to access shared UserDefaults")
+            return
+        }
+
+        // Filter to upcoming events only, sorted by date
+        let now = Date()
+        let upcomingEvents = events
+            .filter { $0.date > now }
+            .sorted { $0.date < $1.date }
+            .prefix(5) // Keep only the next 5 events
+            .map { event in
+                WidgetEvent(
+                    id: event.id ?? UUID().uuidString,
+                    title: event.title,
+                    date: event.date,
+                    location: event.location,
+                    isSpecial: event.isSpecial
+                )
+            }
+
+        // Encode and save to shared UserDefaults
+        if let encoded = try? JSONEncoder().encode(Array(upcomingEvents)) {
+            sharedDefaults.set(encoded, forKey: eventsKey)
+            sharedDefaults.synchronize()
+
+            // Reload widget timeline
+            WidgetCenter.shared.reloadTimelines(ofKind: "CountdownWidget")
+        }
+    }
+
+    // MARK: - Clear Widget Data
+    func clearWidgetData() {
+        sharedDefaults?.removeObject(forKey: eventsKey)
+        sharedDefaults?.synchronize()
+        WidgetCenter.shared.reloadTimelines(ofKind: "CountdownWidget")
+    }
+
+    // MARK: - Force Reload Widget
+    func reloadWidget() {
+        WidgetCenter.shared.reloadTimelines(ofKind: "CountdownWidget")
+    }
+}
+
+// MARK: - Widget Event Model (matches the widget's model)
+struct WidgetEvent: Codable {
+    let id: String
+    let title: String
+    let date: Date
+    let location: String
+    let isSpecial: Bool
+}

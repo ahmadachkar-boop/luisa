@@ -30,6 +30,7 @@ struct Photo: Identifiable, Codable {
     var capturedAt: Date? // Original date from image metadata (falls back to createdAt if unavailable)
     var eventId: String? // Reference to calendar event if photo is linked to an event
     var folderId: String? // Reference to custom folder if photo is in a folder
+    var isFavorite: Bool? // Whether the photo is marked as favorite
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -40,6 +41,7 @@ struct Photo: Identifiable, Codable {
         case capturedAt
         case eventId
         case folderId
+        case isFavorite
     }
 }
 
@@ -75,7 +77,8 @@ struct CalendarEvent: Identifiable, Codable {
     @DocumentID var id: String?
     var title: String
     var description: String
-    var date: Date
+    var date: Date // Start date
+    var endDate: Date? // End date for multi-day events (nil = single day)
     var location: String
     var createdBy: String
     var isSpecial: Bool // For marking special dates
@@ -89,11 +92,25 @@ struct CalendarEvent: Identifiable, Codable {
     var tags: [String]? // Tags for categorizing and filtering events
     var weatherForecast: String? // Weather forecast for the event (cached)
 
+    // Computed property to check if event spans multiple days
+    var isMultiDay: Bool {
+        guard let endDate = endDate else { return false }
+        return !Calendar.current.isDate(date, inSameDayAs: endDate)
+    }
+
+    // Get the number of days for the event
+    var durationDays: Int {
+        guard let endDate = endDate else { return 1 }
+        let days = Calendar.current.dateComponents([.day], from: date, to: endDate).day ?? 0
+        return max(1, days + 1)
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case title
         case description
         case date
+        case endDate
         case location
         case createdBy
         case isSpecial
