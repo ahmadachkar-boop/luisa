@@ -53,7 +53,6 @@ struct PhotoGalleryView: View {
     @State private var saveErrorMessage = ""
     @State private var savedPhotoCount = 0
     @State private var showingExpandedHeader = false
-    @State private var lastScrollOffset: CGFloat = 0
     @State private var currentFolderView: FolderViewType = .allPhotos
     @State private var folderNavStack: [FolderViewType] = []
     @State private var showingCreateFolder = false
@@ -208,13 +207,6 @@ struct PhotoGalleryView: View {
     private var contentView: some View {
         ScrollView {
             VStack(spacing: 0) {
-                // Invisible scroll tracker
-                GeometryReader { geo in
-                    Color.clear
-                        .preference(key: ScrollOffsetPreferenceKey.self, value: geo.frame(in: .named("scroll")).minY)
-                }
-                .frame(height: 0)
-
                 // Expandable header (hidden when collapsed)
                 expandableHeader
                     .padding(.horizontal)
@@ -247,21 +239,21 @@ struct PhotoGalleryView: View {
                 }
             }
         }
-        .coordinateSpace(name: "scroll")
-        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
-            // Auto-hide expanded header when scrolling down (away from top)
-            if showingExpandedHeader && offset < lastScrollOffset - 20 {
+        .refreshable {
+            // Show the expanded header when user pulls down
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                showingExpandedHeader = true
+            }
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y
+        } action: { oldValue, newValue in
+            // Auto-hide header when scrolling down (positive scroll offset means scrolled down)
+            if showingExpandedHeader && newValue > 50 {
                 withAnimation(.spring(response: 0.3)) {
                     showingExpandedHeader = false
                 }
             }
-            // Show expanded header when pulling down at the top (rubber-band effect)
-            if !showingExpandedHeader && offset > 50 {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                    showingExpandedHeader = true
-                }
-            }
-            lastScrollOffset = offset
         }
         .safeAreaInset(edge: .top) {
             Color.clear.frame(height: 0)
