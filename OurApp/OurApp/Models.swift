@@ -2,7 +2,7 @@ import Foundation
 import FirebaseFirestore
 
 // MARK: - Voice Message Model
-struct VoiceMessage: Identifiable, Codable {
+struct VoiceMessage: Identifiable, Codable, Equatable {
     @DocumentID var id: String?
     var title: String
     var duration: TimeInterval

@@ -2048,259 +2048,8 @@ struct VoiceRecorderView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                // Background gradient
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.95, green: 0.9, blue: 1.0),
-                        Color.white
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
-
-                VStack(spacing: 24) {
-                    // Recording for indicator
-                    HStack {
-                        Text("Recording as")
-                            .font(.subheadline)
-                            .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
-                        Text(fromUser)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                    }
-                    .padding(.top)
-
-                    TextField("Message title (e.g., 'Good morning!')", text: $title)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .padding(.horizontal)
-                        .disabled(recorder.isRecording)
-
-                    // Quality selector (only when not recording)
-                    if !recorder.isRecording && !recorder.hasRecording {
-                        Button(action: { showingQualityPicker = true }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: recorder.quality.icon)
-                                    .font(.subheadline)
-                                Text(recorder.quality.rawValue)
-                                    .font(.subheadline.weight(.medium))
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.caption)
-                            }
-                            .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
-                            )
-                        }
-                    }
-
-                    // Live Waveform visualization
-                    VStack(spacing: 8) {
-                        HStack(spacing: 3) {
-                            ForEach(Array(recorder.audioLevels.enumerated()), id: \.offset) { index, level in
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(
-                                        recorder.isRecording && !recorder.isPaused
-                                            ? LinearGradient(
-                                                colors: [
-                                                    Color(red: 0.9, green: 0.4, blue: 0.5),
-                                                    Color(red: 0.8, green: 0.7, blue: 1.0)
-                                                ],
-                                                startPoint: .bottom,
-                                                endPoint: .top
-                                            )
-                                            : LinearGradient(
-                                                colors: [Color(red: 0.8, green: 0.7, blue: 1.0)],
-                                                startPoint: .bottom,
-                                                endPoint: .top
-                                            )
-                                    )
-                                    .frame(width: 6, height: max(8, level * 80))
-                                    .animation(.easeOut(duration: 0.08), value: level)
-                            }
-                        }
-                        .frame(height: 90)
-                        .padding(.horizontal)
-
-                        // Recording status indicator
-                        if recorder.isRecording {
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(recorder.isPaused ? Color.orange : Color.red)
-                                    .frame(width: 10, height: 10)
-                                    .opacity(recorder.isPaused ? 1 : (recorder.recordingTime.truncatingRemainder(dividingBy: 1) < 0.5 ? 1 : 0.3))
-                                    .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: recorder.recordingTime)
-
-                                Text(recorder.isPaused ? "Paused" : "Recording")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundColor(recorder.isPaused ? .orange : .red)
-                            }
-                        }
-                    }
-
-                    // Timer display
-                    Text(formatTime(recorder.recordingTime))
-                        .font(.system(size: 56, weight: .light, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-
-                    // Recording controls
-                    HStack(spacing: 30) {
-                        // Pause/Resume button (only during recording)
-                        if recorder.isRecording {
-                            Button(action: {
-                                if recorder.isPaused {
-                                    recorder.resumeRecording()
-                                } else {
-                                    recorder.pauseRecording()
-                                }
-                            }) {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
-                                        .frame(width: 56, height: 56)
-
-                                    Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
-                                        .font(.system(size: 22))
-                                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                                }
-                            }
-                        }
-
-                        // Main record/stop button
-                        Button(action: {
-                            if recorder.isRecording {
-                                recorder.stopRecording()
-                            } else {
-                                recorder.startRecording()
-                            }
-                        }) {
-                            ZStack {
-                                Circle()
-                                    .fill(
-                                        recorder.isRecording
-                                            ? Color.red
-                                            : LinearGradient(
-                                                colors: [
-                                                    Color(red: 0.7, green: 0.45, blue: 0.95),
-                                                    Color(red: 0.55, green: 0.35, blue: 0.85)
-                                                ],
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
-                                    )
-                                    .frame(width: 80, height: 80)
-                                    .shadow(color: recorder.isRecording ? Color.red.opacity(0.4) : Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.4), radius: 10)
-
-                                if recorder.isRecording {
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color.white)
-                                        .frame(width: 28, height: 28)
-                                } else {
-                                    Image(systemName: "mic.fill")
-                                        .font(.system(size: 35))
-                                        .foregroundColor(.white)
-                                }
-                            }
-                        }
-
-                        // Cancel recording button (only during recording)
-                        if recorder.isRecording {
-                            Button(action: {
-                                recorder.stopRecording()
-                                recorder.deleteRecording()
-                            }) {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
-                                        .frame(width: 56, height: 56)
-
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 20, weight: .semibold))
-                                        .foregroundColor(Color.red.opacity(0.8))
-                                }
-                            }
-                        }
-                    }
-
-                    // Post-recording actions
-                    if recorder.hasRecording && !recorder.isRecording {
-                        VStack(spacing: 16) {
-                            // Playback preview indicator
-                            HStack(spacing: 8) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.green)
-                                Text("Recording complete")
-                                    .font(.subheadline)
-                                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
-                                Text("(\(formatTime(recorder.recordingDuration)))")
-                                    .font(.caption)
-                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                            }
-                            .padding(.vertical, 8)
-                            .padding(.horizontal, 16)
-                            .background(
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(Color.green.opacity(0.1))
-                            )
-
-                            HStack(spacing: 16) {
-                                Button(action: {
-                                    recorder.deleteRecording()
-                                }) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "trash")
-                                        Text("Discard")
-                                    }
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundColor(.red)
-                                    .padding(.horizontal, 20)
-                                    .padding(.vertical, 12)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(Color.red.opacity(0.5), lineWidth: 1.5)
-                                    )
-                                }
-
-                                Button(action: {
-                                    Task {
-                                        if let data = recorder.audioData {
-                                            await onSave(data, recorder.recordingDuration, title.isEmpty ? "Voice Note" : title)
-                                            dismiss()
-                                        }
-                                    }
-                                }) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "checkmark")
-                                        Text("Save")
-                                    }
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 24)
-                                    .padding(.vertical, 12)
-                                    .background(
-                                        LinearGradient(
-                                            colors: [
-                                                Color(red: 0.7, green: 0.45, blue: 0.95),
-                                                Color(red: 0.55, green: 0.35, blue: 0.85)
-                                            ],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
-                                    .cornerRadius(12)
-                                }
-                            }
-                        }
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                    }
-
-                    Spacer()
-                }
-                .padding()
+                backgroundGradient
+                mainContent
             }
             .navigationTitle("Record Message")
             .navigationBarTitleDisplayMode(.inline)
@@ -2327,6 +2076,323 @@ struct VoiceRecorderView: View {
         }
     }
 
+    // MARK: - Background
+    private var backgroundGradient: some View {
+        LinearGradient(
+            colors: [
+                Color(red: 0.95, green: 0.9, blue: 1.0),
+                Color.white
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
+    }
+
+    // MARK: - Main Content
+    private var mainContent: some View {
+        VStack(spacing: 24) {
+            headerSection
+            titleField
+            qualitySelector
+            waveformVisualization
+            timerDisplay
+            recordingControls
+            postRecordingActions
+            Spacer()
+        }
+        .padding()
+    }
+
+    // MARK: - Header Section
+    private var headerSection: some View {
+        HStack {
+            Text("Recording as")
+                .font(.subheadline)
+                .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+            Text(fromUser)
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+        }
+        .padding(.top)
+    }
+
+    // MARK: - Title Field
+    private var titleField: some View {
+        TextField("Message title (e.g., 'Good morning!')", text: $title)
+            .textFieldStyle(RoundedBorderTextFieldStyle())
+            .padding(.horizontal)
+            .disabled(recorder.isRecording)
+    }
+
+    // MARK: - Quality Selector
+    @ViewBuilder
+    private var qualitySelector: some View {
+        if !recorder.isRecording && !recorder.hasRecording {
+            Button(action: { showingQualityPicker = true }) {
+                HStack(spacing: 8) {
+                    Image(systemName: recorder.quality.icon)
+                        .font(.subheadline)
+                    Text(recorder.quality.rawValue)
+                        .font(.subheadline.weight(.medium))
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption)
+                }
+                .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                )
+            }
+        }
+    }
+
+    // MARK: - Waveform Visualization
+    private var waveformVisualization: some View {
+        VStack(spacing: 8) {
+            waveformBars
+            recordingStatusIndicator
+        }
+    }
+
+    private var waveformBars: some View {
+        HStack(spacing: 3) {
+            ForEach(Array(recorder.audioLevels.enumerated()), id: \.offset) { index, level in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(waveformGradient)
+                    .frame(width: 6, height: max(8, level * 80))
+                    .animation(.easeOut(duration: 0.08), value: level)
+            }
+        }
+        .frame(height: 90)
+        .padding(.horizontal)
+    }
+
+    private var waveformGradient: LinearGradient {
+        recorder.isRecording && !recorder.isPaused
+            ? LinearGradient(
+                colors: [
+                    Color(red: 0.9, green: 0.4, blue: 0.5),
+                    Color(red: 0.8, green: 0.7, blue: 1.0)
+                ],
+                startPoint: .bottom,
+                endPoint: .top
+            )
+            : LinearGradient(
+                colors: [Color(red: 0.8, green: 0.7, blue: 1.0)],
+                startPoint: .bottom,
+                endPoint: .top
+            )
+    }
+
+    @ViewBuilder
+    private var recordingStatusIndicator: some View {
+        if recorder.isRecording {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(recorder.isPaused ? Color.orange : Color.red)
+                    .frame(width: 10, height: 10)
+                    .opacity(recorder.isPaused ? 1 : (recorder.recordingTime.truncatingRemainder(dividingBy: 1) < 0.5 ? 1 : 0.3))
+                    .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: recorder.recordingTime)
+
+                Text(recorder.isPaused ? "Paused" : "Recording")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(recorder.isPaused ? .orange : .red)
+            }
+        }
+    }
+
+    // MARK: - Timer Display
+    private var timerDisplay: some View {
+        Text(formatTime(recorder.recordingTime))
+            .font(.system(size: 56, weight: .light, design: .rounded))
+            .monospacedDigit()
+            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+    }
+
+    // MARK: - Recording Controls
+    private var recordingControls: some View {
+        HStack(spacing: 30) {
+            pauseResumeButton
+            mainRecordButton
+            cancelRecordingButton
+        }
+    }
+
+    @ViewBuilder
+    private var pauseResumeButton: some View {
+        if recorder.isRecording {
+            Button(action: {
+                if recorder.isPaused {
+                    recorder.resumeRecording()
+                } else {
+                    recorder.pauseRecording()
+                }
+            }) {
+                ZStack {
+                    Circle()
+                        .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                        .frame(width: 56, height: 56)
+
+                    Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
+                        .font(.system(size: 22))
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+            }
+        }
+    }
+
+    private var mainRecordButton: some View {
+        Button(action: {
+            if recorder.isRecording {
+                recorder.stopRecording()
+            } else {
+                recorder.startRecording()
+            }
+        }) {
+            ZStack {
+                Circle()
+                    .fill(mainRecordButtonFill)
+                    .frame(width: 80, height: 80)
+                    .shadow(color: recorder.isRecording ? Color.red.opacity(0.4) : Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.4), radius: 10)
+
+                if recorder.isRecording {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.white)
+                        .frame(width: 28, height: 28)
+                } else {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 35))
+                        .foregroundColor(.white)
+                }
+            }
+        }
+    }
+
+    private var mainRecordButtonFill: some ShapeStyle {
+        recorder.isRecording
+            ? AnyShapeStyle(Color.red)
+            : AnyShapeStyle(LinearGradient(
+                colors: [
+                    Color(red: 0.7, green: 0.45, blue: 0.95),
+                    Color(red: 0.55, green: 0.35, blue: 0.85)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ))
+    }
+
+    @ViewBuilder
+    private var cancelRecordingButton: some View {
+        if recorder.isRecording {
+            Button(action: {
+                recorder.stopRecording()
+                recorder.deleteRecording()
+            }) {
+                ZStack {
+                    Circle()
+                        .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                        .frame(width: 56, height: 56)
+
+                    Image(systemName: "xmark")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(Color.red.opacity(0.8))
+                }
+            }
+        }
+    }
+
+    // MARK: - Post Recording Actions
+    @ViewBuilder
+    private var postRecordingActions: some View {
+        if recorder.hasRecording && !recorder.isRecording {
+            VStack(spacing: 16) {
+                recordingCompleteIndicator
+                saveDiscardButtons
+            }
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    private var recordingCompleteIndicator: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
+            Text("Recording complete")
+                .font(.subheadline)
+                .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+            Text("(\(formatTime(recorder.recordingDuration)))")
+                .font(.caption)
+                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.green.opacity(0.1))
+        )
+    }
+
+    private var saveDiscardButtons: some View {
+        HStack(spacing: 16) {
+            discardButton
+            saveButton
+        }
+    }
+
+    private var discardButton: some View {
+        Button(action: {
+            recorder.deleteRecording()
+        }) {
+            HStack(spacing: 6) {
+                Image(systemName: "trash")
+                Text("Discard")
+            }
+            .font(.subheadline.weight(.medium))
+            .foregroundColor(.red)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.red.opacity(0.5), lineWidth: 1.5)
+            )
+        }
+    }
+
+    private var saveButton: some View {
+        Button(action: {
+            Task {
+                if let data = recorder.audioData {
+                    await onSave(data, recorder.recordingDuration, title.isEmpty ? "Voice Note" : title)
+                    dismiss()
+                }
+            }
+        }) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark")
+                Text("Save")
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 12)
+            .background(
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.7, green: 0.45, blue: 0.95),
+                        Color(red: 0.55, green: 0.35, blue: 0.85)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .cornerRadius(12)
+        }
+    }
+
+    // MARK: - Helpers
     func formatTime(_ time: TimeInterval) -> String {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
