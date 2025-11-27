@@ -53,7 +53,7 @@ struct PhotoGalleryView: View {
     @State private var saveErrorMessage = ""
     @State private var savedPhotoCount = 0
     @State private var showingExpandedHeader = false
-    @State private var searchText = ""
+    @State private var lastScrollOffset: CGFloat = 0
     @State private var currentFolderView: FolderViewType = .allPhotos
     @State private var folderNavStack: [FolderViewType] = []
     @State private var showingCreateFolder = false
@@ -208,7 +208,14 @@ struct PhotoGalleryView: View {
     private var contentView: some View {
         ScrollView {
             VStack(spacing: 0) {
-                // Expandable header (like iOS Messages search)
+                // Invisible scroll tracker
+                GeometryReader { geo in
+                    Color.clear
+                        .preference(key: ScrollOffsetPreferenceKey.self, value: geo.frame(in: .named("scroll")).minY)
+                }
+                .frame(height: 0)
+
+                // Expandable header (hidden when collapsed)
                 expandableHeader
                     .padding(.horizontal)
                     .padding(.top, 4)
@@ -239,6 +246,16 @@ struct PhotoGalleryView: View {
                     photoGridView
                 }
             }
+        }
+        .coordinateSpace(name: "scroll")
+        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
+            // Auto-hide expanded header when scrolling down
+            if showingExpandedHeader && offset < lastScrollOffset - 20 {
+                withAnimation(.spring(response: 0.3)) {
+                    showingExpandedHeader = false
+                }
+            }
+            lastScrollOffset = offset
         }
         .safeAreaInset(edge: .top) {
             Color.clear.frame(height: 0)
@@ -392,72 +409,25 @@ struct PhotoGalleryView: View {
         )
     }
 
-    // MARK: - Expandable Header (iOS Messages style)
+    // MARK: - Expandable Header (hidden when collapsed)
     private var expandableHeader: some View {
-        VStack(spacing: 12) {
-            // Pull indicator / tap to expand
-            Button(action: {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                    showingExpandedHeader.toggle()
-                }
-            }) {
-                VStack(spacing: 6) {
-                    // Drag indicator capsule
-                    Capsule()
-                        .fill(Color(red: 0.7, green: 0.6, blue: 0.85).opacity(0.4))
-                        .frame(width: 36, height: 4)
-
-                    // Collapsed state: show hint text
-                    if !showingExpandedHeader {
-                        Text("Pull down for more options")
-                            .font(.caption2)
-                            .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.75))
-                    }
-                }
-            }
-            .buttonStyle(PlainButtonStyle())
-
-            // Expanded content
+        VStack(spacing: 0) {
+            // Expanded content only - no indicators when collapsed
             if showingExpandedHeader {
-                VStack(spacing: 14) {
-                    // Search bar
-                    HStack(spacing: 10) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.subheadline)
-                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-
-                        TextField("Search photos...", text: $searchText)
-                            .font(.subheadline)
-                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-
-                        if !searchText.isEmpty {
-                            Button(action: { searchText = "" }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.subheadline)
-                                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.75))
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
-                    )
-
+                VStack(spacing: 16) {
                     // Quick actions row
-                    HStack(spacing: 10) {
+                    HStack(spacing: 12) {
                         // Add Photos
                         PhotosPicker(selection: $selectedItems, matching: .images) {
-                            HStack(spacing: 6) {
+                            HStack(spacing: 8) {
                                 Image(systemName: "plus.circle.fill")
-                                    .font(.subheadline)
-                                Text("Add")
-                                    .font(.subheadline.weight(.medium))
+                                    .font(.body)
+                                Text("Add Photos")
+                                    .font(.subheadline.weight(.semibold))
                             }
                             .foregroundColor(.white)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
                             .background(
                                 LinearGradient(
                                     colors: [
@@ -468,7 +438,7 @@ struct PhotoGalleryView: View {
                                     endPoint: .bottomTrailing
                                 )
                             )
-                            .cornerRadius(10)
+                            .cornerRadius(12)
                         }
                         .disabled(isUploading)
 
@@ -483,15 +453,15 @@ struct PhotoGalleryView: View {
                         }) {
                             HStack(spacing: 6) {
                                 Image(systemName: "checkmark.circle")
-                                    .font(.subheadline)
+                                    .font(.body)
                                 Text("Select")
                                     .font(.subheadline.weight(.medium))
                             }
                             .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
                             .background(
-                                RoundedRectangle(cornerRadius: 10)
+                                RoundedRectangle(cornerRadius: 12)
                                     .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
                             )
                         }
@@ -507,89 +477,148 @@ struct PhotoGalleryView: View {
                         }) {
                             HStack(spacing: 6) {
                                 Image(systemName: "folder.badge.plus")
-                                    .font(.subheadline)
+                                    .font(.body)
                                 Text("Folder")
                                     .font(.subheadline.weight(.medium))
                             }
                             .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
                             .background(
-                                RoundedRectangle(cornerRadius: 10)
+                                RoundedRectangle(cornerRadius: 12)
                                     .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
                             )
                         }
-
-                        Spacer()
                     }
 
-                    // Sort and Filter row
-                    HStack(spacing: 10) {
-                        // Sort button
-                        Button(action: { showingSortOptions = true }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.up.arrow.down")
-                                    .font(.caption)
-                                Text(sortOption.rawValue)
-                                    .font(.caption)
-                            }
-                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                Capsule()
-                                    .strokeBorder(Color(red: 0.7, green: 0.6, blue: 0.85).opacity(0.5), lineWidth: 1)
-                            )
-                        }
+                    // Sort and Filter section
+                    VStack(spacing: 12) {
+                        // Sort options
+                        HStack {
+                            Text("Sort by")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
 
-                        // Date filter button
-                        Button(action: { showingDateFilter = true }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "calendar")
-                                    .font(.caption)
-                                Text(hasDateFilter ? "Filtered" : "Filter by date")
-                                    .font(.caption)
-                            }
-                            .foregroundColor(hasDateFilter ? .white : Color(red: 0.5, green: 0.4, blue: 0.7))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                Capsule()
-                                    .fill(hasDateFilter ? Color(red: 0.6, green: 0.4, blue: 0.85) : Color.clear)
-                            )
-                            .overlay(
-                                Capsule()
-                                    .strokeBorder(Color(red: 0.7, green: 0.6, blue: 0.85).opacity(hasDateFilter ? 0 : 0.5), lineWidth: 1)
-                            )
-                        }
+                            Spacer()
 
-                        // Column count indicator
-                        HStack(spacing: 4) {
-                            Image(systemName: "square.grid.3x3")
-                                .font(.caption)
-                            Text("\(columnCount)")
-                                .font(.caption.bold())
+                            Menu {
+                                ForEach(PhotoSortOption.allCases, id: \.self) { option in
+                                    Button(action: {
+                                        withAnimation {
+                                            sortOption = option
+                                        }
+                                    }) {
+                                        HStack {
+                                            Label(option.rawValue, systemImage: option.icon)
+                                            if sortOption == option {
+                                                Image(systemName: "checkmark")
+                                            }
+                                        }
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text(sortOption.rawValue)
+                                        .font(.subheadline)
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.caption)
+                                }
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.8))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                                )
+                            }
                         }
-                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule()
-                                .strokeBorder(Color(red: 0.7, green: 0.6, blue: 0.85).opacity(0.5), lineWidth: 1)
-                        )
+                        .padding(.horizontal, 4)
+
+                        // Date filter
+                        HStack {
+                            Text("Filter by date")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+
+                            Spacer()
+
+                            Button(action: { showingDateFilter = true }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: hasDateFilter ? "calendar.badge.checkmark" : "calendar")
+                                        .font(.subheadline)
+                                    Text(hasDateFilter ? "Active" : "None")
+                                        .font(.subheadline)
+                                }
+                                .foregroundColor(hasDateFilter ? .white : Color(red: 0.5, green: 0.4, blue: 0.8))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(hasDateFilter ? Color(red: 0.6, green: 0.4, blue: 0.85) : Color(red: 0.95, green: 0.92, blue: 1.0))
+                                )
+                            }
+                        }
+                        .padding(.horizontal, 4)
+
+                        // Clear filter button if active
+                        if hasDateFilter {
+                            Button(action: {
+                                filterStartDate = nil
+                                filterEndDate = nil
+                            }) {
+                                Text("Clear Date Filter")
+                                    .font(.subheadline)
+                                    .foregroundColor(Color(red: 0.8, green: 0.4, blue: 0.4))
+                            }
+                            .padding(.top, 4)
+                        }
+                    }
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white)
+                    )
+
+                    // Grid size
+                    HStack {
+                        Text("Grid size")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
 
                         Spacer()
+
+                        HStack(spacing: 8) {
+                            ForEach([2, 3, 4], id: \.self) { count in
+                                Button(action: {
+                                    withAnimation(.spring(response: 0.3)) {
+                                        columnCount = count
+                                    }
+                                }) {
+                                    Text("\(count)")
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundColor(columnCount == count ? .white : Color(red: 0.5, green: 0.4, blue: 0.8))
+                                        .frame(width: 36, height: 36)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(columnCount == count ? Color(red: 0.6, green: 0.4, blue: 0.85) : Color(red: 0.95, green: 0.92, blue: 1.0))
+                                        )
+                                }
+                            }
+                        }
                     }
+                    .padding(.horizontal, 4)
                 }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 20)
+                .background(
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(Color(red: 0.98, green: 0.96, blue: 1.0))
+                        .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 4)
+                )
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white.opacity(showingExpandedHeader ? 0.95 : 0))
-                .shadow(color: Color.black.opacity(showingExpandedHeader ? 0.05 : 0), radius: 5, x: 0, y: 2)
-        )
         .gesture(
             DragGesture(minimumDistance: 10)
                 .onEnded { value in
@@ -654,69 +683,6 @@ struct PhotoGalleryView: View {
             }
 
             Spacer()
-
-            // Sort button
-            Menu {
-                ForEach(PhotoSortOption.allCases, id: \.self) { option in
-                    Button(action: {
-                        withAnimation {
-                            sortOption = option
-                        }
-                    }) {
-                        HStack {
-                            Label(option.rawValue, systemImage: option.icon)
-                            if sortOption == option {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            } label: {
-                Image(systemName: "arrow.up.arrow.down")
-                    .font(.body)
-                    .foregroundColor(sortOption != .newestFirst ? Color(red: 0.6, green: 0.4, blue: 0.85) : Color(red: 0.5, green: 0.4, blue: 0.7))
-            }
-
-            // Date filter button
-            Button(action: {
-                showingDateFilter = true
-            }) {
-                Image(systemName: hasDateFilter ? "calendar.badge.checkmark" : "calendar")
-                    .font(.body)
-                    .foregroundColor(hasDateFilter ? Color(red: 0.6, green: 0.4, blue: 0.85) : Color(red: 0.5, green: 0.4, blue: 0.7))
-            }
-
-            // Folder menu button
-            Menu {
-                Button(action: { currentFolderView = .allPhotos; folderNavStack.removeAll() }) {
-                    Label("All Photos", systemImage: "photo.on.rectangle")
-                }
-
-                // Favorites folder
-                Button(action: { navigateToFolder(.favorites) }) {
-                    Label("Favorites", systemImage: "heart.fill")
-                }
-
-                Button(action: { navigateToFolder(.events) }) {
-                    Label("Events", systemImage: "calendar")
-                }
-                Button(action: { navigateToFolder(.specialEvents) }) {
-                    Label("Special Events", systemImage: "star.circle")
-                }
-
-                if !viewModel.folders.filter({ $0.type == .custom }).isEmpty {
-                    Divider()
-                    ForEach(viewModel.folders.filter { $0.type == .custom }, id: \.id) { folder in
-                        Button(action: { navigateToFolder(.custom(folder.id!)) }) {
-                            Label(folder.name, systemImage: "folder")
-                        }
-                    }
-                }
-            } label: {
-                Image(systemName: "folder.badge.gearshape")
-                    .font(.title3)
-                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-            }
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 16)
@@ -1887,6 +1853,14 @@ struct DateFilterSheet: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Scroll Offset Preference Key
+struct ScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
