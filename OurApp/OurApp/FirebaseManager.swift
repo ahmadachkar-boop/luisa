@@ -69,6 +69,119 @@ class FirebaseManager: ObservableObject {
         try await db.collection("voiceMessages").document(id).delete()
     }
 
+    // MARK: - Voice Message Favorites
+    func toggleVoiceMemoFavorite(_ memoId: String, isFavorite: Bool) async throws {
+        try await db.collection("voiceMessages").document(memoId).updateData([
+            "isFavorite": isFavorite
+        ])
+    }
+
+    func batchToggleVoiceMemoFavorites(_ memoIds: [String], isFavorite: Bool, progressHandler: ((Int, Int) -> Void)? = nil) async throws {
+        let batch = db.batch()
+        let total = memoIds.count
+
+        for (index, memoId) in memoIds.enumerated() {
+            let docRef = db.collection("voiceMessages").document(memoId)
+            batch.updateData(["isFavorite": isFavorite], forDocument: docRef)
+
+            await MainActor.run {
+                progressHandler?(index + 1, total)
+            }
+        }
+
+        try await batch.commit()
+    }
+
+    // MARK: - Voice Memo Folders
+    func createVoiceMemoFolder(name: String, forUser: String) async throws -> String {
+        let folder = VoiceMemoFolder(
+            name: name,
+            createdAt: Date(),
+            forUser: forUser
+        )
+
+        let docRef = try db.collection("voiceMemoFolders").addDocument(from: folder)
+        return docRef.documentID
+    }
+
+    func getVoiceMemoFolders() -> AsyncThrowingStream<[VoiceMemoFolder], Error> {
+        AsyncThrowingStream { continuation in
+            let listener = db.collection("voiceMemoFolders")
+                .order(by: "createdAt")
+                .addSnapshotListener { snapshot, error in
+                    if let error = error {
+                        continuation.finish(throwing: error)
+                        return
+                    }
+
+                    guard let documents = snapshot?.documents else {
+                        continuation.yield([])
+                        return
+                    }
+
+                    let folders = documents.compactMap { doc -> VoiceMemoFolder? in
+                        try? doc.data(as: VoiceMemoFolder.self)
+                    }
+
+                    continuation.yield(folders)
+                }
+
+            continuation.onTermination = { _ in
+                listener.remove()
+            }
+        }
+    }
+
+    func deleteVoiceMemoFolder(_ folder: VoiceMemoFolder) async throws {
+        guard let id = folder.id else { return }
+
+        // Remove folder reference from all voice memos in this folder
+        let memosSnapshot = try await db.collection("voiceMessages")
+            .whereField("folderId", isEqualTo: id)
+            .getDocuments()
+
+        for doc in memosSnapshot.documents {
+            try await db.collection("voiceMessages").document(doc.documentID).updateData([
+                "folderId": FieldValue.delete()
+            ])
+        }
+
+        // Delete the folder
+        try await db.collection("voiceMemoFolders").document(id).delete()
+    }
+
+    func updateVoiceMemoFolder(_ memoId: String, folderId: String?) async throws {
+        if let folderId = folderId {
+            try await db.collection("voiceMessages").document(memoId).updateData([
+                "folderId": folderId
+            ])
+        } else {
+            try await db.collection("voiceMessages").document(memoId).updateData([
+                "folderId": FieldValue.delete()
+            ])
+        }
+    }
+
+    func batchUpdateVoiceMemoFolders(_ memoIds: [String], folderId: String?, progressHandler: ((Int, Int) -> Void)? = nil) async throws {
+        let batch = db.batch()
+        let total = memoIds.count
+
+        for (index, memoId) in memoIds.enumerated() {
+            let docRef = db.collection("voiceMessages").document(memoId)
+            if let folderId = folderId {
+                batch.updateData(["folderId": folderId], forDocument: docRef)
+            } else {
+                batch.updateData(["folderId": FieldValue.delete()], forDocument: docRef)
+            }
+
+            await MainActor.run {
+                progressHandler?(index + 1, total)
+            }
+        }
+
+        try await batch.commit()
+    }
+
     // MARK: - Photos
     func uploadPhoto(imageData: Data, caption: String = "", uploadedBy: String = "You", capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws -> String {
         let fileName = "\(UUID().uuidString).jpg"
