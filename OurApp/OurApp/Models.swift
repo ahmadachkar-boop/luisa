@@ -9,6 +9,8 @@ struct VoiceMessage: Identifiable, Codable {
     var createdAt: Date
     var audioURL: String
     var fromUser: String
+    var folderId: String? // Reference to custom folder
+    var isFavorite: Bool? // Whether the memo is marked as favorite
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -17,6 +19,23 @@ struct VoiceMessage: Identifiable, Codable {
         case createdAt
         case audioURL
         case fromUser
+        case folderId
+        case isFavorite
+    }
+}
+
+// MARK: - Voice Memo Folder Model
+struct VoiceMemoFolder: Identifiable, Codable {
+    @DocumentID var id: String?
+    var name: String
+    var createdAt: Date
+    var forUser: String // "Ahmad" or "Luisa" - which user's memos this folder is for
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case createdAt
+        case forUser
     }
 }
 
