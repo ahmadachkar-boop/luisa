@@ -965,6 +965,13 @@ struct PhotoGalleryView: View {
                             let photo = photosInDisplayOrder[indexToToggle]
                             if let photoId = photo.id {
                                 let newFavoriteState = !(photo.isFavorite ?? false)
+
+                                // If we're in the Favorites folder and unfavoriting,
+                                // dismiss the viewer to avoid index out of range crash
+                                if currentFolderView == .favorites && !newFavoriteState {
+                                    selectedPhotoIndex = nil
+                                }
+
                                 Task {
                                     try? await FirebaseManager.shared.togglePhotoFavorite(photoId, isFavorite: newFavoriteState)
                                 }
