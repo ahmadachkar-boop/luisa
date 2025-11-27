@@ -340,7 +340,7 @@ struct CalendarView: View {
             EmptyStateView(isUpcoming: selectedTab == 0)
                 .padding(.top, 60)
         } else {
-            LazyVStack(spacing: 12) {
+            VStack(spacing: 12) {
                 ForEach(filteredEvents) { event in
                     ModernEventCard(
                         event: event,
