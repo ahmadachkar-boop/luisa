@@ -145,17 +145,7 @@ struct CountdownWidgetSmallView: View {
                     .font(.caption)
                     .foregroundColor(.white.opacity(0.7))
             }
-            .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(
-                LinearGradient(
-                    colors: entry.isSpecial ?
-                        [Color(red: 0.85, green: 0.35, blue: 0.75), Color(red: 0.7, green: 0.25, blue: 0.6)] :
-                        [Color(red: 0.6, green: 0.4, blue: 0.85), Color(red: 0.45, green: 0.3, blue: 0.7)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
         }
     }
 
@@ -170,7 +160,6 @@ struct CountdownWidgetSmallView: View {
                 .foregroundColor(.white.opacity(0.8))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(red: 0.5, green: 0.4, blue: 0.7))
     }
 }
 
@@ -227,17 +216,7 @@ struct CountdownWidgetMediumView: View {
 
                 Spacer()
             }
-            .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(
-                LinearGradient(
-                    colors: entry.isSpecial ?
-                        [Color(red: 0.85, green: 0.35, blue: 0.75), Color(red: 0.7, green: 0.25, blue: 0.6)] :
-                        [Color(red: 0.6, green: 0.4, blue: 0.85), Color(red: 0.45, green: 0.3, blue: 0.7)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
         }
     }
 
@@ -258,9 +237,7 @@ struct CountdownWidgetMediumView: View {
 
             Spacer()
         }
-        .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(red: 0.5, green: 0.4, blue: 0.7))
     }
 }
 
@@ -288,10 +265,28 @@ struct CountdownWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: CountdownProvider()) { entry in
             CountdownWidgetEntryView(entry: entry)
+                .containerBackground(for: .widget) {
+                    widgetBackground(for: entry)
+                }
         }
         .configurationDisplayName("Event Countdown")
         .description("See your next upcoming plan at a glance.")
         .supportedFamilies([.systemSmall, .systemMedium])
+    }
+
+    @ViewBuilder
+    private func widgetBackground(for entry: CountdownEntry) -> some View {
+        if entry.isEmpty {
+            Color(red: 0.5, green: 0.4, blue: 0.7)
+        } else {
+            LinearGradient(
+                colors: entry.isSpecial ?
+                    [Color(red: 0.85, green: 0.35, blue: 0.75), Color(red: 0.7, green: 0.25, blue: 0.6)] :
+                    [Color(red: 0.6, green: 0.4, blue: 0.85), Color(red: 0.45, green: 0.3, blue: 0.7)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
     }
 }
 

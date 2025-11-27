@@ -255,9 +255,17 @@ struct CalendarView: View {
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundColor(.white)
                                     .lineLimit(1)
-                                Text(countdownText(for: event))
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.9))
+                                HStack(spacing: 4) {
+                                    Text(dateRangeText(for: event))
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.white.opacity(0.9))
+                                    Text("•")
+                                        .font(.system(size: 9))
+                                        .foregroundColor(.white.opacity(0.6))
+                                    Text(countdownText(for: event))
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.95))
+                                }
                             }
 
                             Spacer()
@@ -673,6 +681,41 @@ struct CalendarView: View {
             }
         }
         return ""
+    }
+
+    func dateRangeText(for event: CalendarEvent) -> String {
+        let formatter = DateFormatter()
+
+        if event.isMultiDay, let endDate = event.endDate {
+            let calendar = Calendar.current
+            let sameMonth = calendar.isDate(event.date, equalTo: endDate, toGranularity: .month)
+            let sameYear = calendar.isDate(event.date, equalTo: endDate, toGranularity: .year)
+
+            if sameMonth {
+                // Same month: "Dec 15 - 18"
+                formatter.dateFormat = "MMM d"
+                let startStr = formatter.string(from: event.date)
+                formatter.dateFormat = "d"
+                let endStr = formatter.string(from: endDate)
+                return "\(startStr) - \(endStr)"
+            } else if sameYear {
+                // Different months, same year: "Dec 28 - Jan 3"
+                formatter.dateFormat = "MMM d"
+                let startStr = formatter.string(from: event.date)
+                let endStr = formatter.string(from: endDate)
+                return "\(startStr) - \(endStr)"
+            } else {
+                // Different years: "Dec 28 '24 - Jan 3 '25"
+                formatter.dateFormat = "MMM d ''yy"
+                let startStr = formatter.string(from: event.date)
+                let endStr = formatter.string(from: endDate)
+                return "\(startStr) - \(endStr)"
+            }
+        } else {
+            // Single day event
+            formatter.dateFormat = "MMM d"
+            return formatter.string(from: event.date)
+        }
     }
 
     func resetBannerInactivityTimer() {
@@ -1299,21 +1342,27 @@ struct EventDetailView: View {
 
             // Date text overlay
             VStack(spacing: 8) {
-                Text(currentEvent.date, format: .dateTime.day())
-                    .font(.system(size: 60, weight: .bold))
-                    .foregroundColor(.white)
-                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+                if currentEvent.isMultiDay, let endDate = currentEvent.endDate {
+                    // Multi-day event: show date range
+                    dateRangeView(startDate: currentEvent.date, endDate: endDate)
+                } else {
+                    // Single day event
+                    Text(currentEvent.date, format: .dateTime.day())
+                        .font(.system(size: 60, weight: .bold))
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
 
-                Text(currentEvent.date, format: .dateTime.month(.wide).year())
-                    .font(.title3)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.white)
-                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+                    Text(currentEvent.date, format: .dateTime.month(.wide).year())
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
 
-                Text(currentEvent.date, format: .dateTime.weekday(.wide))
-                    .font(.subheadline)
-                    .foregroundColor(.white)
-                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+                    Text(currentEvent.date, format: .dateTime.weekday(.wide))
+                        .font(.subheadline)
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+                }
             }
             .padding(.vertical, 30)
         }
@@ -1818,6 +1867,63 @@ struct EventDetailView: View {
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
+    }
+
+    @ViewBuilder
+    private func dateRangeView(startDate: Date, endDate: Date) -> some View {
+        let calendar = Calendar.current
+        let sameMonth = calendar.isDate(startDate, equalTo: endDate, toGranularity: .month)
+        let sameYear = calendar.isDate(startDate, equalTo: endDate, toGranularity: .year)
+
+        if sameMonth {
+            // Same month: "15 - 18"
+            HStack(spacing: 8) {
+                Text(startDate, format: .dateTime.day())
+                    .font(.system(size: 48, weight: .bold))
+                Text("-")
+                    .font(.system(size: 36, weight: .medium))
+                Text(endDate, format: .dateTime.day())
+                    .font(.system(size: 48, weight: .bold))
+            }
+            .foregroundColor(.white)
+            .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+
+            Text(startDate, format: .dateTime.month(.wide).year())
+                .font(.title3)
+                .fontWeight(.semibold)
+                .foregroundColor(.white)
+                .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+        } else if sameYear {
+            // Different months, same year: "Dec 28 - Jan 3"
+            HStack(spacing: 8) {
+                Text(startDate, format: .dateTime.month(.abbreviated).day())
+                    .font(.system(size: 28, weight: .bold))
+                Text("-")
+                    .font(.system(size: 24, weight: .medium))
+                Text(endDate, format: .dateTime.month(.abbreviated).day())
+                    .font(.system(size: 28, weight: .bold))
+            }
+            .foregroundColor(.white)
+            .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+
+            Text(startDate, format: .dateTime.year())
+                .font(.title3)
+                .fontWeight(.semibold)
+                .foregroundColor(.white)
+                .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+        } else {
+            // Different years: "Dec 28, 2024 - Jan 3, 2025"
+            VStack(spacing: 4) {
+                Text(startDate, format: .dateTime.month(.abbreviated).day().year())
+                    .font(.system(size: 20, weight: .bold))
+                Text("-")
+                    .font(.system(size: 16, weight: .medium))
+                Text(endDate, format: .dateTime.month(.abbreviated).day().year())
+                    .font(.system(size: 20, weight: .bold))
+            }
+            .foregroundColor(.white)
+            .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+        }
     }
 }
 
@@ -2618,6 +2724,7 @@ struct CalendarDayCell: View {
     var onQuickAdd: (() -> Void)? = nil // Quick add for empty days
 
     @State private var showTooltip = false
+    @State private var showQuickAddPrompt = false
 
     var body: some View {
         let dayNum = Calendar.current.component(.day, from: date)
@@ -2626,9 +2733,17 @@ struct CalendarDayCell: View {
 
         return Button(action: {
             if events.isEmpty {
-                if let quickAdd = onQuickAdd, !isPastDate {
-                    // Quick add for empty future days
-                    quickAdd()
+                if onQuickAdd != nil && !isPastDate {
+                    // Show "Add Event" prompt for empty future days
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                        showQuickAddPrompt = true
+                    }
+                    // Auto-dismiss after 3 seconds if not tapped
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                        withAnimation(.spring(response: 0.2)) {
+                            showQuickAddPrompt = false
+                        }
+                    }
                 } else {
                     // Show brief feedback for empty past days
                     withAnimation(.spring(response: 0.2)) {
@@ -2687,6 +2802,49 @@ struct CalendarDayCell: View {
                     } else if events.isEmpty && showTooltip {
                         RoundedRectangle(cornerRadius: 10)
                             .fill(Color.gray.opacity(0.05))
+                    } else if showQuickAddPrompt {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.15))
+                    }
+                }
+            )
+            .overlay(
+                // "Add Event" prompt overlay
+                Group {
+                    if showQuickAddPrompt {
+                        Button(action: {
+                            withAnimation(.spring(response: 0.2)) {
+                                showQuickAddPrompt = false
+                            }
+                            onQuickAdd?()
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.system(size: 10))
+                                Text("Add")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                Color(red: 0.6, green: 0.4, blue: 0.85),
+                                                Color(red: 0.5, green: 0.3, blue: 0.75)
+                                            ],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                            )
+                            .shadow(color: Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.4), radius: 4, x: 0, y: 2)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .offset(y: -35)
+                        .transition(.scale.combined(with: .opacity))
                     }
                 }
             )

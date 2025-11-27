@@ -672,6 +672,15 @@ struct PhotoGalleryView: View {
                                 }
                             }
                         }
+                        .contextMenu {
+                            Button(role: .destructive, action: {
+                                Task {
+                                    try? await viewModel.deleteFolder(folder)
+                                }
+                            }) {
+                                Label("Delete Folder", systemImage: "trash")
+                            }
+                        }
                     }
                 }
             }
@@ -680,6 +689,17 @@ struct PhotoGalleryView: View {
         .safeAreaInset(edge: .top) {
             Color.clear.frame(height: 0)
         }
+        .gesture(
+            DragGesture(minimumDistance: 50)
+                .onEnded { value in
+                    // Swipe right to go back to all photos
+                    if value.translation.width > 80 && abs(value.translation.height) < 100 {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showingFoldersOverview = false
+                        }
+                    }
+                }
+        )
     }
 
     private var photoGridView: some View {
@@ -710,6 +730,7 @@ struct PhotoGalleryView: View {
                                         index: displayIndex,
                                         selectionMode: selectionMode,
                                         isSelected: selectedPhotoIndices.contains(displayIndex),
+                                        columnCount: columnCount,
                                         onTap: {
                                             if selectionMode {
                                                 if selectedPhotoIndices.contains(displayIndex) {
@@ -937,7 +958,19 @@ struct PhotoGalleryView: View {
                         }
                     },
                     captureDates: photosInDisplayOrder.map { $0.capturedAt ?? $0.createdAt },
-                    chronologicalPositions: displayPositions
+                    chronologicalPositions: displayPositions,
+                    favoriteStates: photosInDisplayOrder.map { $0.isFavorite ?? false },
+                    onToggleFavorite: { indexToToggle in
+                        if indexToToggle < photosInDisplayOrder.count {
+                            let photo = photosInDisplayOrder[indexToToggle]
+                            if let photoId = photo.id {
+                                let newFavoriteState = !(photo.isFavorite ?? false)
+                                Task {
+                                    try? await FirebaseManager.shared.togglePhotoFavorite(photoId, isFavorite: newFavoriteState)
+                                }
+                            }
+                        }
+                    }
                 )
             }
             }
@@ -1107,13 +1140,20 @@ struct PhotoGalleryView: View {
         guard !selectedPhotoIndices.isEmpty else { return }
 
         Task {
-            let photoIds = selectedPhotoIndices.sorted().compactMap { index -> String? in
+            let selectedPhotos = selectedPhotoIndices.sorted().compactMap { index -> Photo? in
                 guard index < photosInDisplayOrder.count else { return nil }
-                return photosInDisplayOrder[index].id
+                return photosInDisplayOrder[index]
             }
 
-            // Toggle to favorite (add to favorites)
-            try? await viewModel.batchToggleFavorites(photoIds, isFavorite: true) { current, total in
+            let photoIds = selectedPhotos.compactMap { $0.id }
+
+            // Check if all selected photos are already favorited
+            let allFavorited = selectedPhotos.allSatisfy { $0.isFavorite == true }
+
+            // If all are favorited, unfavorite them; otherwise favorite them
+            let newFavoriteState = !allFavorited
+
+            try? await viewModel.batchToggleFavorites(photoIds, isFavorite: newFavoriteState) { current, total in
                 // Could show progress here if needed
             }
 
@@ -1280,12 +1320,24 @@ struct PhotoGridCell: View {
     let index: Int
     let selectionMode: Bool
     let isSelected: Bool
+    let columnCount: Int
     let onTap: () -> Void
     let onLongPress: () -> Void
 
+    // Calculate size based on column count
+    private var cellSize: CGFloat {
+        let spacing: CGFloat = 8 * CGFloat(columnCount - 1) // spacing between cells
+        let padding: CGFloat = 16 // horizontal padding
+        return (UIScreen.main.bounds.width - padding - spacing) / CGFloat(columnCount)
+    }
+
+    private var cornerRadius: CGFloat {
+        columnCount == 2 ? 16 : (columnCount == 3 ? 12 : 8)
+    }
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            CachedAsyncImage(url: URL(string: photo.imageURL)) { image in
+            CachedAsyncImage(url: URL(string: photo.imageURL), thumbnailSize: cellSize) { image in
                 image
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -1294,31 +1346,43 @@ struct PhotoGridCell: View {
                     .fill(Color.gray.opacity(0.3))
                     .overlay {
                         ProgressView()
+                            .scaleEffect(0.7)
                     }
             }
-            .frame(width: (UIScreen.main.bounds.width - 32) / 3, height: (UIScreen.main.bounds.width - 32) / 3)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .shadow(color: Color.black.opacity(0.15), radius: 4, x: 0, y: 2)
+            .frame(width: cellSize, height: cellSize)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .shadow(color: Color.black.opacity(0.1), radius: columnCount == 2 ? 4 : 2, x: 0, y: 1)
             .overlay(
                 selectionMode ?
-                    RoundedRectangle(cornerRadius: 12)
+                    RoundedRectangle(cornerRadius: cornerRadius)
                         .stroke(isSelected ? Color(red: 0.8, green: 0.7, blue: 1.0) : Color.clear, lineWidth: 3)
                 : nil
             )
-            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
             .onTapGesture(perform: onTap)
             .onLongPressGesture(minimumDuration: 0.5, perform: onLongPress)
+
+            // Favorite indicator (bottom right)
+            if photo.isFavorite == true && !selectionMode {
+                Image(systemName: "heart.fill")
+                    .font(columnCount == 2 ? .body : .caption)
+                    .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
+                    .shadow(radius: 2)
+                    .padding(columnCount == 2 ? 10 : 6)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+            }
 
             // Checkmark overlay
             if selectionMode {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
+                    .font(columnCount == 2 ? .title : .title2)
                     .foregroundColor(isSelected ? Color(red: 0.8, green: 0.7, blue: 1.0) : .white)
                     .shadow(radius: 3)
-                    .padding(8)
+                    .padding(columnCount == 2 ? 10 : 8)
                     .allowsHitTesting(false)
             }
         }
+        .drawingGroup() // Optimize rendering performance
     }
 }
 

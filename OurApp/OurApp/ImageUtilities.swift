@@ -261,16 +261,19 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
     let url: URL?
     let content: (Image) -> Content
     let placeholder: () -> Placeholder
+    let thumbnailSize: CGFloat? // Optional: set to nil for full resolution
 
     @State private var image: UIImage?
     @State private var isLoading = false
 
     init(
         url: URL?,
+        thumbnailSize: CGFloat? = nil,
         @ViewBuilder content: @escaping (Image) -> Content,
         @ViewBuilder placeholder: @escaping () -> Placeholder
     ) {
         self.url = url
+        self.thumbnailSize = thumbnailSize
         self.content = content
         self.placeholder = placeholder
     }
@@ -291,7 +294,8 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
     private func loadImage() {
         guard let url = url, !isLoading else { return }
 
-        let cacheKey = url.absoluteString
+        // Use different cache keys for thumbnails vs full resolution
+        let cacheKey = thumbnailSize != nil ? "\(url.absoluteString)_thumb_\(Int(thumbnailSize!))" : url.absoluteString
 
         // Check cache first
         if let cachedImage = ImageCache.shared.get(forKey: cacheKey) {
@@ -301,11 +305,21 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
 
         // Download image
         isLoading = true
-        Task {
+        Task(priority: .userInitiated) {
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
-                if let downloadedImage = UIImage(data: data) {
-                    // Cache the image
+
+                // Use downsampling for better performance with large images
+                if let thumbnailSize = thumbnailSize {
+                    if let downsampledImage = downsampleImage(data: data, toSize: thumbnailSize) {
+                        ImageCache.shared.set(downsampledImage, forKey: cacheKey)
+                        await MainActor.run {
+                            self.image = downsampledImage
+                            self.isLoading = false
+                        }
+                    }
+                } else if let downloadedImage = UIImage(data: data) {
+                    // Cache the full image
                     ImageCache.shared.set(downloadedImage, forKey: cacheKey)
                     await MainActor.run {
                         self.image = downloadedImage
@@ -319,6 +333,30 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
                 }
             }
         }
+    }
+
+    // Efficient image downsampling using ImageIO
+    private func downsampleImage(data: Data, toSize maxDimension: CGFloat) -> UIImage? {
+        let imageSourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let imageSource = CGImageSourceCreateWithData(data as CFData, imageSourceOptions) else {
+            return nil
+        }
+
+        let scale = UIScreen.main.scale
+        let maxDimensionInPixels = maxDimension * scale
+
+        let downsampleOptions = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDimensionInPixels
+        ] as CFDictionary
+
+        guard let downsampledImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, downsampleOptions) else {
+            return nil
+        }
+
+        return UIImage(cgImage: downsampledImage)
     }
 }
 
@@ -402,6 +440,8 @@ struct FullScreenPhotoViewer: View {
     let onDelete: ((Int) -> Void)?
     let captureDates: [Date?]? // Optional capture dates for each photo
     let chronologicalPositions: [Int]? // Optional chronological position (1-based) for each photo
+    let favoriteStates: [Bool]? // Optional favorite states for each photo
+    let onToggleFavorite: ((Int) -> Void)? // Optional callback to toggle favorite
 
     // Use a unique ID to force complete view recreation
     @State private var viewID = UUID()
@@ -417,18 +457,23 @@ struct FullScreenPhotoViewer: View {
     @State private var selectionMode = false
     @State private var selectedIndices: Set<Int> = []
     @State private var loadedImages: [Int: UIImage] = [:]
+    @State private var localFavoriteStates: [Bool] = []
 
-    init(photoURLs: [String], initialIndex: Int, onDismiss: @escaping () -> Void, onDelete: ((Int) -> Void)? = nil, captureDates: [Date?]? = nil, chronologicalPositions: [Int]? = nil) {
+    init(photoURLs: [String], initialIndex: Int, onDismiss: @escaping () -> Void, onDelete: ((Int) -> Void)? = nil, captureDates: [Date?]? = nil, chronologicalPositions: [Int]? = nil, favoriteStates: [Bool]? = nil, onToggleFavorite: ((Int) -> Void)? = nil) {
         self.photoURLs = photoURLs
         self.initialIndex = initialIndex
         self.onDismiss = onDismiss
         self.onDelete = onDelete
         self.captureDates = captureDates
         self.chronologicalPositions = chronologicalPositions
+        self.favoriteStates = favoriteStates
+        self.onToggleFavorite = onToggleFavorite
 
         // Initialize directly with the index we want
         let safeIndex = max(0, min(initialIndex, photoURLs.count - 1))
         _currentIndex = State(initialValue: safeIndex)
+        // Initialize local favorite states
+        _localFavoriteStates = State(initialValue: favoriteStates ?? Array(repeating: false, count: photoURLs.count))
     }
 
     var body: some View {
@@ -602,6 +647,36 @@ struct FullScreenPhotoViewer: View {
                 }
                 .opacity(dragOffset == 0 ? 1 : 0)
             }
+
+            // Heart button overlay in bottom right
+            if onToggleFavorite != nil {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            // Toggle local state for immediate visual feedback
+                            if currentIndex < localFavoriteStates.count {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                    localFavoriteStates[currentIndex].toggle()
+                                }
+                            }
+                            // Call the callback
+                            onToggleFavorite?(currentIndex)
+                        }) {
+                            let isFavorite = currentIndex < localFavoriteStates.count ? localFavoriteStates[currentIndex] : false
+                            Image(systemName: isFavorite ? "heart.fill" : "heart")
+                                .font(.system(size: 28))
+                                .foregroundColor(isFavorite ? .red : .white)
+                                .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+                                .scaleEffect(isFavorite ? 1.1 : 1.0)
+                        }
+                        .padding(.trailing, 24)
+                        .padding(.bottom, 80)
+                    }
+                }
+                .opacity(dragOffset == 0 ? 1 : 0)
+            }
         }
         .statusBar(hidden: true)
         .onAppear {
@@ -611,6 +686,8 @@ struct FullScreenPhotoViewer: View {
             viewID = UUID() // Force view recreation
             dragOffset = 0
             isZoomed = false
+            // Sync local favorite states
+            localFavoriteStates = favoriteStates ?? Array(repeating: false, count: photoURLs.count)
         }
         .alert("Saved!", isPresented: $showingSaveSuccess) {
             Button("OK", role: .cancel) { }
