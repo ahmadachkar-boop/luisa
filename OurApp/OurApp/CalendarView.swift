@@ -173,7 +173,7 @@ struct CalendarView: View {
     @State private var selectedTags: Set<String> = []
     @State private var showingFilterSheet = false
     @State private var showingSearch = false
-    @State private var showingToolDrawer = false
+    @State private var showingExpandedHeader = false
     @State private var expandedCardId: String? = nil
     @State private var eventsLoadedGeneration = 0 // Increments when events first load
     @State private var quickAddDate: Date? = nil // For quick add from calendar tap
@@ -381,41 +381,130 @@ struct CalendarView: View {
         }
     }
 
+    // MARK: - Expandable Header (inline, hidden when collapsed)
     @ViewBuilder
-    private var toolDrawerOverlay: some View {
-        if showingToolDrawer {
-            Color.black.opacity(0.3)
-                .ignoresSafeArea()
-                .onTapGesture {
-                    withAnimation(.spring(response: 0.3)) {
-                        showingToolDrawer = false
+    private var expandableHeader: some View {
+        if showingExpandedHeader {
+            VStack(spacing: 16) {
+                // Quick actions row
+                HStack(spacing: 12) {
+                    // New Plan button
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3)) {
+                            showingExpandedHeader = false
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            showingAddEvent = true
+                        }
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.body)
+                            Text("New Plan")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.7, green: 0.45, blue: 0.95),
+                                    Color(red: 0.55, green: 0.35, blue: 0.85)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .cornerRadius(12)
+                    }
+
+                    // Search button
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3)) {
+                            showingExpandedHeader = false
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            showingSearch = true
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.body)
+                            Text("Search")
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                        )
                     }
                 }
 
-            VStack(spacing: 0) {
-                ToolDrawerView(
-                    showingSearch: $showingSearch,
-                    showingFilterSheet: $showingFilterSheet,
-                    onNewPlan: {
-                        showingToolDrawer = false
-                        showingAddEvent = true
-                    },
-                    onRefresh: {
+                // Filter and Refresh row
+                HStack(spacing: 12) {
+                    // Filter button
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3)) {
+                            showingExpandedHeader = false
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            showingFilterSheet = true
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "line.3.horizontal.decrease.circle")
+                                .font(.body)
+                            Text("Filters")
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                        )
+                    }
+
+                    // Refresh button
+                    Button(action: {
                         Task {
                             await refreshCalendar()
                         }
-                    },
-                    onClose: {
                         withAnimation(.spring(response: 0.3)) {
-                            showingToolDrawer = false
+                            showingExpandedHeader = false
                         }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.body)
+                            Text("Refresh")
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                        )
                     }
-                )
-                .padding(.top, 50)
-                .transition(.move(edge: .top).combined(with: .opacity))
-
-                Spacer()
+                }
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 20)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Color(red: 0.98, green: 0.96, blue: 1.0))
+                    .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 4)
+            )
+            .padding(.horizontal)
+            .padding(.top, 8)
+            .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 
@@ -423,6 +512,9 @@ struct CalendarView: View {
     private var calendarScrollContent: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
+                // Expandable header (hidden when collapsed)
+                expandableHeader
+
                 // Upcoming Events Banner (persistent across all months)
                 upcomingEventsBanner
 
@@ -525,19 +617,22 @@ struct CalendarView: View {
                 eventsListSection
             }
         }
-        .blur(radius: showingToolDrawer ? 3 : 0)
-        .allowsHitTesting(!showingToolDrawer)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 20)
-                .onEnded { value in
-                    // Pull down from top to open drawer
-                    if value.translation.height > 50 && value.startLocation.y < 100 {
-                        withAnimation(.spring(response: 0.3)) {
-                            showingToolDrawer = true
-                        }
-                    }
+        .refreshable {
+            // Show the expanded header when user pulls down
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                showingExpandedHeader = true
+            }
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y
+        } action: { oldValue, newValue in
+            // Auto-hide header when scrolling down
+            if showingExpandedHeader && newValue > 50 {
+                withAnimation(.spring(response: 0.3)) {
+                    showingExpandedHeader = false
                 }
-        )
+            }
+        }
     }
 
     var body: some View {
@@ -545,7 +640,6 @@ struct CalendarView: View {
             ZStack {
                 backgroundGradient
                 calendarScrollContent
-                toolDrawerOverlay
             }
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView(initialDate: quickAddDate ?? selectedDate) { event in
@@ -3630,131 +3724,6 @@ struct FilterTagsView: View {
     }
 }
 
-// MARK: - Tool Drawer
-struct ToolDrawerView: View {
-    @Binding var showingSearch: Bool
-    @Binding var showingFilterSheet: Bool
-    let onNewPlan: () -> Void
-    let onRefresh: () -> Void
-    let onClose: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Drag handle
-            Capsule()
-                .fill(Color.white.opacity(0.5))
-                .frame(width: 40, height: 5)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-
-            VStack(spacing: 16) {
-                // NEW PLAN BUTTON (top priority)
-                Button(action: onNewPlan) {
-                    HStack {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title2)
-                        Text("New Plan")
-                            .font(.headline)
-                        Spacer()
-                    }
-                    .foregroundColor(.white)
-                    .padding()
-                    .background(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.7, green: 0.4, blue: 0.95),
-                                Color(red: 0.55, green: 0.3, blue: 0.85)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .cornerRadius(16)
-                }
-
-                Divider()
-                    .background(Color.white.opacity(0.3))
-
-                // SEARCH BAR
-                Button(action: {
-                    onClose()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        showingSearch = true
-                    }
-                }) {
-                    HStack {
-                        Image(systemName: "magnifyingglass")
-                        Text("Search events...")
-                            .foregroundColor(.white.opacity(0.7))
-                        Spacer()
-                    }
-                    .foregroundColor(.white)
-                    .padding()
-                    .background(Color.white.opacity(0.15))
-                    .cornerRadius(12)
-                }
-
-                // QUICK ACTIONS
-                HStack(spacing: 12) {
-                    // Filter button
-                    Button(action: {
-                        onClose()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            showingFilterSheet = true
-                        }
-                    }) {
-                        HStack {
-                            Image(systemName: "line.3.horizontal.decrease.circle")
-                            Text("Filters")
-                                .font(.subheadline)
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.white.opacity(0.15))
-                        .cornerRadius(12)
-                    }
-
-                    // Refresh button
-                    Button(action: {
-                        onRefresh()
-                    }) {
-                        HStack {
-                            Image(systemName: "arrow.clockwise.circle")
-                            Text("Refresh")
-                                .font(.subheadline)
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.white.opacity(0.15))
-                        .cornerRadius(12)
-                    }
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
-        }
-        .background(
-            ZStack {
-                // Frosted glass effect
-                RoundedRectangle(cornerRadius: 24)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.95),
-                                Color(red: 0.5, green: 0.3, blue: 0.75).opacity(0.95)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .shadow(color: Color.black.opacity(0.3), radius: 20, x: 0, y: 10)
-            }
-        )
-        .padding(.horizontal, 16)
-    }
-}
 
 #Preview {
     CalendarView()
