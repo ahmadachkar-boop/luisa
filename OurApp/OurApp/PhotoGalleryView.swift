@@ -249,10 +249,16 @@ struct PhotoGalleryView: View {
         }
         .coordinateSpace(name: "scroll")
         .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
-            // Auto-hide expanded header when scrolling down
+            // Auto-hide expanded header when scrolling down (away from top)
             if showingExpandedHeader && offset < lastScrollOffset - 20 {
                 withAnimation(.spring(response: 0.3)) {
                     showingExpandedHeader = false
+                }
+            }
+            // Show expanded header when pulling down at the top (rubber-band effect)
+            if !showingExpandedHeader && offset > 50 {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    showingExpandedHeader = true
                 }
             }
             lastScrollOffset = offset
@@ -619,20 +625,6 @@ struct PhotoGalleryView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .gesture(
-            DragGesture(minimumDistance: 10)
-                .onEnded { value in
-                    if value.translation.height > 30 && !showingExpandedHeader {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                            showingExpandedHeader = true
-                        }
-                    } else if value.translation.height < -30 && showingExpandedHeader {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                            showingExpandedHeader = false
-                        }
-                    }
-                }
-        )
     }
 
     private var folderNavigationBar: some View {
