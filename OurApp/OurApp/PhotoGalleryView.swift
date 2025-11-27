@@ -1733,6 +1733,7 @@ struct DateFilterSheet: View {
                                 .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                             Text("From Date")
                                 .fontWeight(.medium)
+                                .foregroundColor(.black)
                         }
                     }
                     .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
@@ -1757,6 +1758,7 @@ struct DateFilterSheet: View {
                                 .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                             Text("To Date")
                                 .fontWeight(.medium)
+                                .foregroundColor(.black)
                         }
                     }
                     .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
