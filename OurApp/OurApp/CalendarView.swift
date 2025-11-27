@@ -4,6 +4,7 @@ import MapKit
 import WeatherKit
 import CoreLocation
 import ImageIO
+import WidgetKit
 
 // MARK: - Timeout Helper
 struct TimeoutError: Error {}
@@ -175,6 +176,7 @@ struct CalendarView: View {
     @State private var showingToolDrawer = false
     @State private var expandedCardId: String? = nil
     @State private var eventsLoadedGeneration = 0 // Increments when events first load
+    @State private var quickAddDate: Date? = nil // For quick add from calendar tap
 
     // Memoized filtered events - computed only when dependencies change
     private var filteredEvents: [CalendarEvent] {
@@ -432,7 +434,11 @@ struct CalendarView: View {
                     currentMonth: currentMonth,
                     events: viewModel.events,
                     selectedDay: $selectedDay,
-                    selectedTab: $selectedTab
+                    selectedTab: $selectedTab,
+                    onQuickAdd: { date in
+                        quickAddDate = date
+                        showingAddEvent = true
+                    }
                 )
                 .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)-\(selectedDay?.timeIntervalSince1970 ?? 0)")
                 .padding(.horizontal)
@@ -522,13 +528,19 @@ struct CalendarView: View {
                 toolDrawerOverlay
             }
             .sheet(isPresented: $showingAddEvent) {
-                AddEventView(initialDate: selectedDate) { event in
+                AddEventView(initialDate: quickAddDate ?? selectedDate) { event in
                     do {
                         try await viewModel.addEvent(event)
+                        quickAddDate = nil // Reset after adding
                     } catch {
                         errorMessage = "Failed to add event: \(error.localizedDescription)"
                         showError = true
                     }
+                }
+            }
+            .onChange(of: showingAddEvent) { _, newValue in
+                if !newValue {
+                    quickAddDate = nil // Reset when sheet is dismissed
                 }
             }
             .sheet(item: $selectedEventForDetail) { event in
@@ -1819,6 +1831,8 @@ struct AddEventView: View {
     @State private var description = ""
     @State private var location = ""
     @State private var date: Date
+    @State private var isMultiDay = false
+    @State private var endDate: Date
     @State private var isSpecial = false
     @State private var isSaving = false
     @State private var tags: [String] = []
@@ -1829,6 +1843,7 @@ struct AddEventView: View {
         self.initialDate = initialDate
         self.onSave = onSave
         _date = State(initialValue: initialDate)
+        _endDate = State(initialValue: Calendar.current.date(byAdding: .day, value: 1, to: initialDate) ?? initialDate)
     }
 
     var body: some View {
@@ -1841,7 +1856,26 @@ struct AddEventView: View {
                 }
 
                 Section("When & Where") {
-                    DatePicker("Date & Time", selection: $date)
+                    DatePicker(isMultiDay ? "Start Date" : "Date & Time", selection: $date)
+
+                    Toggle("Multi-Day Event", isOn: $isMultiDay)
+                        .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                    if isMultiDay {
+                        DatePicker("End Date", selection: $endDate, in: date..., displayedComponents: .date)
+                            .onChange(of: date) { _, newDate in
+                                // Ensure end date is not before start date
+                                if endDate < newDate {
+                                    endDate = Calendar.current.date(byAdding: .day, value: 1, to: newDate) ?? newDate
+                                }
+                            }
+
+                        // Show duration
+                        let days = Calendar.current.dateComponents([.day], from: date, to: endDate).day ?? 0
+                        Text("\(days + 1) day\(days > 0 ? "s" : "")")
+                            .font(.caption)
+                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                    }
 
                     HStack {
                         TextField("Location (optional)", text: $location)
@@ -1942,6 +1976,7 @@ struct AddEventView: View {
             title: title,
             description: description,
             date: date,
+            endDate: isMultiDay ? endDate : nil,
             location: location,
             createdBy: "You",
             isSpecial: isSpecial,
@@ -1972,6 +2007,8 @@ struct EditEventView: View {
     @State private var description: String
     @State private var location: String
     @State private var date: Date
+    @State private var isMultiDay: Bool
+    @State private var endDate: Date
     @State private var isSpecial: Bool
     @State private var isSaving = false
     @State private var backgroundImageItem: PhotosPickerItem?
@@ -1994,6 +2031,8 @@ struct EditEventView: View {
         _description = State(initialValue: event.description)
         _location = State(initialValue: event.location)
         _date = State(initialValue: event.date)
+        _isMultiDay = State(initialValue: event.endDate != nil)
+        _endDate = State(initialValue: event.endDate ?? Calendar.current.date(byAdding: .day, value: 1, to: event.date) ?? event.date)
         _isSpecial = State(initialValue: event.isSpecial)
         _backgroundImageURL = State(initialValue: event.backgroundImageURL)
         _backgroundOffsetX = State(initialValue: event.backgroundOffsetX ?? 0.0)
@@ -2043,7 +2082,24 @@ struct EditEventView: View {
 
     var whenWhereSection: some View {
         Section("When & Where") {
-            DatePicker("Date & Time", selection: $date)
+            DatePicker(isMultiDay ? "Start Date" : "Date & Time", selection: $date)
+
+            Toggle("Multi-Day Event", isOn: $isMultiDay)
+                .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+            if isMultiDay {
+                DatePicker("End Date", selection: $endDate, in: date..., displayedComponents: .date)
+                    .onChange(of: date) { _, newDate in
+                        if endDate < newDate {
+                            endDate = Calendar.current.date(byAdding: .day, value: 1, to: newDate) ?? newDate
+                        }
+                    }
+
+                let days = Calendar.current.dateComponents([.day], from: date, to: endDate).day ?? 0
+                Text("\(days + 1) day\(days > 0 ? "s" : "")")
+                    .font(.caption)
+                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+            }
 
             HStack {
                 TextField("Location (optional)", text: $location)
@@ -2319,6 +2375,7 @@ struct EditEventView: View {
         updatedEvent.title = title
         updatedEvent.description = description
         updatedEvent.date = date
+        updatedEvent.endDate = isMultiDay ? endDate : nil
         updatedEvent.location = location
         updatedEvent.isSpecial = isSpecial
         updatedEvent.backgroundImageURL = backgroundImageURL
@@ -2361,6 +2418,8 @@ class CalendarViewModel: ObservableObject {
             for try await events in firebaseManager.getCalendarEvents() {
                 await MainActor.run {
                     self.events = events
+                    // Sync to widget
+                    WidgetDataManager.shared.syncEvents(events)
                 }
             }
         }
@@ -2412,6 +2471,7 @@ struct CalendarGridView: View {
     let events: [CalendarEvent]
     @Binding var selectedDay: Date?
     @Binding var selectedTab: Int
+    var onQuickAdd: ((Date) -> Void)? = nil // Quick add callback
     @State private var hoveredDay: Date?
 
     private let calendar = Calendar.current
@@ -2446,6 +2506,9 @@ struct CalendarGridView: View {
                             isToday: calendar.isDateInToday(date),
                             onTap: {
                                 handleDayTap(date: date)
+                            },
+                            onQuickAdd: {
+                                onQuickAdd?(date)
                             }
                         )
                     } else {
@@ -2485,7 +2548,18 @@ struct CalendarGridView: View {
 
     func eventsForDay(_ date: Date) -> [CalendarEvent] {
         return events.filter { event in
-            calendar.isDate(event.date, inSameDayAs: date)
+            // Check if date is the start date
+            if calendar.isDate(event.date, inSameDayAs: date) {
+                return true
+            }
+            // Check if date falls within multi-day event range
+            if let endDate = event.endDate {
+                let startOfEventDay = calendar.startOfDay(for: event.date)
+                let startOfEndDay = calendar.startOfDay(for: endDate)
+                let startOfDate = calendar.startOfDay(for: date)
+                return startOfDate >= startOfEventDay && startOfDate <= startOfEndDay
+            }
+            return false
         }
     }
 
@@ -2541,6 +2615,7 @@ struct CalendarDayCell: View {
     let isSelected: Bool
     let isToday: Bool
     let onTap: () -> Void
+    var onQuickAdd: (() -> Void)? = nil // Quick add for empty days
 
     @State private var showTooltip = false
 
@@ -2551,13 +2626,18 @@ struct CalendarDayCell: View {
 
         return Button(action: {
             if events.isEmpty {
-                // Show brief feedback for empty days
-                withAnimation(.spring(response: 0.2)) {
-                    showTooltip = true
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                if let quickAdd = onQuickAdd, !isPastDate {
+                    // Quick add for empty future days
+                    quickAdd()
+                } else {
+                    // Show brief feedback for empty past days
                     withAnimation(.spring(response: 0.2)) {
-                        showTooltip = false
+                        showTooltip = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        withAnimation(.spring(response: 0.2)) {
+                            showTooltip = false
+                        }
                     }
                 }
             } else {

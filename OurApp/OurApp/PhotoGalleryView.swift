@@ -23,6 +23,21 @@ struct PhotoIndex: Identifiable {
     let value: Int
 }
 
+// MARK: - Sort Options
+enum PhotoSortOption: String, CaseIterable {
+    case newestFirst = "Newest First"
+    case oldestFirst = "Oldest First"
+    case recentlyAdded = "Recently Added"
+
+    var icon: String {
+        switch self {
+        case .newestFirst: return "arrow.down"
+        case .oldestFirst: return "arrow.up"
+        case .recentlyAdded: return "clock.arrow.circlepath"
+        }
+    }
+}
+
 struct PhotoGalleryView: View {
     @StateObject private var viewModel = PhotoGalleryViewModel()
     @State private var selectedItems: [PhotosPickerItem] = []
@@ -44,15 +59,54 @@ struct PhotoGalleryView: View {
     @State private var newFolderName = ""
     @State private var showingFoldersOverview = false
 
-    let columns = [
-        GridItem(.flexible(), spacing: 8),
-        GridItem(.flexible(), spacing: 8),
-        GridItem(.flexible(), spacing: 8)
-    ]
+    // New feature states
+    @State private var sortOption: PhotoSortOption = .newestFirst
+    @State private var showingSortOptions = false
+    @State private var columnCount: Int = 3
+    @State private var showingDateFilter = false
+    @State private var filterStartDate: Date? = nil
+    @State private var filterEndDate: Date? = nil
+    @State private var showingMoveToFolder = false
+    @State private var uploadProgress: Double = 0.0
+    @State private var uploadedCount: Int = 0
+    @State private var totalUploadCount: Int = 0
+    @State private var showingBatchProgress = false
+    @State private var batchProgress: Double = 0.0
+    @State private var batchOperationMessage = ""
 
-    // Get photos for current folder view
+    // Computed columns based on user preference
+    private var columns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 8), count: columnCount)
+    }
+
+    // Magnification gesture state
+    @GestureState private var magnificationScale: CGFloat = 1.0
+
+    // Get photos for current folder view with date filtering
     private var filteredPhotos: [Photo] {
-        viewModel.photos(for: currentFolderView)
+        var photos = viewModel.photos(for: currentFolderView)
+
+        // Apply date filter
+        if let startDate = filterStartDate {
+            photos = photos.filter { photo in
+                let captureDate = photo.capturedAt ?? photo.createdAt
+                return captureDate >= Calendar.current.startOfDay(for: startDate)
+            }
+        }
+        if let endDate = filterEndDate {
+            photos = photos.filter { photo in
+                let captureDate = photo.capturedAt ?? photo.createdAt
+                let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: endDate))!
+                return captureDate < endOfDay
+            }
+        }
+
+        return photos
+    }
+
+    // Check if date filter is active
+    private var hasDateFilter: Bool {
+        filterStartDate != nil || filterEndDate != nil
     }
 
     // Group photos by month/year (using original capture date from metadata)
@@ -65,21 +119,37 @@ struct PhotoGalleryView: View {
             return formatter.string(from: dateToUse)
         }
 
-        // Sort months by date (newest first), and photos within each month by capture date (newest first)
-        return grouped.sorted { first, second in
+        // Sort months based on current sort option
+        let sortedMonths = grouped.sorted { first, second in
             let formatter = DateFormatter()
             formatter.dateFormat = "MMMM yyyy"
             guard let date1 = formatter.date(from: first.key),
                   let date2 = formatter.date(from: second.key) else {
                 return first.key > second.key
             }
-            return date1 > date2
-        }.map { month in
-            // Sort photos within each month by capture date (newest first)
-            let sortedPhotos = month.value.sorted { photo1, photo2 in
-                let date1 = photo1.capturedAt ?? photo1.createdAt
-                let date2 = photo2.capturedAt ?? photo2.createdAt
+            switch sortOption {
+            case .newestFirst, .recentlyAdded:
                 return date1 > date2
+            case .oldestFirst:
+                return date1 < date2
+            }
+        }
+
+        return sortedMonths.map { month in
+            // Sort photos within each month
+            let sortedPhotos = month.value.sorted { photo1, photo2 in
+                switch sortOption {
+                case .newestFirst:
+                    let date1 = photo1.capturedAt ?? photo1.createdAt
+                    let date2 = photo2.capturedAt ?? photo2.createdAt
+                    return date1 > date2
+                case .oldestFirst:
+                    let date1 = photo1.capturedAt ?? photo1.createdAt
+                    let date2 = photo2.capturedAt ?? photo2.createdAt
+                    return date1 < date2
+                case .recentlyAdded:
+                    return photo1.createdAt > photo2.createdAt
+                }
             }
             return (key: month.key, photos: sortedPhotos)
         }
@@ -115,6 +185,8 @@ struct PhotoGalleryView: View {
         switch currentFolderView {
         case .allPhotos:
             return "All Photos"
+        case .favorites:
+            return "Favorites"
         case .events:
             return "Events"
         case .specialEvents:
@@ -140,6 +212,20 @@ struct PhotoGalleryView: View {
                     .padding(.horizontal)
                     .padding(.top, 8)
 
+                // Upload progress bar
+                if isUploading {
+                    uploadProgressBar
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                }
+
+                // Active filters indicator
+                if hasDateFilter || sortOption != .newestFirst {
+                    activeFiltersBar
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                }
+
                 // Show folders or photos based on current view
                 if currentFolderView == .events || currentFolderView == .specialEvents {
                     folderListView
@@ -151,6 +237,22 @@ struct PhotoGalleryView: View {
         .safeAreaInset(edge: .top) {
             Color.clear.frame(height: 0)
         }
+        .simultaneousGesture(
+            MagnificationGesture()
+                .updating($magnificationScale) { value, scale, _ in
+                    scale = value
+                }
+                .onEnded { value in
+                    // Pinch in (scale < 1) = more columns, pinch out (scale > 1) = fewer columns
+                    withAnimation(.spring(response: 0.3)) {
+                        if value < 0.8 && columnCount < 4 {
+                            columnCount += 1
+                        } else if value > 1.2 && columnCount > 2 {
+                            columnCount -= 1
+                        }
+                    }
+                }
+        )
         .simultaneousGesture(
             DragGesture(minimumDistance: 30)
                 .onEnded { value in
@@ -185,6 +287,102 @@ struct PhotoGalleryView: View {
                         }
                     }
                 }
+        )
+    }
+
+    // MARK: - Upload Progress Bar
+    private var uploadProgressBar: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("Uploading photos...")
+                    .font(.subheadline)
+                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                Spacer()
+                Text("\(uploadedCount) of \(totalUploadCount)")
+                    .font(.caption)
+                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+            }
+            ProgressView(value: uploadProgress, total: 1.0)
+                .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white)
+                .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
+        )
+    }
+
+    // MARK: - Active Filters Bar
+    private var activeFiltersBar: some View {
+        HStack(spacing: 8) {
+            // Sort indicator
+            if sortOption != .newestFirst {
+                HStack(spacing: 4) {
+                    Image(systemName: sortOption.icon)
+                        .font(.caption)
+                    Text(sortOption.rawValue)
+                        .font(.caption)
+                }
+                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color(red: 0.95, green: 0.9, blue: 1.0))
+                .cornerRadius(12)
+            }
+
+            // Date filter indicator
+            if hasDateFilter {
+                HStack(spacing: 4) {
+                    Image(systemName: "calendar")
+                        .font(.caption)
+                    if let start = filterStartDate, let end = filterEndDate {
+                        Text("\(start, format: .dateTime.month(.abbreviated).day()) - \(end, format: .dateTime.month(.abbreviated).day())")
+                            .font(.caption)
+                    } else if let start = filterStartDate {
+                        Text("From \(start, format: .dateTime.month(.abbreviated).day())")
+                            .font(.caption)
+                    } else if let end = filterEndDate {
+                        Text("Until \(end, format: .dateTime.month(.abbreviated).day())")
+                            .font(.caption)
+                    }
+
+                    Button(action: {
+                        withAnimation {
+                            filterStartDate = nil
+                            filterEndDate = nil
+                        }
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.caption)
+                    }
+                }
+                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color(red: 0.95, green: 0.9, blue: 1.0))
+                .cornerRadius(12)
+            }
+
+            Spacer()
+
+            // Grid size indicator
+            HStack(spacing: 4) {
+                Image(systemName: "square.grid.\(columnCount)x\(columnCount)")
+                    .font(.caption)
+            }
+            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color(red: 0.95, green: 0.93, blue: 0.98))
+            .cornerRadius(8)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.9))
+                .shadow(color: Color.black.opacity(0.05), radius: 3, x: 0, y: 1)
         )
     }
 
@@ -237,11 +435,48 @@ struct PhotoGalleryView: View {
 
             Spacer()
 
+            // Sort button
+            Menu {
+                ForEach(PhotoSortOption.allCases, id: \.self) { option in
+                    Button(action: {
+                        withAnimation {
+                            sortOption = option
+                        }
+                    }) {
+                        HStack {
+                            Label(option.rawValue, systemImage: option.icon)
+                            if sortOption == option {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.body)
+                    .foregroundColor(sortOption != .newestFirst ? Color(red: 0.6, green: 0.4, blue: 0.85) : Color(red: 0.5, green: 0.4, blue: 0.7))
+            }
+
+            // Date filter button
+            Button(action: {
+                showingDateFilter = true
+            }) {
+                Image(systemName: hasDateFilter ? "calendar.badge.checkmark" : "calendar")
+                    .font(.body)
+                    .foregroundColor(hasDateFilter ? Color(red: 0.6, green: 0.4, blue: 0.85) : Color(red: 0.5, green: 0.4, blue: 0.7))
+            }
+
             // Folder menu button
             Menu {
                 Button(action: { currentFolderView = .allPhotos; folderNavStack.removeAll() }) {
                     Label("All Photos", systemImage: "photo.on.rectangle")
                 }
+
+                // Favorites folder
+                Button(action: { navigateToFolder(.favorites) }) {
+                    Label("Favorites", systemImage: "heart.fill")
+                }
+
                 Button(action: { navigateToFolder(.events) }) {
                     Label("Events", systemImage: "calendar")
                 }
@@ -352,6 +587,22 @@ struct PhotoGalleryView: View {
                 ) {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         showingFoldersOverview = false
+                    }
+                }
+
+                // Favorites
+                let favoritesCount = viewModel.favoritesCount
+                if favoritesCount > 0 {
+                    FolderCard(
+                        title: "Favorites",
+                        icon: "heart.fill",
+                        count: favoritesCount,
+                        color: Color(red: 0.9, green: 0.4, blue: 0.5)
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showingFoldersOverview = false
+                            navigateToFolder(.favorites)
+                        }
                     }
                 }
 
@@ -569,14 +820,36 @@ struct PhotoGalleryView: View {
                             .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
                         }
 
+                        ToolbarItem(placement: .principal) {
+                            Text("\(selectedPhotoIndices.count) selected")
+                                .font(.headline)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                        }
+
                         ToolbarItem(placement: .navigationBarTrailing) {
-                            HStack(spacing: 16) {
+                            HStack(spacing: 12) {
+                                // Favorite button
+                                Button(action: toggleFavoritesForSelected) {
+                                    Image(systemName: "heart.fill")
+                                        .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
+                                }
+                                .disabled(selectedPhotoIndices.isEmpty)
+
+                                // Move to folder button
+                                Button(action: { showingMoveToFolder = true }) {
+                                    Image(systemName: "folder.badge.plus")
+                                        .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
+                                }
+                                .disabled(selectedPhotoIndices.isEmpty)
+
+                                // Save button
                                 Button(action: saveSelectedPhotos) {
                                     Image(systemName: "square.and.arrow.down")
                                         .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
                                 }
                                 .disabled(selectedPhotoIndices.isEmpty)
 
+                                // Delete button
                                 Button(action: deleteSelectedPhotos) {
                                     Image(systemName: "trash")
                                         .foregroundColor(.red)
@@ -590,6 +863,9 @@ struct PhotoGalleryView: View {
                 Task {
                     guard !newItems.isEmpty else { return }
                     isUploading = true
+                    totalUploadCount = newItems.count
+                    uploadedCount = 0
+                    uploadProgress = 0.0
 
                     var uploadErrors: [String] = []
 
@@ -604,6 +880,10 @@ struct PhotoGalleryView: View {
                                 let resized = uiImage.resized(toMaxDimension: 1920)
                                 if let compressedData = resized.compressed(toMaxBytes: 1_000_000) {
                                     try await viewModel.uploadPhoto(imageData: compressedData, capturedAt: capturedAt)
+                                    await MainActor.run {
+                                        uploadedCount = index + 1
+                                        uploadProgress = Double(uploadedCount) / Double(totalUploadCount)
+                                    }
                                 } else {
                                     uploadErrors.append("Failed to compress image \(index + 1)")
                                 }
@@ -619,6 +899,9 @@ struct PhotoGalleryView: View {
                     }
 
                     isUploading = false
+                    uploadProgress = 0.0
+                    uploadedCount = 0
+                    totalUploadCount = 0
                     selectedItems = []
                 }
             }
@@ -707,6 +990,32 @@ struct PhotoGalleryView: View {
         } message: {
             Text("Enter a name for your new folder")
         }
+        .sheet(isPresented: $showingDateFilter) {
+            DateFilterSheet(
+                startDate: $filterStartDate,
+                endDate: $filterEndDate,
+                onApply: { showingDateFilter = false }
+            )
+            .presentationDetents([.medium])
+        }
+        .sheet(isPresented: $showingMoveToFolder) {
+            MoveToFolderSheet(
+                folders: viewModel.folders.filter { $0.type == .custom },
+                onSelectFolder: { folderId in
+                    moveSelectedPhotosToFolder(folderId)
+                    showingMoveToFolder = false
+                },
+                onRemoveFromFolder: {
+                    moveSelectedPhotosToFolder(nil)
+                    showingMoveToFolder = false
+                },
+                onCreateFolder: {
+                    showingMoveToFolder = false
+                    showingCreateFolder = true
+                }
+            )
+            .presentationDetents([.medium])
+        }
     }
 
     private func saveSelectedPhotos() {
@@ -785,6 +1094,47 @@ struct PhotoGalleryView: View {
                 guard index < photosInDisplayOrder.count else { continue }
                 let photo = photosInDisplayOrder[index]
                 try? await viewModel.deletePhoto(photo)
+            }
+
+            await MainActor.run {
+                selectionMode = false
+                selectedPhotoIndices.removeAll()
+            }
+        }
+    }
+
+    private func toggleFavoritesForSelected() {
+        guard !selectedPhotoIndices.isEmpty else { return }
+
+        Task {
+            let photoIds = selectedPhotoIndices.sorted().compactMap { index -> String? in
+                guard index < photosInDisplayOrder.count else { return nil }
+                return photosInDisplayOrder[index].id
+            }
+
+            // Toggle to favorite (add to favorites)
+            try? await viewModel.batchToggleFavorites(photoIds, isFavorite: true) { current, total in
+                // Could show progress here if needed
+            }
+
+            await MainActor.run {
+                selectionMode = false
+                selectedPhotoIndices.removeAll()
+            }
+        }
+    }
+
+    private func moveSelectedPhotosToFolder(_ folderId: String?) {
+        guard !selectedPhotoIndices.isEmpty else { return }
+
+        Task {
+            let photoIds = selectedPhotoIndices.sorted().compactMap { index -> String? in
+                guard index < photosInDisplayOrder.count else { return nil }
+                return photosInDisplayOrder[index].id
+            }
+
+            try? await viewModel.movePhotosToFolder(photoIds, folderId: folderId) { current, total in
+                // Could show progress here if needed
             }
 
             await MainActor.run {
@@ -1090,6 +1440,8 @@ class PhotoGalleryViewModel: ObservableObject {
         switch folderType {
         case .allPhotos:
             return photos
+        case .favorites:
+            return photos.filter { $0.isFavorite == true }
         case .events:
             return photos.filter { $0.eventId != nil }
         case .specialEvents:
@@ -1122,11 +1474,37 @@ class PhotoGalleryViewModel: ObservableObject {
             return (event: event, photoCount: count)
         }
     }
+
+    // MARK: - Favorites
+    var favoritesCount: Int {
+        photos.filter { $0.isFavorite == true }.count
+    }
+
+    func toggleFavorite(_ photo: Photo) async throws {
+        guard let photoId = photo.id else { return }
+        let newFavoriteState = !(photo.isFavorite ?? false)
+        try await firebaseManager.togglePhotoFavorite(photoId, isFavorite: newFavoriteState)
+    }
+
+    func batchToggleFavorites(_ photoIds: [String], isFavorite: Bool, progressHandler: ((Int, Int) -> Void)? = nil) async throws {
+        try await firebaseManager.batchToggleFavorites(photoIds, isFavorite: isFavorite, progressHandler: progressHandler)
+    }
+
+    // MARK: - Move to Folder
+    func movePhotosToFolder(_ photoIds: [String], folderId: String?, progressHandler: ((Int, Int) -> Void)? = nil) async throws {
+        try await firebaseManager.batchUpdatePhotoFolders(photoIds, folderId: folderId, progressHandler: progressHandler)
+    }
+
+    // MARK: - Batch Delete
+    func batchDeletePhotos(_ photos: [Photo], progressHandler: ((Int, Int) -> Void)? = nil) async throws {
+        try await firebaseManager.batchDeletePhotos(photos, progressHandler: progressHandler)
+    }
 }
 
 // Folder view types for navigation
 enum FolderViewType: Hashable {
     case allPhotos
+    case favorites // Favorited photos
     case events // Parent category
     case specialEvents // Parent category
     case event(String) // Specific event folder
@@ -1245,6 +1623,264 @@ struct PhotoToolDrawerView: View {
             }
         )
         .padding(.horizontal, 16)
+    }
+}
+
+// MARK: - Date Filter Sheet
+struct DateFilterSheet: View {
+    @Binding var startDate: Date?
+    @Binding var endDate: Date?
+    let onApply: () -> Void
+    @Environment(\.dismiss) var dismiss
+
+    @State private var tempStartDate: Date = Date()
+    @State private var tempEndDate: Date = Date()
+    @State private var useStartDate: Bool = false
+    @State private var useEndDate: Bool = false
+
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 24) {
+                // Start Date
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle(isOn: $useStartDate) {
+                        HStack {
+                            Image(systemName: "calendar")
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                            Text("From Date")
+                                .fontWeight(.medium)
+                        }
+                    }
+                    .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                    if useStartDate {
+                        DatePicker("Start", selection: $tempStartDate, displayedComponents: .date)
+                            .datePickerStyle(.compact)
+                            .labelsHidden()
+                    }
+                }
+                .padding()
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color(red: 0.95, green: 0.93, blue: 0.98))
+                )
+
+                // End Date
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle(isOn: $useEndDate) {
+                        HStack {
+                            Image(systemName: "calendar.badge.clock")
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                            Text("To Date")
+                                .fontWeight(.medium)
+                        }
+                    }
+                    .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                    if useEndDate {
+                        DatePicker("End", selection: $tempEndDate, displayedComponents: .date)
+                            .datePickerStyle(.compact)
+                            .labelsHidden()
+                    }
+                }
+                .padding()
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color(red: 0.95, green: 0.93, blue: 0.98))
+                )
+
+                Spacer()
+
+                // Action Buttons
+                VStack(spacing: 12) {
+                    Button(action: {
+                        startDate = useStartDate ? tempStartDate : nil
+                        endDate = useEndDate ? tempEndDate : nil
+                        onApply()
+                    }) {
+                        Text("Apply Filter")
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 0.6, green: 0.4, blue: 0.85),
+                                        Color(red: 0.5, green: 0.3, blue: 0.75)
+                                    ],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .cornerRadius(16)
+                    }
+
+                    if startDate != nil || endDate != nil {
+                        Button(action: {
+                            startDate = nil
+                            endDate = nil
+                            useStartDate = false
+                            useEndDate = false
+                            onApply()
+                        }) {
+                            Text("Clear Filter")
+                                .fontWeight(.medium)
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                        }
+                    }
+                }
+            }
+            .padding()
+            .navigationTitle("Filter by Date")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+            }
+            .onAppear {
+                if let start = startDate {
+                    tempStartDate = start
+                    useStartDate = true
+                }
+                if let end = endDate {
+                    tempEndDate = end
+                    useEndDate = true
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Move to Folder Sheet
+struct MoveToFolderSheet: View {
+    let folders: [PhotoFolder]
+    let onSelectFolder: (String) -> Void
+    let onRemoveFromFolder: () -> Void
+    let onCreateFolder: () -> Void
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 16) {
+                    // Remove from folder option
+                    Button(action: onRemoveFromFolder) {
+                        HStack(spacing: 16) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.gray.opacity(0.15))
+                                    .frame(width: 50, height: 50)
+                                Image(systemName: "folder.badge.minus")
+                                    .font(.title2)
+                                    .foregroundColor(.gray)
+                            }
+
+                            Text("Remove from Folder")
+                                .fontWeight(.medium)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                            Spacer()
+                        }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color.white)
+                                .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 2)
+                        )
+                    }
+
+                    if !folders.isEmpty {
+                        Divider()
+                            .padding(.vertical, 8)
+
+                        Text("Move to Folder")
+                            .font(.headline)
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(folders, id: \.id) { folder in
+                            Button(action: {
+                                if let folderId = folder.id {
+                                    onSelectFolder(folderId)
+                                }
+                            }) {
+                                HStack(spacing: 16) {
+                                    ZStack {
+                                        Circle()
+                                            .fill(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.15))
+                                            .frame(width: 50, height: 50)
+                                        Image(systemName: "folder.fill")
+                                            .font(.title2)
+                                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                                    }
+
+                                    Text(folder.name)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                                    Spacer()
+
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                }
+                                .padding()
+                                .background(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .fill(Color.white)
+                                        .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 2)
+                                )
+                            }
+                        }
+                    }
+
+                    Divider()
+                        .padding(.vertical, 8)
+
+                    // Create new folder
+                    Button(action: onCreateFolder) {
+                        HStack(spacing: 16) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color(red: 0.9, green: 0.85, blue: 1.0))
+                                    .frame(width: 50, height: 50)
+                                Image(systemName: "folder.badge.plus")
+                                    .font(.title2)
+                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                            }
+
+                            Text("Create New Folder")
+                                .fontWeight(.semibold)
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                            Spacer()
+                        }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .strokeBorder(Color(red: 0.6, green: 0.4, blue: 0.85), lineWidth: 2)
+                        )
+                    }
+                }
+                .padding()
+            }
+            .background(Color(red: 0.96, green: 0.94, blue: 0.98).ignoresSafeArea())
+            .navigationTitle("Move to Folder")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+            }
+        }
     }
 }
 

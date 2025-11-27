@@ -252,6 +252,79 @@ class FirebaseManager: ObservableObject {
         }
     }
 
+    // MARK: - Photo Favorites
+    func togglePhotoFavorite(_ photoId: String, isFavorite: Bool) async throws {
+        try await db.collection("photos").document(photoId).updateData([
+            "isFavorite": isFavorite
+        ])
+    }
+
+    func updatePhoto(_ photo: Photo) async throws {
+        guard let id = photo.id else { return }
+        try db.collection("photos").document(id).setData(from: photo)
+    }
+
+    // MARK: - Batch Operations
+    func batchUpdatePhotoFolders(_ photoIds: [String], folderId: String?, progressHandler: ((Int, Int) -> Void)? = nil) async throws {
+        let batch = db.batch()
+        let total = photoIds.count
+
+        for (index, photoId) in photoIds.enumerated() {
+            let docRef = db.collection("photos").document(photoId)
+            if let folderId = folderId {
+                batch.updateData(["folderId": folderId], forDocument: docRef)
+            } else {
+                batch.updateData(["folderId": FieldValue.delete()], forDocument: docRef)
+            }
+
+            // Report progress
+            await MainActor.run {
+                progressHandler?(index + 1, total)
+            }
+        }
+
+        try await batch.commit()
+    }
+
+    func batchToggleFavorites(_ photoIds: [String], isFavorite: Bool, progressHandler: ((Int, Int) -> Void)? = nil) async throws {
+        let batch = db.batch()
+        let total = photoIds.count
+
+        for (index, photoId) in photoIds.enumerated() {
+            let docRef = db.collection("photos").document(photoId)
+            batch.updateData(["isFavorite": isFavorite], forDocument: docRef)
+
+            await MainActor.run {
+                progressHandler?(index + 1, total)
+            }
+        }
+
+        try await batch.commit()
+    }
+
+    func batchDeletePhotos(_ photos: [Photo], progressHandler: ((Int, Int) -> Void)? = nil) async throws {
+        let total = photos.count
+
+        for (index, photo) in photos.enumerated() {
+            guard let id = photo.id else { continue }
+
+            // Delete from Storage
+            do {
+                let storageRef = storage.reference(forURL: photo.imageURL)
+                try await storageRef.delete()
+            } catch {
+                print("Error deleting photo from storage: \(error)")
+            }
+
+            // Delete from Firestore
+            try await db.collection("photos").document(id).delete()
+
+            await MainActor.run {
+                progressHandler?(index + 1, total)
+            }
+        }
+    }
+
     // MARK: - Calendar Events
     func addCalendarEvent(_ event: CalendarEvent) async throws {
         try db.collection("calendarEvents").addDocument(from: event)
