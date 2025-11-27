@@ -216,6 +216,39 @@ struct VoiceMessagesView: View {
                         miniPlayerView
                     }
                 }
+
+                // Floating Record Button (when in a category view)
+                if currentFolderView != .categorySelection && !selectionMode {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            Button(action: { showingRecorder = true }) {
+                                ZStack {
+                                    Circle()
+                                        .fill(
+                                            LinearGradient(
+                                                colors: [
+                                                    Color(red: 0.7, green: 0.45, blue: 0.95),
+                                                    Color(red: 0.55, green: 0.35, blue: 0.85)
+                                                ],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                        )
+                                        .frame(width: 60, height: 60)
+                                        .shadow(color: Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.4), radius: 8, x: 0, y: 4)
+
+                                    Image(systemName: "mic.fill")
+                                        .font(.system(size: 24))
+                                        .foregroundColor(.white)
+                                }
+                            }
+                            .padding(.trailing, 20)
+                            .padding(.bottom, viewModel.currentlyPlayingMessage != nil ? 90 : 20)
+                        }
+                    }
+                }
             }
             .toolbar {
                 if selectionMode {
@@ -568,6 +601,33 @@ struct VoiceMessagesView: View {
                             columnCount += 1
                         } else if value > 1.2 && columnCount > 1 {
                             columnCount -= 1
+                        }
+                    }
+                }
+        )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    let horizontalAmount = value.translation.width
+                    let verticalAmount = abs(value.translation.height)
+
+                    // Only trigger if it's more horizontal than vertical
+                    if abs(horizontalAmount) > 50 && abs(horizontalAmount) > verticalAmount * 2 {
+                        if horizontalAmount > 0 {
+                            // Swipe right - navigate back
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                let previousView = folderNavStack.popLast() ?? .categorySelection
+                                currentFolderView = previousView
+                            }
+                        } else if horizontalAmount < 0 {
+                            // Swipe left - switch to other user (only from allMemos view)
+                            if case .allMemos(let currentUserName) = currentFolderView {
+                                let otherUser = currentUserName == "Ahmad" ? "Luisa" : "Ahmad"
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    currentFolderView = .allMemos(otherUser)
+                                    currentUserCategory = otherUser
+                                }
+                            }
                         }
                     }
                 }
@@ -959,31 +1019,82 @@ struct VoiceMessagesView: View {
 
     // MARK: - Navigation Bar
     private var navigationBar: some View {
-        HStack(spacing: 12) {
-            // Back button
-            if currentFolderView != .categorySelection {
-                Button(action: {
-                    let previousView = folderNavStack.popLast() ?? .categorySelection
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        currentFolderView = previousView
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                // Back button
+                if currentFolderView != .categorySelection {
+                    Button(action: {
+                        let previousView = folderNavStack.popLast() ?? .categorySelection
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            currentFolderView = previousView
+                        }
+                    }) {
+                        Image(systemName: "chevron.left")
+                            .font(.title3)
+                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                     }
-                }) {
-                    Image(systemName: "chevron.left")
-                        .font(.title3)
-                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                 }
+
+                Text(folderTitle)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                Spacer()
+
+                Text("\(filteredMessages.count) memo\(filteredMessages.count == 1 ? "" : "s")")
+                    .font(.subheadline)
+                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
             }
 
-            Text(folderTitle)
-                .font(.title2)
-                .fontWeight(.bold)
-                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+            // Swipe indicator for switching between Ahmad/Luisa
+            if case .allMemos(let user) = currentFolderView {
+                HStack(spacing: 16) {
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            currentFolderView = .allMemos("Ahmad")
+                            currentUserCategory = "Ahmad"
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            if user == "Ahmad" {
+                                Image(systemName: "chevron.left")
+                                    .font(.caption2)
+                            }
+                            Text("Ahmad")
+                                .font(.caption.weight(user == "Ahmad" ? .bold : .regular))
+                        }
+                        .foregroundColor(user == "Ahmad" ? Color(red: 0.4, green: 0.6, blue: 0.9) : Color(red: 0.5, green: 0.4, blue: 0.7))
+                    }
 
-            Spacer()
+                    // Swipe indicator
+                    HStack(spacing: 4) {
+                        Image(systemName: "hand.draw.fill")
+                            .font(.caption2)
+                        Text("swipe")
+                            .font(.caption2)
+                    }
+                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8).opacity(0.6))
 
-            Text("\(filteredMessages.count) memo\(filteredMessages.count == 1 ? "" : "s")")
-                .font(.subheadline)
-                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            currentFolderView = .allMemos("Luisa")
+                            currentUserCategory = "Luisa"
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            Text("Luisa")
+                                .font(.caption.weight(user == "Luisa" ? .bold : .regular))
+                            if user == "Luisa" {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2)
+                            }
+                        }
+                        .foregroundColor(user == "Luisa" ? Color(red: 0.9, green: 0.5, blue: 0.6) : Color(red: 0.5, green: 0.4, blue: 0.7))
+                    }
+                }
+                .padding(.top, 4)
+            }
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 16)
