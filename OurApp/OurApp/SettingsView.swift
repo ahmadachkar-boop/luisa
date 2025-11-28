@@ -1,7 +1,39 @@
 import SwiftUI
 
+// MARK: - User Identity Manager
+enum AppUser: String, CaseIterable {
+    case ahmad = "Ahmad"
+    case luisa = "Luisa"
+}
+
+class UserIdentityManager: ObservableObject {
+    static let shared = UserIdentityManager()
+
+    private let userDefaultsKey = "currentUserIdentity"
+
+    @Published var currentUser: AppUser {
+        didSet {
+            UserDefaults.standard.set(currentUser.rawValue, forKey: userDefaultsKey)
+        }
+    }
+
+    var currentUserName: String {
+        currentUser.rawValue
+    }
+
+    private init() {
+        if let savedUser = UserDefaults.standard.string(forKey: userDefaultsKey),
+           let user = AppUser(rawValue: savedUser) {
+            self.currentUser = user
+        } else {
+            self.currentUser = .ahmad // Default to Ahmad
+        }
+    }
+}
+
 struct SettingsView: View {
     @StateObject private var googleCalendarManager = GoogleCalendarManager.shared
+    @StateObject private var userIdentity = UserIdentityManager.shared
     @State private var showingSyncAlert = false
     @State private var syncAlertMessage = ""
     @State private var isCleaningUp = false
@@ -11,6 +43,20 @@ struct SettingsView: View {
     var body: some View {
         NavigationView {
             List {
+                // User Identity Section
+                Section {
+                    Picker("I am", selection: $userIdentity.currentUser) {
+                        ForEach(AppUser.allCases, id: \.self) { user in
+                            Text(user.rawValue).tag(user)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("User Identity")
+                } footer: {
+                    Text("Select who is using this device. This will be shown when you upload photos, create events, or record voice memos.")
+                }
+
                 // Google Calendar Integration Section
                 Section {
                     HStack {
