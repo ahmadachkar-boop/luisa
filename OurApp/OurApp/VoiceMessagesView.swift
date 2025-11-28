@@ -36,6 +36,51 @@ struct VoiceMemoPlaybackIndex: Identifiable {
     let value: Int
 }
 
+// MARK: - Mini Player Waveform
+struct MiniPlayerWaveform: View {
+    let isPlaying: Bool
+    @State private var animationPhase: CGFloat = 0
+
+    private let barCount = 5
+    private let baseHeights: [CGFloat] = [12, 16, 20, 14, 10]
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(0..<barCount, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color(red: 0.8, green: 0.7, blue: 1.0))
+                    .frame(width: 3, height: barHeight(for: index))
+            }
+        }
+        .onAppear {
+            if isPlaying {
+                startAnimation()
+            }
+        }
+        .onChange(of: isPlaying) { _, newValue in
+            if newValue {
+                startAnimation()
+            }
+        }
+    }
+
+    private func barHeight(for index: Int) -> CGFloat {
+        if isPlaying {
+            let phase = animationPhase + CGFloat(index) * 0.4
+            let oscillation = sin(phase) * 6
+            return max(6, baseHeights[index] + oscillation)
+        } else {
+            return 8
+        }
+    }
+
+    private func startAnimation() {
+        withAnimation(.linear(duration: 0.5).repeatForever(autoreverses: false)) {
+            animationPhase = .pi * 2
+        }
+    }
+}
+
 struct VoiceMessagesView: View {
     @StateObject private var viewModel = VoiceMessagesViewModel()
     @State private var showingRecorder = false
@@ -1418,15 +1463,8 @@ struct VoiceMessagesView: View {
             if let message = viewModel.currentlyPlayingMessage {
                 HStack(spacing: 12) {
                     // Waveform indicator
-                    HStack(spacing: 2) {
-                        ForEach(0..<5, id: \.self) { i in
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(Color(red: 0.8, green: 0.7, blue: 1.0))
-                                .frame(width: 3, height: viewModel.isPlaying ? CGFloat.random(in: 8...20) : 8)
-                                .animation(.easeInOut(duration: 0.3).repeatForever(), value: viewModel.isPlaying)
-                        }
-                    }
-                    .frame(width: 30)
+                    MiniPlayerWaveform(isPlaying: viewModel.isPlaying)
+                        .frame(width: 30)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(message.title)
@@ -2269,7 +2307,11 @@ struct FullScreenVoiceMemoPlayer: View {
 
     private func playMemo() {
         if let memo = currentMemo {
-            viewModel.playMessage(memo)
+            // Only start playback if this memo isn't already playing
+            // (playMessage toggles if same memo, which would pause it)
+            if viewModel.currentlyPlayingId != memo.id {
+                viewModel.playMessage(memo)
+            }
         }
     }
 
