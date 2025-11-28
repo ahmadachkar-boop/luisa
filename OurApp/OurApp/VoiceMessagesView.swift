@@ -2175,7 +2175,7 @@ struct FullScreenVoiceMemoPlayer: View {
             }
         }
         .offset(y: dismissOffset)
-        .opacity(1 - (dismissOffset / 400))
+        .opacity(Double(1.0 - (dismissOffset / 400.0)))
         .gesture(
             DragGesture()
                 .updating($dragOffset) { value, state, _ in
