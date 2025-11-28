@@ -646,16 +646,6 @@ struct CalendarView: View {
                 }
             }
         }
-        .simultaneousGesture(
-            TapGesture()
-                .onEnded { _ in
-                    if showingExpandedHeader {
-                        withAnimation(.spring(response: 0.3)) {
-                            showingExpandedHeader = false
-                        }
-                    }
-                }
-        )
     }
 
     var body: some View {

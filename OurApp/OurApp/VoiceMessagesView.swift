@@ -801,16 +801,6 @@ struct VoiceMessagesView: View {
             }
         }
         .simultaneousGesture(
-            TapGesture()
-                .onEnded { _ in
-                    if showingExpandedHeader {
-                        withAnimation(.spring(response: 0.3)) {
-                            showingExpandedHeader = false
-                        }
-                    }
-                }
-        )
-        .simultaneousGesture(
             MagnificationGesture()
                 .updating($magnificationScale) { value, scale, _ in
                     scale = value
