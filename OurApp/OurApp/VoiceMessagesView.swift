@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import UIKit
+import MediaPlayer
 
 // MARK: - Sort Options
 enum VoiceMemoSortOption: String, CaseIterable {
@@ -3205,6 +3206,7 @@ class VoiceMessagesViewModel: ObservableObject {
         loadFolders()
         loadAllTags()
         setupInterruptionObserver()
+        setupRemoteCommandCenter()
     }
 
     private func configureAudioSession() {
@@ -3256,6 +3258,119 @@ class VoiceMessagesViewModel: ObservableObject {
                 break
             }
         }
+    }
+
+    private func setupRemoteCommandCenter() {
+        let commandCenter = MPRemoteCommandCenter.shared()
+
+        // Play command
+        commandCenter.playCommand.isEnabled = true
+        commandCenter.playCommand.addTarget { [weak self] _ in
+            guard let self = self else { return .commandFailed }
+            if self.audioPlayer != nil {
+                self.audioPlayer?.play()
+                self.isPlaying = true
+                self.startProgressTimer()
+                self.updateNowPlayingPlaybackState()
+                return .success
+            }
+            return .commandFailed
+        }
+
+        // Pause command
+        commandCenter.pauseCommand.isEnabled = true
+        commandCenter.pauseCommand.addTarget { [weak self] _ in
+            guard let self = self else { return .commandFailed }
+            self.audioPlayer?.pause()
+            self.isPlaying = false
+            self.progressTimer?.invalidate()
+            if let currentId = self.currentlyPlayingId, let player = self.audioPlayer {
+                self.savePlaybackPosition(for: currentId, position: player.currentTime)
+            }
+            self.updateNowPlayingPlaybackState()
+            return .success
+        }
+
+        // Toggle play/pause
+        commandCenter.togglePlayPauseCommand.isEnabled = true
+        commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
+            guard let self = self else { return .commandFailed }
+            self.togglePlayPause()
+            return .success
+        }
+
+        // Skip forward
+        commandCenter.skipForwardCommand.isEnabled = true
+        commandCenter.skipForwardCommand.preferredIntervals = [15]
+        commandCenter.skipForwardCommand.addTarget { [weak self] event in
+            guard let self = self,
+                  let skipEvent = event as? MPSkipIntervalCommandEvent else { return .commandFailed }
+            self.skipForward(seconds: skipEvent.interval)
+            self.updateNowPlayingPlaybackState()
+            return .success
+        }
+
+        // Skip backward
+        commandCenter.skipBackwardCommand.isEnabled = true
+        commandCenter.skipBackwardCommand.preferredIntervals = [15]
+        commandCenter.skipBackwardCommand.addTarget { [weak self] event in
+            guard let self = self,
+                  let skipEvent = event as? MPSkipIntervalCommandEvent else { return .commandFailed }
+            self.skipBackward(seconds: skipEvent.interval)
+            self.updateNowPlayingPlaybackState()
+            return .success
+        }
+
+        // Seek command (scrubbing)
+        commandCenter.changePlaybackPositionCommand.isEnabled = true
+        commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let self = self,
+                  let positionEvent = event as? MPChangePlaybackPositionCommandEvent,
+                  let player = self.audioPlayer else { return .commandFailed }
+            player.currentTime = positionEvent.positionTime
+            self.playbackProgress = positionEvent.positionTime / player.duration
+            self.updateNowPlayingPlaybackState()
+            return .success
+        }
+    }
+
+    private func updateNowPlayingInfo() {
+        guard let message = currentlyPlayingMessage,
+              let player = audioPlayer else {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            return
+        }
+
+        var nowPlayingInfo: [String: Any] = [
+            MPMediaItemPropertyTitle: message.title,
+            MPMediaItemPropertyArtist: "From \(message.fromUser)",
+            MPMediaItemPropertyPlaybackDuration: player.duration,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: player.currentTime,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
+            MPMediaItemPropertyMediaType: MPMediaType.anyAudio.rawValue
+        ]
+
+        // Add app icon as artwork
+        if let appIcon = UIImage(named: "AppIcon") ?? UIImage(systemName: "waveform.circle.fill") {
+            let artwork = MPMediaItemArtwork(boundsSize: appIcon.size) { _ in appIcon }
+            nowPlayingInfo[MPMediaItemPropertyArtwork] = artwork
+        }
+
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+    }
+
+    private func updateNowPlayingPlaybackState() {
+        guard var nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo,
+              let player = audioPlayer else { return }
+
+        nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime
+        nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(player.rate) : 0.0
+
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+    }
+
+    private func clearNowPlayingInfo() {
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
     func loadAllTags() {
@@ -3388,6 +3503,9 @@ class VoiceMessagesViewModel: ObservableObject {
                         isPlaying = true
                         startProgressTimer()
 
+                        // Update Control Center / Lock Screen info
+                        updateNowPlayingInfo()
+
                         // Extract actual waveform from audio data
                         extractWaveform(from: data)
                     } catch {
@@ -3413,6 +3531,7 @@ class VoiceMessagesViewModel: ObservableObject {
             startProgressTimer()
         }
         isPlaying.toggle()
+        updateNowPlayingPlaybackState()
     }
 
     private func generatePlaceholderWaveform(count: Int) -> [Float] {
@@ -3482,6 +3601,9 @@ class VoiceMessagesViewModel: ObservableObject {
         isPlaying = false
         playbackProgress = 0
         currentWaveform = []
+
+        // Clear Control Center / Lock Screen info
+        clearNowPlayingInfo()
     }
 
     func seekTo(progress: Double) {
