@@ -27,6 +27,8 @@ enum VoiceMemoFolderViewType: Hashable {
     case categorySelection // Main view showing Ahmad/Luisa categories
     case allMemos(String) // All memos for a user (Ahmad or Luisa)
     case favorites(String) // Favorites for a user
+    case allFavorites // All favorites from both users
+    case allFolders // Listing of all folders
     case folder(String, String) // Custom folder (folderId, forUser)
 }
 
@@ -130,7 +132,7 @@ struct VoiceMessagesView: View {
     // Get current user from folder view
     private var currentUser: String? {
         switch currentFolderView {
-        case .categorySelection:
+        case .categorySelection, .allFavorites, .allFolders:
             return nil
         case .allMemos(let user), .favorites(let user):
             return user
@@ -148,6 +150,10 @@ struct VoiceMessagesView: View {
             return "From \(user)"
         case .favorites(let user):
             return "\(user)'s Favorites"
+        case .allFavorites:
+            return "All Favorites"
+        case .allFolders:
+            return "Folders"
         case .folder(let folderId, _):
             if let folder = viewModel.folders.first(where: { $0.id == folderId }) {
                 return folder.name
@@ -172,6 +178,10 @@ struct VoiceMessagesView: View {
             messages = viewModel.voiceMessages.filter { $0.fromUser == user }
         case .favorites(let user):
             messages = viewModel.voiceMessages.filter { $0.fromUser == user && $0.isFavorite == true }
+        case .allFavorites:
+            messages = viewModel.voiceMessages.filter { $0.isFavorite == true }
+        case .allFolders:
+            messages = [] // This view shows folders, not messages
         case .folder(let folderId, let user):
             messages = viewModel.voiceMessages.filter { $0.fromUser == user && $0.folderId == folderId }
         }
@@ -520,9 +530,11 @@ struct VoiceMessagesView: View {
                     currentUserCategory = "Luisa"
                 }
 
-                // All Favorites
+                // Quick Access Section
                 let totalFavorites = viewModel.voiceMessages.filter { $0.isFavorite == true }.count
-                if totalFavorites > 0 {
+                let totalFolders = viewModel.folders.count
+
+                if totalFavorites > 0 || totalFolders > 0 {
                     Divider()
                         .padding(.horizontal)
 
@@ -532,30 +544,73 @@ struct VoiceMessagesView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal)
 
-                    // All Favorites card (shows both)
-                    HStack(spacing: 12) {
-                        Image(systemName: "heart.fill")
-                            .font(.title2)
-                            .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
+                    // All Favorites card
+                    if totalFavorites > 0 {
+                        Button(action: { navigateToFolder(.allFavorites) }) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "heart.fill")
+                                    .font(.title2)
+                                    .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("All Favorites")
-                                .font(.headline)
-                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-                            Text("\(totalFavorites) memo\(totalFavorites == 1 ? "" : "s")")
-                                .font(.caption)
-                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("All Favorites")
+                                        .font(.headline)
+                                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                                    Text("\(totalFavorites) memo\(totalFavorites == 1 ? "" : "s")")
+                                        .font(.caption)
+                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                }
+
+                                Spacer()
+
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
+                            }
+                            .padding()
+                            .background(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .fill(Color.white)
+                                    .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
+                            )
                         }
-
-                        Spacer()
+                        .buttonStyle(PlainButtonStyle())
+                        .padding(.horizontal)
                     }
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.white)
-                            .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
-                    )
-                    .padding(.horizontal)
+
+                    // Folders card
+                    if totalFolders > 0 {
+                        Button(action: { navigateToFolder(.allFolders) }) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "folder.fill")
+                                    .font(.title2)
+                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Folders")
+                                        .font(.headline)
+                                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                                    Text("\(totalFolders) folder\(totalFolders == 1 ? "" : "s")")
+                                        .font(.caption)
+                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                }
+
+                                Spacer()
+
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
+                            }
+                            .padding()
+                            .background(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .fill(Color.white)
+                                    .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .padding(.horizontal)
+                    }
                 }
             }
             .padding(.vertical)
@@ -756,15 +811,17 @@ struct VoiceMessagesView: View {
                         .padding(.top, 8)
                 }
 
-                // Folders section (when in allMemos view and not searching)
-                if case .allMemos(let user) = currentFolderView, !hasSearchFilter {
-                    foldersSection(forUser: user)
+                // All Folders view
+                if case .allFolders = currentFolderView {
+                    allFoldersListView
                         .padding(.top, 12)
                 }
 
                 // Empty search results
                 if hasSearchFilter && filteredMessages.isEmpty {
                     emptySearchResultsView
+                } else if case .allFolders = currentFolderView {
+                    // Don't show memo grid in allFolders view
                 } else {
                     // Voice memo grid
                     voiceMemoGridView
@@ -960,6 +1017,114 @@ struct VoiceMessagesView: View {
                         Label("Delete Folder", systemImage: "trash")
                     }
                 }
+            }
+        }
+        .padding(.horizontal)
+    }
+
+    // MARK: - All Folders List View
+    private var allFoldersListView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Group folders by user
+            let ahmadFolders = viewModel.folders.filter { $0.forUser == "Ahmad" }
+            let luisaFolders = viewModel.folders.filter { $0.forUser == "Luisa" }
+
+            if !ahmadFolders.isEmpty {
+                Text("Ahmad's Folders")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+                    .padding(.horizontal)
+
+                ForEach(ahmadFolders, id: \.id) { folder in
+                    folderRowView(folder: folder, user: "Ahmad")
+                }
+            }
+
+            if !luisaFolders.isEmpty {
+                if !ahmadFolders.isEmpty {
+                    Divider()
+                        .padding(.vertical, 8)
+                }
+
+                Text("Luisa's Folders")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+                    .padding(.horizontal)
+
+                ForEach(luisaFolders, id: \.id) { folder in
+                    folderRowView(folder: folder, user: "Luisa")
+                }
+            }
+
+            if ahmadFolders.isEmpty && luisaFolders.isEmpty {
+                VStack(spacing: 16) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 50))
+                        .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
+
+                    Text("No folders yet")
+                        .font(.headline)
+                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+
+                    Text("Create a folder to organize your voice memos")
+                        .font(.subheadline)
+                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 40)
+            }
+        }
+        .padding(.horizontal)
+    }
+
+    private func folderRowView(folder: VoiceMemoFolder, user: String) -> some View {
+        let folderCount = viewModel.voiceMessages.filter { $0.folderId == folder.id }.count
+        return Button(action: {
+            if let folderId = folder.id {
+                navigateToFolder(.folder(folderId, user))
+            }
+        }) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.15))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: "folder.fill")
+                        .font(.title3)
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(folder.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                    Text("\(folderCount) memo\(folderCount == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color.white)
+                    .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .contextMenu {
+            Button(role: .destructive, action: {
+                Task {
+                    try? await viewModel.deleteFolder(folder)
+                }
+            }) {
+                Label("Delete Folder", systemImage: "trash")
             }
         }
         .padding(.horizontal)
