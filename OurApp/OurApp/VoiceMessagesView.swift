@@ -1583,38 +1583,49 @@ struct VoiceMemoGridCell: View {
                     }
                     .padding()
                 } else {
-                    // Vertical layout for grid
-                    Spacer()
-                    waveformView
-                    Spacer()
-                    playButton
-                    Spacer()
+                    // Vertical layout for grid - all content contained within card
+                    VStack(spacing: columnCount == 2 ? 6 : 4) {
+                        Spacer(minLength: 4)
 
-                    VStack(spacing: 2) {
-                        Text(message.title)
-                            .font(columnCount == 2 ? .subheadline : .caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
-                            .lineLimit(1)
+                        waveformView
 
-                        Text(formatDuration(message.duration))
-                            .font(.caption2)
-                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        playButton
 
-                        Text(timeAgo(from: message.createdAt))
-                            .font(.caption2)
-                            .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
+                        VStack(spacing: 2) {
+                            Text(message.title)
+                                .font(columnCount == 2 ? .subheadline : .caption2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
+                                .lineLimit(columnCount == 2 ? 2 : 1)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: .infinity)
+
+                            Text(formatDuration(message.duration))
+                                .font(.caption2)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+
+                            if columnCount == 2 {
+                                Text(timeAgo(from: message.createdAt))
+                                    .font(.caption2)
+                                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
+                            }
+                        }
+                        .padding(.horizontal, 8)
+
+                        Spacer(minLength: 4)
                     }
-                    .padding(.bottom, 8)
+                    .padding(.vertical, 8)
                 }
             }
             .frame(maxWidth: .infinity)
             .frame(height: cellHeight)
+            .clipped()
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(Color.white)
                     .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
             )
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .overlay(
                 selectionMode ?
                     RoundedRectangle(cornerRadius: cornerRadius)
