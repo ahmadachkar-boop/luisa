@@ -545,18 +545,21 @@ struct CalendarView: View {
                     .contentTransition(.numericText())
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: currentMonth)
 
-                // Calendar Grid
-                CalendarGridView(
-                    currentMonth: currentMonth,
-                    events: viewModel.events,
-                    selectedDay: $selectedDay,
-                    selectedTab: $selectedTab,
-                    onQuickAdd: { date in
-                        quickAddDate = date
-                        showingAddEvent = true
-                    }
-                )
-                .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)-\(selectedDay?.timeIntervalSince1970 ?? 0)")
+                // Calendar Grid wrapped in container for proper animation handling
+                Group {
+                    CalendarGridView(
+                        currentMonth: currentMonth,
+                        events: viewModel.events,
+                        selectedDay: $selectedDay,
+                        selectedTab: $selectedTab,
+                        onQuickAdd: { date in
+                            quickAddDate = date
+                            showingAddEvent = true
+                        }
+                    )
+                    .id("grid-\(selectedDay?.timeIntervalSince1970 ?? 0)") // Force cell updates on selection change
+                }
+                .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)") // Only animate on month change
                 .padding(.horizontal)
                 .padding(.bottom, 16)
                 .transition(.asymmetric(
@@ -2809,7 +2812,10 @@ struct CalendarGridView: View {
     }
 
     func handleDayTap(date: Date) {
-        let isPastDate = date < Date()
+        // Compare using start of day so today is not considered "past"
+        let startOfSelectedDay = calendar.startOfDay(for: date)
+        let startOfToday = calendar.startOfDay(for: Date())
+        let isPastDate = startOfSelectedDay < startOfToday
 
         // Toggle selection if tapping same day, otherwise select new day
         if selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!) {
@@ -2818,6 +2824,7 @@ struct CalendarGridView: View {
             selectedDay = date
 
             // Auto-switch tabs based on date
+            // Today and future dates go to "upcoming", past dates go to "memories"
             if isPastDate && selectedTab == 0 {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     selectedTab = 1
