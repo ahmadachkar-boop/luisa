@@ -770,38 +770,10 @@ struct VoiceMessagesView: View {
         .padding(.horizontal)
     }
 
-    // MARK: - Expandable Header
+    // MARK: - Expandable Header (hidden when collapsed)
     private var expandableHeader: some View {
         VStack(spacing: 0) {
-            // Pull indicator (always visible)
-            Button(action: {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                    showingExpandedHeader.toggle()
-                }
-            }) {
-                VStack(spacing: 6) {
-                    // Pull handle
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color(red: 0.7, green: 0.6, blue: 0.85))
-                        .frame(width: 40, height: 4)
-
-                    HStack(spacing: 4) {
-                        Image(systemName: showingExpandedHeader ? "chevron.up" : "chevron.down")
-                            .font(.caption2)
-                        Text(showingExpandedHeader ? "Hide Settings" : "Settings & Actions")
-                            .font(.caption)
-                    }
-                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                }
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(red: 0.98, green: 0.96, blue: 1.0))
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-
+            // Expanded content only - no indicators when collapsed
             if showingExpandedHeader {
                 VStack(spacing: 16) {
                     // Quick actions row
