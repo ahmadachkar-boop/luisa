@@ -3207,13 +3207,15 @@ class VoiceMessagesViewModel: ObservableObject {
         loadAllTags()
         setupInterruptionObserver()
         setupRemoteCommandCenter()
+        setupAppLifecycleObservers()
     }
 
     private func configureAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
             // Use .playback category for background audio support
-            try session.setCategory(.playback, mode: .spokenAudio, options: [])
+            try session.setCategory(.playback, mode: .spokenAudio, options: [.allowBluetooth, .allowAirPlay])
+            try session.setActive(true)
             print("Audio session configured for background playback")
         } catch {
             print("Failed to configure audio session: \(error)")
@@ -3222,9 +3224,60 @@ class VoiceMessagesViewModel: ObservableObject {
 
     private func activateAudioSession() {
         do {
-            try AVAudioSession.sharedInstance().setActive(true)
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
             print("Failed to activate audio session: \(error)")
+        }
+    }
+
+    private func setupAppLifecycleObservers() {
+        // Handle app going to background
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            // Stop the timer but keep audio playing
+            self.progressTimer?.invalidate()
+            // Make sure Now Playing info is up to date
+            if self.isPlaying {
+                self.updateNowPlayingInfo()
+            }
+        }
+
+        // Handle app coming to foreground
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            // Sync progress with actual player position
+            if let player = self.audioPlayer, self.currentlyPlayingMessage != nil {
+                self.playbackProgress = player.currentTime / player.duration
+                if self.isPlaying {
+                    self.startProgressTimer()
+                }
+                self.updateNowPlayingPlaybackState()
+            }
+        }
+
+        // Handle app becoming active (after control center dismisses, etc.)
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            // Sync UI state with actual player state
+            if let player = self.audioPlayer {
+                self.isPlaying = player.isPlaying
+                self.playbackProgress = player.currentTime / player.duration
+                if player.isPlaying && self.progressTimer == nil {
+                    self.startProgressTimer()
+                }
+            }
         }
     }
 
@@ -3245,13 +3298,19 @@ class VoiceMessagesViewModel: ObservableObject {
                 // Pause playback when interrupted (e.g., phone call)
                 self?.audioPlayer?.pause()
                 self?.isPlaying = false
+                self?.progressTimer?.invalidate()
+                self?.updateNowPlayingPlaybackState()
             case .ended:
                 // Resume if the interruption ended and we should resume
                 if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
                     let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
                     if options.contains(.shouldResume) {
+                        // Reactivate audio session
+                        try? AVAudioSession.sharedInstance().setActive(true)
                         self?.audioPlayer?.play()
                         self?.isPlaying = true
+                        self?.startProgressTimer()
+                        self?.updateNowPlayingPlaybackState()
                     }
                 }
             @unknown default:
