@@ -584,21 +584,20 @@ struct FullScreenPhotoViewer: View {
                 }
 
                 // Bottom info area
-                VStack(spacing: 12) {
+                VStack(spacing: 8) {
                     // Added by (if available)
                     if let uploadedByNames = uploadedByNames,
                        currentIndex < uploadedByNames.count {
                         Text("Added by \(uploadedByNames[currentIndex])")
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.8))
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.white)
                             .padding(.horizontal, 16)
-                            .padding(.vertical, 6)
+                            .padding(.vertical, 8)
                             .background(
                                 Capsule()
-                                    .fill(Color.black.opacity(0.5))
-                                    .blur(radius: 10)
+                                    .fill(Color.black.opacity(0.6))
                             )
-                            .shadow(radius: 2)
                     }
 
                     // Capture date (if available)
@@ -607,15 +606,13 @@ struct FullScreenPhotoViewer: View {
                        let captureDate = captureDates[currentIndex] {
                         Text(captureDate, style: .date)
                             .font(.caption)
-                            .foregroundColor(.white.opacity(0.8))
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 6)
+                            .foregroundColor(.white.opacity(0.9))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
                             .background(
                                 Capsule()
-                                    .fill(Color.black.opacity(0.5))
-                                    .blur(radius: 10)
+                                    .fill(Color.black.opacity(0.4))
                             )
-                            .shadow(radius: 2)
                     }
 
                     // Page indicators (max 10 dots)
