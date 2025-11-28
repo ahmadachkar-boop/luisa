@@ -203,7 +203,8 @@ struct VoiceMessagesView: View {
                 VStack(spacing: 0) {
                     if currentFolderView == .categorySelection {
                         categorySelectionView
-                    } else if filteredMessages.isEmpty && !viewModel.voiceMessages.isEmpty {
+                    } else if filteredMessages.isEmpty && !viewModel.voiceMessages.isEmpty && !hasSearchFilter {
+                        // Only show empty folder view if NOT searching
                         emptyFolderView
                     } else if viewModel.voiceMessages.isEmpty {
                         emptyStateView
@@ -540,6 +541,44 @@ struct VoiceMessagesView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    // MARK: - Empty Search Results View
+    private var emptySearchResultsView: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 50))
+                .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
+
+            Text("No results for \"\(searchText)\"")
+                .font(.title3)
+                .fontWeight(.semibold)
+                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+            Text("Try a different search term")
+                .font(.subheadline)
+                .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+
+            Button(action: {
+                withAnimation {
+                    searchText = ""
+                    isSearchActive = false
+                }
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "xmark.circle.fill")
+                    Text("Clear Search")
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundColor(.white)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(Color(red: 0.6, green: 0.4, blue: 0.85))
+                .cornerRadius(20)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+    }
+
     // MARK: - Content View
     private var contentView: some View {
         ScrollView {
@@ -548,11 +587,6 @@ struct VoiceMessagesView: View {
                 expandableHeader
                     .padding(.horizontal)
                     .padding(.top, 4)
-
-                // Search bar
-                searchBar
-                    .padding(.horizontal)
-                    .padding(.top, 8)
 
                 // Navigation bar
                 navigationBar
@@ -572,8 +606,13 @@ struct VoiceMessagesView: View {
                         .padding(.top, 12)
                 }
 
-                // Voice memo grid
-                voiceMemoGridView
+                // Empty search results
+                if hasSearchFilter && filteredMessages.isEmpty {
+                    emptySearchResultsView
+                } else {
+                    // Voice memo grid
+                    voiceMemoGridView
+                }
             }
         }
         .refreshable {
@@ -776,6 +815,9 @@ struct VoiceMessagesView: View {
             // Expanded content only - no indicators when collapsed
             if showingExpandedHeader {
                 VStack(spacing: 16) {
+                    // Search bar
+                    searchBar
+
                     // Quick actions row
                     HStack(spacing: 12) {
                         // Record
