@@ -3200,19 +3200,61 @@ class VoiceMessagesViewModel: ObservableObject {
     private let playbackPositionsKey = "voiceMemoPlaybackPositions"
 
     init() {
-        setupBackgroundAudio()
+        configureAudioSession()
         loadVoiceMessages()
         loadFolders()
         loadAllTags()
+        setupInterruptionObserver()
     }
 
-    private func setupBackgroundAudio() {
+    private func configureAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, options: [.allowBluetooth, .allowAirPlay])
-            try session.setActive(true)
+            // Use .playback category for background audio support
+            try session.setCategory(.playback, mode: .spokenAudio, options: [])
+            print("Audio session configured for background playback")
         } catch {
-            print("Failed to setup background audio: \(error)")
+            print("Failed to configure audio session: \(error)")
+        }
+    }
+
+    private func activateAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("Failed to activate audio session: \(error)")
+        }
+    }
+
+    private func setupInterruptionObserver() {
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            guard let userInfo = notification.userInfo,
+                  let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+                return
+            }
+
+            switch type {
+            case .began:
+                // Pause playback when interrupted (e.g., phone call)
+                self?.audioPlayer?.pause()
+                self?.isPlaying = false
+            case .ended:
+                // Resume if the interruption ended and we should resume
+                if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
+                    let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+                    if options.contains(.shouldResume) {
+                        self?.audioPlayer?.play()
+                        self?.isPlaying = true
+                    }
+                }
+            @unknown default:
+                break
+            }
         }
     }
 
@@ -3295,6 +3337,9 @@ class VoiceMessagesViewModel: ObservableObject {
     func playMessage(_ message: VoiceMessage, fromPosition: TimeInterval? = nil) {
         guard let url = URL(string: message.audioURL) else { return }
 
+        // Activate audio session for background playback
+        activateAudioSession()
+
         // If same message, toggle play/pause
         if currentlyPlayingId == message.id {
             togglePlayPause()
@@ -3327,6 +3372,7 @@ class VoiceMessagesViewModel: ObservableObject {
                     do {
                         audioPlayer = try AVAudioPlayer(data: data)
                         audioPlayer?.enableRate = true
+                        audioPlayer?.prepareToPlay()
 
                         // Resume from saved position or specified position
                         if let position = fromPosition {
