@@ -2849,6 +2849,10 @@ struct CalendarDayCell: View {
         let isPastDate = date < Date()
 
         return Button(action: {
+            // Always handle selection first
+            onTap()
+
+            // Then show additional UI for empty days
             if events.isEmpty {
                 if onQuickAdd != nil && !isPastDate {
                     // Show "Add Event" prompt for empty future days
@@ -2872,8 +2876,6 @@ struct CalendarDayCell: View {
                         }
                     }
                 }
-            } else {
-                onTap()
             }
         }) {
             VStack(spacing: 4) {
