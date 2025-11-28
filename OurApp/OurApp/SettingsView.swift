@@ -1,4 +1,5 @@
 import SwiftUI
+import Security
 
 // MARK: - User Identity Manager
 enum AppUser: String, CaseIterable {
@@ -9,11 +10,11 @@ enum AppUser: String, CaseIterable {
 class UserIdentityManager: ObservableObject {
     static let shared = UserIdentityManager()
 
-    private let userDefaultsKey = "currentUserIdentity"
+    private let keychainKey = "com.ourapp.userIdentity"
 
     @Published var currentUser: AppUser {
         didSet {
-            UserDefaults.standard.set(currentUser.rawValue, forKey: userDefaultsKey)
+            saveToKeychain(currentUser.rawValue)
         }
     }
 
@@ -22,12 +23,54 @@ class UserIdentityManager: ObservableObject {
     }
 
     private init() {
-        if let savedUser = UserDefaults.standard.string(forKey: userDefaultsKey),
+        if let savedUser = loadFromKeychain(),
            let user = AppUser(rawValue: savedUser) {
             self.currentUser = user
         } else {
             self.currentUser = .ahmad // Default to Ahmad
         }
+    }
+
+    // MARK: - Keychain Operations
+
+    private func saveToKeychain(_ value: String) {
+        guard let data = value.data(using: .utf8) else { return }
+
+        // Delete any existing item first
+        let deleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: keychainKey
+        ]
+        SecItemDelete(deleteQuery as CFDictionary)
+
+        // Add the new item
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: keychainKey,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+        ]
+        SecItemAdd(addQuery as CFDictionary, nil)
+    }
+
+    private func loadFromKeychain() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: keychainKey,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let string = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        return string
     }
 }
 
