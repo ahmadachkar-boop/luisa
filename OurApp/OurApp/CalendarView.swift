@@ -631,7 +631,8 @@ struct CalendarView: View {
             geometry.contentOffset.y
         } action: { oldValue, newValue in
             // Auto-hide header when scrolling down
-            if showingExpandedHeader && newValue > 50 {
+            // Even a slight scroll (> 5 points) dismisses the header
+            if showingExpandedHeader && newValue > 5 {
                 withAnimation(.spring(response: 0.3)) {
                     showingExpandedHeader = false
                 }
@@ -644,6 +645,18 @@ struct CalendarView: View {
             ZStack {
                 backgroundGradient
                 calendarScrollContent
+
+                // Tap-outside-to-dismiss overlay for expanded header
+                if showingExpandedHeader {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.3)) {
+                                showingExpandedHeader = false
+                            }
+                        }
+                        .padding(.top, 200) // Start below the header area
+                }
             }
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView(initialDate: quickAddDate ?? selectedDate) { event in

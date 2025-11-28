@@ -249,7 +249,8 @@ struct PhotoGalleryView: View {
             geometry.contentOffset.y
         } action: { oldValue, newValue in
             // Auto-hide header when scrolling down (positive scroll offset means scrolled down)
-            if showingExpandedHeader && newValue > 50 {
+            // Even a slight scroll (> 5 points) dismisses the header
+            if showingExpandedHeader && newValue > 5 {
                 withAnimation(.spring(response: 0.3)) {
                     showingExpandedHeader = false
                 }
@@ -979,6 +980,18 @@ struct PhotoGalleryView: View {
                         }
                     } else {
                         contentView
+                    }
+
+                    // Tap-outside-to-dismiss overlay for expanded header
+                    if showingExpandedHeader {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.3)) {
+                                    showingExpandedHeader = false
+                                }
+                            }
+                            .padding(.top, 200) // Start below the header area
                     }
                 }
                 .toolbar {
