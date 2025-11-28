@@ -323,8 +323,17 @@ struct CalendarView: View {
     }
 
     private var backgroundGradient: some View {
-        Color(red: 0.765, green: 0.694, blue: 0.882)
-            .ignoresSafeArea()
+        // Light periwinkle gradient
+        LinearGradient(
+            colors: [
+                Color(red: 0.8, green: 0.8, blue: 1.0),
+                Color(red: 0.9, green: 0.9, blue: 1.0),
+                Color.white
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
     }
 
     @ViewBuilder
@@ -3307,9 +3316,17 @@ struct MonthPhotosGridView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                // Background color
-                Color(red: 0.765, green: 0.694, blue: 0.882)
-                    .ignoresSafeArea()
+                // Background gradient - light periwinkle
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.8, green: 0.8, blue: 1.0),
+                        Color(red: 0.9, green: 0.9, blue: 1.0),
+                        Color.white
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
 
                 ScrollView {
                     VStack(spacing: 20) {
