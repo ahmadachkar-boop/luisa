@@ -163,6 +163,7 @@ struct CalendarView: View {
     @State private var selectedEventForDetail: CalendarEvent?
     @State private var selectedTab = 0 // 0 = Upcoming, 1 = Memories
     @State private var currentMonth = Date()
+    @State private var monthNavigationDirection: Int = 0 // -1 = backward, 1 = forward, 0 = none
     @State private var selectedDay: Date? = nil // For filtering by specific day
     @State private var summaryCardExpanded = true // Start expanded
     @State private var recapPhotoData: RecapPhotoData?
@@ -554,12 +555,12 @@ struct CalendarView: View {
                         showingAddEvent = true
                     }
                 )
-                .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)-\(selectedDay?.timeIntervalSince1970 ?? 0)")
+                .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)")
                 .padding(.horizontal)
                 .padding(.bottom, 16)
                 .transition(.asymmetric(
-                    insertion: .move(edge: .trailing).combined(with: .opacity),
-                    removal: .move(edge: .leading).combined(with: .opacity)
+                    insertion: .move(edge: monthNavigationDirection > 0 ? .trailing : .leading).combined(with: .opacity),
+                    removal: .move(edge: monthNavigationDirection > 0 ? .leading : .trailing).combined(with: .opacity)
                 ))
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: currentMonth)
                 .gesture(
@@ -568,13 +569,15 @@ struct CalendarView: View {
                             let horizontalAmount = value.translation.width
 
                             if horizontalAmount < -50 {
-                                // Swipe left - next month
+                                // Swipe left - next month (forward)
+                                monthNavigationDirection = 1
                                 withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
                                     currentMonth = Calendar.current.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
                                     selectedDay = nil // Clear day selection when changing months
                                 }
                             } else if horizontalAmount > 50 {
-                                // Swipe right - previous month
+                                // Swipe right - previous month (backward)
+                                monthNavigationDirection = -1
                                 withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
                                     currentMonth = Calendar.current.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
                                     selectedDay = nil // Clear day selection when changing months
