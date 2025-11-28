@@ -323,16 +323,8 @@ struct CalendarView: View {
     }
 
     private var backgroundGradient: some View {
-        LinearGradient(
-            colors: [
-                Color(red: 0.98, green: 0.96, blue: 1.0),
-                Color(red: 0.96, green: 0.94, blue: 0.99),
-                Color.white
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-        .ignoresSafeArea()
+        Color(red: 0.765, green: 0.694, blue: 0.882)
+            .ignoresSafeArea()
     }
 
     @ViewBuilder
@@ -1447,19 +1439,17 @@ struct EventDetailView: View {
         ZStack {
             // Background (either custom image or gradient)
             if let backgroundURL = currentEvent.backgroundImageURL {
-                AsyncImage(url: URL(string: backgroundURL)) { phase in
-                    if let image = phase.image {
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .scaleEffect(currentEvent.backgroundScale ?? 1.0)
-                            .offset(
-                                x: CGFloat(currentEvent.backgroundOffsetX ?? 0.0),
-                                y: CGFloat(currentEvent.backgroundOffsetY ?? 0.0)
-                            )
-                    } else {
-                        defaultGradientBackground(isSpecial: currentEvent.isSpecial)
-                    }
+                CachedAsyncImage(url: URL(string: backgroundURL)) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .scaleEffect(currentEvent.backgroundScale ?? 1.0)
+                        .offset(
+                            x: CGFloat(currentEvent.backgroundOffsetX ?? 0.0),
+                            y: CGFloat(currentEvent.backgroundOffsetY ?? 0.0)
+                        )
+                } placeholder: {
+                    defaultGradientBackground(isSpecial: currentEvent.isSpecial)
                 }
             } else {
                 defaultGradientBackground(isSpecial: currentEvent.isSpecial)
@@ -1550,18 +1540,16 @@ struct EventDetailView: View {
                                     HStack(spacing: 12) {
                                         ForEach(Array(currentEvent.photoURLs.enumerated()), id: \.offset) { index, photoURL in
                                             ZStack(alignment: .topTrailing) {
-                                                AsyncImage(url: URL(string: photoURL)) { phase in
-                                                    if let image = phase.image {
-                                                        image
-                                                            .resizable()
-                                                            .scaledToFill()
-                                                            .frame(width: 250, height: 250)
-                                                            .clipped()
-                                                    } else {
-                                                        Color.gray.opacity(0.2)
-                                                            .frame(width: 250, height: 250)
-                                                            .overlay(ProgressView())
-                                                    }
+                                                CachedAsyncImage(url: URL(string: photoURL), thumbnailSize: 500) { image in
+                                                    image
+                                                        .resizable()
+                                                        .scaledToFill()
+                                                        .frame(width: 250, height: 250)
+                                                        .clipped()
+                                                } placeholder: {
+                                                    Color.gray.opacity(0.2)
+                                                        .frame(width: 250, height: 250)
+                                                        .overlay(ProgressView())
                                                 }
                                                 .clipShape(RoundedRectangle(cornerRadius: 15))
                                                 .overlay(
@@ -2418,16 +2406,14 @@ struct EditEventView: View {
 
             ZStack {
                 if let backgroundURL = backgroundImageURL {
-                    AsyncImage(url: URL(string: backgroundURL)) { phase in
-                        if let image = phase.image {
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .scaleEffect(backgroundScale)
-                                .offset(x: backgroundOffsetX, y: backgroundOffsetY)
-                        } else {
-                            defaultBackground
-                        }
+                    CachedAsyncImage(url: URL(string: backgroundURL)) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .scaleEffect(backgroundScale)
+                            .offset(x: backgroundOffsetX, y: backgroundOffsetY)
+                    } placeholder: {
+                        defaultBackground
                     }
                 } else {
                     defaultBackground
@@ -3131,17 +3117,15 @@ struct MonthSummaryCard: View {
                                 }
                             }) {
                                 GeometryReader { geometry in
-                                    AsyncImage(url: URL(string: photoURL)) { phase in
-                                        if let image = phase.image {
-                                            image
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fill)
-                                                .frame(width: geometry.size.width, height: geometry.size.height)
-                                                .clipped()
-                                        } else {
-                                            Color.gray.opacity(0.2)
-                                                .overlay(ProgressView())
-                                        }
+                                    CachedAsyncImage(url: URL(string: photoURL), thumbnailSize: 280) { image in
+                                        image
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                            .frame(width: geometry.size.width, height: geometry.size.height)
+                                            .clipped()
+                                    } placeholder: {
+                                        Color.gray.opacity(0.2)
+                                            .overlay(ProgressView())
                                     }
                                 }
                                 .frame(height: 140)
@@ -3322,17 +3306,9 @@ struct MonthPhotosGridView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                // Background gradient
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.98, green: 0.96, blue: 1.0),
-                        Color(red: 0.96, green: 0.94, blue: 0.99),
-                        Color.white
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
+                // Background color
+                Color(red: 0.765, green: 0.694, blue: 0.882)
+                    .ignoresSafeArea()
 
                 ScrollView {
                     VStack(spacing: 20) {
@@ -3358,18 +3334,16 @@ struct MonthPhotosGridView: View {
                                         onPhotoTap(photoURLs, index)
                                     }
                                 }) {
-                                    AsyncImage(url: URL(string: photoURL)) { phase in
-                                        if let image = phase.image {
-                                            image
-                                                .resizable()
-                                                .scaledToFill()
-                                                .frame(width: 110, height: 110)
-                                                .clipped()
-                                        } else {
-                                            Color.gray.opacity(0.2)
-                                                .frame(width: 110, height: 110)
-                                                .overlay(ProgressView())
-                                        }
+                                    CachedAsyncImage(url: URL(string: photoURL), thumbnailSize: 220) { image in
+                                        image
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(width: 110, height: 110)
+                                            .clipped()
+                                    } placeholder: {
+                                        Color.gray.opacity(0.2)
+                                            .frame(width: 110, height: 110)
+                                            .overlay(ProgressView())
                                     }
                                     .aspectRatio(1, contentMode: .fill)
                                     .clipShape(RoundedRectangle(cornerRadius: 12))

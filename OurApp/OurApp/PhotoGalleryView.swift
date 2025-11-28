@@ -956,16 +956,9 @@ struct PhotoGalleryView: View {
         ZStack {
             NavigationView {
                 ZStack {
-                    // Background gradient
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.95, green: 0.9, blue: 1.0),
-                            Color.white
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    .ignoresSafeArea()
+                    // Background color
+                    Color(red: 0.765, green: 0.694, blue: 0.882)
+                        .ignoresSafeArea()
 
                     if showingFoldersOverview {
                         foldersOverviewView
