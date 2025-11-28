@@ -2027,24 +2027,13 @@ struct FullScreenVoiceMemoPlayer: View {
                 Spacer()
 
                 if let memo = currentMemo {
-                    // Large waveform visualization
-                    HStack(spacing: 4) {
-                        ForEach(0..<30, id: \.self) { index in
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [
-                                            Color(red: 0.8, green: 0.7, blue: 1.0),
-                                            Color(red: 0.6, green: 0.4, blue: 0.85)
-                                        ],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    )
-                                )
-                                .frame(width: 6, height: waveformHeight(for: index))
-                                .opacity(Double(index) / 30.0 <= playbackProgress ? 1.0 : 0.4)
-                        }
-                    }
+                    // Large waveform visualization with actual data
+                    WaveformView(
+                        waveformData: viewModel.currentWaveform,
+                        progress: playbackProgress,
+                        pauseMarkers: memo.pauseMarkers ?? [],
+                        duration: memo.duration
+                    )
                     .frame(height: 120)
                     .padding(.horizontal, 20)
 
@@ -3112,6 +3101,81 @@ struct VoiceMemoTagSheet: View {
                     Button("Cancel") { onCancel() }
                         .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                 }
+            }
+        }
+    }
+}
+
+// MARK: - Waveform View with Progress
+struct WaveformView: View {
+    let waveformData: [Float]
+    let progress: Double
+    let pauseMarkers: [TimeInterval]
+    let duration: TimeInterval
+
+    private var displayData: [Float] {
+        if waveformData.isEmpty {
+            // Generate placeholder if no data
+            return (0..<50).map { _ in Float.random(in: 0.2...0.8) }
+        }
+        return waveformData
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let barCount = displayData.count
+            let barWidth: CGFloat = max(3, (geometry.size.width - CGFloat(barCount - 1) * 3) / CGFloat(barCount))
+            let spacing: CGFloat = 3
+
+            ZStack {
+                // Waveform bars
+                HStack(spacing: spacing) {
+                    ForEach(0..<barCount, id: \.self) { index in
+                        let barProgress = Double(index) / Double(barCount)
+                        let isPlayed = barProgress <= progress
+
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(
+                                isPlayed ?
+                                    LinearGradient(
+                                        colors: [
+                                            Color(red: 0.9, green: 0.5, blue: 0.6),
+                                            Color(red: 0.8, green: 0.7, blue: 1.0)
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    ) :
+                                    LinearGradient(
+                                        colors: [
+                                            Color(red: 0.8, green: 0.7, blue: 1.0).opacity(0.4),
+                                            Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.4)
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                            )
+                            .frame(width: barWidth, height: CGFloat(displayData[index]) * geometry.size.height)
+                    }
+                }
+                .frame(maxHeight: .infinity, alignment: .center)
+
+                // Pause markers
+                ForEach(pauseMarkers.indices, id: \.self) { index in
+                    let markerPosition = pauseMarkers[index] / duration
+                    if markerPosition >= 0 && markerPosition <= 1 {
+                        Rectangle()
+                            .fill(Color.orange.opacity(0.8))
+                            .frame(width: 2, height: geometry.size.height * 0.6)
+                            .position(x: geometry.size.width * CGFloat(markerPosition), y: geometry.size.height / 2)
+                    }
+                }
+
+                // Playback position indicator
+                Rectangle()
+                    .fill(Color.white)
+                    .frame(width: 2, height: geometry.size.height)
+                    .position(x: geometry.size.width * CGFloat(progress), y: geometry.size.height / 2)
+                    .shadow(color: .white.opacity(0.5), radius: 4)
             }
         }
     }
