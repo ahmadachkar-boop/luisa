@@ -1338,6 +1338,13 @@ struct VoiceMessagesView: View {
                                 },
                                 onShare: {
                                     shareMessage = message
+                                },
+                                onPlayToggle: {
+                                    if viewModel.currentlyPlayingId == message.id {
+                                        viewModel.togglePlayPause()
+                                    } else {
+                                        viewModel.playMessage(message)
+                                    }
                                 }
                             )
                         }
@@ -1564,6 +1571,7 @@ struct VoiceMemoGridCell: View {
     let onToggleFavorite: () -> Void
     let onDelete: () -> Void
     let onShare: () -> Void
+    let onPlayToggle: () -> Void
 
     @State private var showingDeleteAlert = false
     @State private var swipeOffset: CGFloat = 0
@@ -1829,20 +1837,25 @@ struct VoiceMemoGridCell: View {
     }
 
     private var playButton: some View {
-        ZStack {
-            Circle()
-                .fill(
-                    isPlaying ?
-                        Color(red: 0.9, green: 0.4, blue: 0.5) :
-                        Color(red: 0.8, green: 0.7, blue: 1.0)
-                )
-                .frame(width: columnCount == 1 ? 50 : 44, height: columnCount == 1 ? 50 : 44)
+        Button(action: {
+            onPlayToggle()
+        }) {
+            ZStack {
+                Circle()
+                    .fill(
+                        isPlaying ?
+                            Color(red: 0.9, green: 0.4, blue: 0.5) :
+                            Color(red: 0.8, green: 0.7, blue: 1.0)
+                    )
+                    .frame(width: columnCount == 1 ? 50 : 44, height: columnCount == 1 ? 50 : 44)
 
-            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                .font(.system(size: columnCount == 1 ? 20 : 18))
-                .foregroundColor(.white)
-                .offset(x: isPlaying ? 0 : 2)
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: columnCount == 1 ? 20 : 18))
+                    .foregroundColor(.white)
+                    .offset(x: isPlaying ? 0 : 2)
+            }
         }
+        .buttonStyle(PlainButtonStyle())
     }
 
     private var waveformView: some View {
@@ -1904,6 +1917,7 @@ struct FullScreenVoiceMemoPlayer: View {
     @State private var showingShareSheet = false
     @State private var shareItems: [Any] = []
     @State private var isPreparingShare = false
+    @State private var dismissOffset: CGFloat = 0
 
     init(memos: [VoiceMessage], initialIndex: Int, viewModel: VoiceMessagesViewModel, onDismiss: @escaping () -> Void) {
         self.memos = memos
@@ -2160,22 +2174,53 @@ struct FullScreenVoiceMemoPlayer: View {
                 .padding(.bottom, 30)
             }
         }
+        .offset(y: dismissOffset)
+        .opacity(1 - (dismissOffset / 400))
         .gesture(
             DragGesture()
                 .updating($dragOffset) { value, state, _ in
                     state = value.translation.width
                 }
+                .onChanged { value in
+                    // Track vertical movement for dismiss
+                    if value.translation.height > 0 {
+                        dismissOffset = value.translation.height
+                    }
+                }
                 .onEnded { value in
-                    let threshold: CGFloat = 50
-                    if value.translation.width > threshold && currentIndex > 0 {
+                    let horizontalThreshold: CGFloat = 50
+                    let verticalThreshold: CGFloat = 100
+
+                    // Check for vertical swipe down to dismiss
+                    if value.translation.height > verticalThreshold && abs(value.translation.height) > abs(value.translation.width) {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            dismissOffset = 500
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            onDismiss()
+                        }
+                    }
+                    // Check for horizontal swipe to change memo
+                    else if value.translation.width > horizontalThreshold && currentIndex > 0 {
                         withAnimation {
                             currentIndex -= 1
                             playMemo()
                         }
-                    } else if value.translation.width < -threshold && currentIndex < memos.count - 1 {
+                        withAnimation(.spring()) {
+                            dismissOffset = 0
+                        }
+                    } else if value.translation.width < -horizontalThreshold && currentIndex < memos.count - 1 {
                         withAnimation {
                             currentIndex += 1
                             playMemo()
+                        }
+                        withAnimation(.spring()) {
+                            dismissOffset = 0
+                        }
+                    } else {
+                        // Reset if gesture didn't meet any threshold
+                        withAnimation(.spring()) {
+                            dismissOffset = 0
                         }
                     }
                 }
