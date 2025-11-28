@@ -3183,7 +3183,7 @@ struct WaveformView: View {
 }
 
 // MARK: - View Model
-class VoiceMessagesViewModel: ObservableObject {
+class VoiceMessagesViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var voiceMessages: [VoiceMessage] = []
     @Published var folders: [VoiceMemoFolder] = []
     @Published var currentlyPlayingId: String?
@@ -3200,7 +3200,8 @@ class VoiceMessagesViewModel: ObservableObject {
     // Playback position memory - stores last position for each memo
     private let playbackPositionsKey = "voiceMemoPlaybackPositions"
 
-    init() {
+    override init() {
+        super.init()
         configureAudioSession()
         loadVoiceMessages()
         loadFolders()
@@ -3208,6 +3209,29 @@ class VoiceMessagesViewModel: ObservableObject {
         setupInterruptionObserver()
         setupRemoteCommandCenter()
         setupAppLifecycleObservers()
+    }
+
+    // MARK: - AVAudioPlayerDelegate
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.progressTimer?.invalidate()
+            self.progressTimer = nil
+            self.isPlaying = false
+            self.playbackProgress = 1.0
+
+            // Clear position since playback completed
+            if let currentId = self.currentlyPlayingId {
+                self.clearPlaybackPosition(for: currentId)
+            }
+
+            // Update Control Center
+            self.updateNowPlayingPlaybackState()
+
+            // Optionally stop and clear (or keep showing the completed memo)
+            // Uncomment below to fully clear after completion:
+            // self.stopPlayback(savePosition: false)
+        }
     }
 
     private func configureAudioSession() {
@@ -3545,6 +3569,7 @@ class VoiceMessagesViewModel: ObservableObject {
                 await MainActor.run {
                     do {
                         audioPlayer = try AVAudioPlayer(data: data)
+                        audioPlayer?.delegate = self
                         audioPlayer?.enableRate = true
                         audioPlayer?.prepareToPlay()
 
@@ -3692,7 +3717,17 @@ class VoiceMessagesViewModel: ObservableObject {
         positionSaveCounter = 0
         progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             guard let self = self, let player = self.audioPlayer else { return }
+
+            // Check if player is still actually playing to avoid race conditions with delegate
+            guard player.isPlaying else {
+                // Player stopped (likely via delegate callback) - don't update
+                return
+            }
+
             Task { @MainActor in
+                // Double-check player state on main thread
+                guard self.audioPlayer?.isPlaying == true else { return }
+
                 self.playbackProgress = player.currentTime / player.duration
 
                 // Save position every 5 seconds (50 timer ticks)
