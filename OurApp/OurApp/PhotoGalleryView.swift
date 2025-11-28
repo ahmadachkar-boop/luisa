@@ -415,12 +415,12 @@ struct PhotoGalleryView: View {
                 VStack(spacing: 16) {
                     // Quick actions row
                     HStack(spacing: 12) {
-                        // Add Photos
+                        // Add button
                         PhotosPicker(selection: $selectedItems, matching: .images) {
                             HStack(spacing: 8) {
                                 Image(systemName: "plus.circle.fill")
                                     .font(.body)
-                                Text("Add Photos")
+                                Text("Add")
                                     .font(.subheadline.weight(.semibold))
                             }
                             .foregroundColor(.white)
