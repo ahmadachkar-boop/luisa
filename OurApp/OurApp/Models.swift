@@ -11,6 +11,9 @@ struct VoiceMessage: Identifiable, Codable, Equatable {
     var fromUser: String
     var folderId: String? // Reference to custom folder
     var isFavorite: Bool? // Whether the memo is marked as favorite
+    var tags: [String]? // Custom tags for the memo
+    var waveformData: [Float]? // Stored waveform visualization data
+    var pauseMarkers: [TimeInterval]? // Timestamps where recording was paused
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -21,6 +24,9 @@ struct VoiceMessage: Identifiable, Codable, Equatable {
         case fromUser
         case folderId
         case isFavorite
+        case tags
+        case waveformData
+        case pauseMarkers
     }
 }
 

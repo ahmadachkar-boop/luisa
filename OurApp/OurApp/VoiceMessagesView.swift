@@ -63,6 +63,11 @@ struct VoiceMessagesView: View {
     @State private var shareItems: [Any] = []
     @State private var showingShareSheet = false
 
+    // Tags state
+    @State private var showingTagSheet = false
+    @State private var selectedTagFilter: String? = nil
+    @State private var newTagText = ""
+
     // Magnification gesture state
     @GestureState private var magnificationScale: CGFloat = 1.0
 
@@ -130,8 +135,14 @@ struct VoiceMessagesView: View {
             let searchLower = searchText.lowercased()
             messages = messages.filter { message in
                 message.title.lowercased().contains(searchLower) ||
-                message.fromUser.lowercased().contains(searchLower)
+                message.fromUser.lowercased().contains(searchLower) ||
+                (message.tags?.contains { $0.lowercased().contains(searchLower) } ?? false)
             }
+        }
+
+        // Apply tag filter
+        if let tagFilter = selectedTagFilter {
+            messages = messages.filter { $0.tags?.contains(tagFilter) ?? false }
         }
 
         // Apply date filter
@@ -276,6 +287,13 @@ struct VoiceMessagesView: View {
                             }
                             .disabled(selectedMessageIds.isEmpty)
 
+                            // Tag button
+                            Button(action: { showingTagSheet = true }) {
+                                Image(systemName: "tag.fill")
+                                    .foregroundColor(Color(red: 0.4, green: 0.7, blue: 0.9))
+                            }
+                            .disabled(selectedMessageIds.isEmpty)
+
                             // Move to folder button
                             Button(action: { showingMoveToFolder = true }) {
                                 Image(systemName: "folder.badge.plus")
@@ -357,6 +375,25 @@ struct VoiceMessagesView: View {
                 if !shareItems.isEmpty {
                     ShareSheet(items: shareItems)
                 }
+            }
+            .sheet(isPresented: $showingTagSheet) {
+                VoiceMemoTagSheet(
+                    existingTags: viewModel.allTags,
+                    onAddTag: { tag in
+                        Task {
+                            for id in selectedMessageIds {
+                                try? await viewModel.addTag(tag, to: id)
+                            }
+                            await MainActor.run {
+                                showingTagSheet = false
+                                selectionMode = false
+                                selectedMessageIds.removeAll()
+                            }
+                        }
+                    },
+                    onCancel: { showingTagSheet = false }
+                )
+                .presentationDetents([.medium])
             }
             .onChange(of: shareMessage) { oldValue, newValue in
                 if let message = newValue {
@@ -2995,6 +3032,91 @@ struct VoiceMemoMoveToFolderSheet: View {
     }
 }
 
+// MARK: - Tag Sheet
+struct VoiceMemoTagSheet: View {
+    let existingTags: [String]
+    let onAddTag: (String) -> Void
+    let onCancel: () -> Void
+    @Environment(\.dismiss) var dismiss
+    @State private var newTagText = ""
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 20) {
+                    // Create new tag
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Create New Tag")
+                            .font(.headline)
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                        HStack {
+                            Image(systemName: "tag")
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                            TextField("Enter tag name", text: $newTagText)
+                            if !newTagText.isEmpty {
+                                Button(action: {
+                                    onAddTag(newTagText.trimmingCharacters(in: .whitespacesAndNewlines))
+                                }) {
+                                    Image(systemName: "plus.circle.fill")
+                                        .foregroundColor(Color(red: 0.4, green: 0.7, blue: 0.9))
+                                }
+                            }
+                        }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.white)
+                                .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
+                        )
+                    }
+
+                    if !existingTags.isEmpty {
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Existing Tags")
+                                .font(.headline)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], spacing: 8) {
+                                ForEach(existingTags, id: \.self) { tag in
+                                    Button(action: { onAddTag(tag) }) {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: "tag.fill")
+                                                .font(.caption)
+                                            Text(tag)
+                                                .font(.subheadline.weight(.medium))
+                                                .lineLimit(1)
+                                        }
+                                        .foregroundColor(Color(red: 0.4, green: 0.7, blue: 0.9))
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 8)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 20)
+                                                .fill(Color(red: 0.4, green: 0.7, blue: 0.9).opacity(0.15))
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding()
+            }
+            .background(Color(red: 0.96, green: 0.94, blue: 0.98).ignoresSafeArea())
+            .navigationTitle("Add Tag")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { onCancel() }
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+            }
+        }
+    }
+}
+
 // MARK: - View Model
 class VoiceMessagesViewModel: ObservableObject {
     @Published var voiceMessages: [VoiceMessage] = []
@@ -3003,14 +3125,37 @@ class VoiceMessagesViewModel: ObservableObject {
     @Published var currentlyPlayingMessage: VoiceMessage?
     @Published var isPlaying: Bool = false
     @Published var playbackProgress: Double = 0
+    @Published var currentWaveform: [Float] = []
+    @Published var allTags: [String] = [] // All unique tags across memos
 
     private var audioPlayer: AVAudioPlayer?
     private var progressTimer: Timer?
     private let firebaseManager = FirebaseManager.shared
 
+    // Playback position memory - stores last position for each memo
+    private let playbackPositionsKey = "voiceMemoPlaybackPositions"
+
     init() {
+        setupBackgroundAudio()
         loadVoiceMessages()
         loadFolders()
+        loadAllTags()
+    }
+
+    private func setupBackgroundAudio() {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [.allowBluetooth, .allowAirPlay])
+            try session.setActive(true)
+        } catch {
+            print("Failed to setup background audio: \(error)")
+        }
+    }
+
+    func loadAllTags() {
+        // Collect all unique tags from memos
+        let tags = voiceMessages.compactMap { $0.tags }.flatMap { $0 }
+        allTags = Array(Set(tags)).sorted()
     }
 
     func loadVoiceMessages() {
@@ -3018,9 +3163,46 @@ class VoiceMessagesViewModel: ObservableObject {
             for try await messages in firebaseManager.getVoiceMessages() {
                 await MainActor.run {
                     self.voiceMessages = messages
+                    self.loadAllTags()
                 }
             }
         }
+    }
+
+    // MARK: - Playback Position Memory
+    func savePlaybackPosition(for memoId: String, position: TimeInterval) {
+        var positions = getPlaybackPositions()
+        positions[memoId] = position
+        if let data = try? JSONEncoder().encode(positions) {
+            UserDefaults.standard.set(data, forKey: playbackPositionsKey)
+        }
+    }
+
+    func getPlaybackPosition(for memoId: String) -> TimeInterval? {
+        let positions = getPlaybackPositions()
+        return positions[memoId]
+    }
+
+    func clearPlaybackPosition(for memoId: String) {
+        var positions = getPlaybackPositions()
+        positions.removeValue(forKey: memoId)
+        if let data = try? JSONEncoder().encode(positions) {
+            UserDefaults.standard.set(data, forKey: playbackPositionsKey)
+        }
+    }
+
+    private func getPlaybackPositions() -> [String: TimeInterval] {
+        guard let data = UserDefaults.standard.data(forKey: playbackPositionsKey),
+              let positions = try? JSONDecoder().decode([String: TimeInterval].self, from: data) else {
+            return [:]
+        }
+        return positions
+    }
+
+    func hasUnfinishedPlayback(for memoId: String, duration: TimeInterval) -> Bool {
+        guard let position = getPlaybackPosition(for: memoId) else { return false }
+        // Consider it unfinished if more than 5 seconds in and not at the end
+        return position > 5 && position < (duration - 5)
     }
 
     func loadFolders() {
@@ -3046,7 +3228,7 @@ class VoiceMessagesViewModel: ObservableObject {
         }
     }
 
-    func playMessage(_ message: VoiceMessage) {
+    func playMessage(_ message: VoiceMessage, fromPosition: TimeInterval? = nil) {
         guard let url = URL(string: message.audioURL) else { return }
 
         // If same message, toggle play/pause
@@ -3055,11 +3237,23 @@ class VoiceMessagesViewModel: ObservableObject {
             return
         }
 
+        // Save position of currently playing message before switching
+        if let currentId = currentlyPlayingId, let player = audioPlayer {
+            savePlaybackPosition(for: currentId, position: player.currentTime)
+        }
+
         // Stop current playback
-        stopPlayback()
+        stopPlayback(savePosition: false)
 
         currentlyPlayingId = message.id
         currentlyPlayingMessage = message
+
+        // Use stored waveform or generate placeholder
+        if let waveform = message.waveformData, !waveform.isEmpty {
+            currentWaveform = waveform
+        } else {
+            currentWaveform = generatePlaceholderWaveform(count: 50)
+        }
 
         Task {
             do {
@@ -3068,9 +3262,24 @@ class VoiceMessagesViewModel: ObservableObject {
                 await MainActor.run {
                     do {
                         audioPlayer = try AVAudioPlayer(data: data)
+                        audioPlayer?.enableRate = true
+
+                        // Resume from saved position or specified position
+                        if let position = fromPosition {
+                            audioPlayer?.currentTime = position
+                        } else if let memoId = message.id,
+                                  let savedPosition = getPlaybackPosition(for: memoId),
+                                  savedPosition > 0 && savedPosition < message.duration - 1 {
+                            audioPlayer?.currentTime = savedPosition
+                            playbackProgress = savedPosition / message.duration
+                        }
+
                         audioPlayer?.play()
                         isPlaying = true
                         startProgressTimer()
+
+                        // Extract actual waveform from audio data
+                        extractWaveform(from: data)
                     } catch {
                         print("Error playing audio: \(error)")
                     }
@@ -3085,6 +3294,10 @@ class VoiceMessagesViewModel: ObservableObject {
         if isPlaying {
             audioPlayer?.pause()
             progressTimer?.invalidate()
+            // Save position when pausing
+            if let currentId = currentlyPlayingId, let player = audioPlayer {
+                savePlaybackPosition(for: currentId, position: player.currentTime)
+            }
         } else {
             audioPlayer?.play()
             startProgressTimer()
@@ -3092,7 +3305,65 @@ class VoiceMessagesViewModel: ObservableObject {
         isPlaying.toggle()
     }
 
-    func stopPlayback() {
+    private func generatePlaceholderWaveform(count: Int) -> [Float] {
+        (0..<count).map { _ in Float.random(in: 0.2...0.8) }
+    }
+
+    private func extractWaveform(from data: Data) {
+        // Extract waveform visualization data from audio
+        // This creates a simplified amplitude representation
+        let sampleCount = 50
+        var waveform: [Float] = []
+
+        guard let audioFile = try? AVAudioFile(forReading: createTempURL(with: data)) else {
+            return
+        }
+
+        let frameCount = UInt32(audioFile.length)
+        let samplesPerBar = Int(frameCount) / sampleCount
+
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: audioFile.processingFormat, frameCapacity: frameCount) else {
+            return
+        }
+
+        try? audioFile.read(into: buffer)
+
+        guard let floatData = buffer.floatChannelData?[0] else { return }
+
+        for i in 0..<sampleCount {
+            let startSample = i * samplesPerBar
+            let endSample = min(startSample + samplesPerBar, Int(frameCount))
+
+            var sum: Float = 0
+            for j in startSample..<endSample {
+                sum += abs(floatData[j])
+            }
+            let avg = sum / Float(endSample - startSample)
+            waveform.append(min(1.0, avg * 3)) // Normalize and scale
+        }
+
+        DispatchQueue.main.async {
+            self.currentWaveform = waveform
+        }
+    }
+
+    private func createTempURL(with data: Data) -> URL {
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("temp_audio.m4a")
+        try? data.write(to: tempURL)
+        return tempURL
+    }
+
+    func stopPlayback(savePosition: Bool = true) {
+        // Save position before stopping
+        if savePosition, let currentId = currentlyPlayingId, let player = audioPlayer {
+            if player.currentTime < player.duration - 1 {
+                savePlaybackPosition(for: currentId, position: player.currentTime)
+            } else {
+                // Finished playing, clear position
+                clearPlaybackPosition(for: currentId)
+            }
+        }
+
         audioPlayer?.stop()
         audioPlayer = nil
         progressTimer?.invalidate()
@@ -3100,6 +3371,7 @@ class VoiceMessagesViewModel: ObservableObject {
         currentlyPlayingMessage = nil
         isPlaying = false
         playbackProgress = 0
+        currentWaveform = []
     }
 
     func seekTo(progress: Double) {
@@ -3122,12 +3394,23 @@ class VoiceMessagesViewModel: ObservableObject {
         audioPlayer?.enableRate = true
     }
 
+    private var positionSaveCounter = 0
+
     private func startProgressTimer() {
         progressTimer?.invalidate()
+        positionSaveCounter = 0
         progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             guard let self = self, let player = self.audioPlayer else { return }
             Task { @MainActor in
                 self.playbackProgress = player.currentTime / player.duration
+
+                // Save position every 5 seconds (50 timer ticks)
+                self.positionSaveCounter += 1
+                if self.positionSaveCounter >= 50, let currentId = self.currentlyPlayingId {
+                    self.savePlaybackPosition(for: currentId, position: player.currentTime)
+                    self.positionSaveCounter = 0
+                }
+
                 if player.currentTime >= player.duration {
                     self.stopPlayback()
                 }
@@ -3147,6 +3430,32 @@ class VoiceMessagesViewModel: ObservableObject {
 
     func batchUpdateFolders(_ ids: [String], folderId: String?) async throws {
         try await firebaseManager.batchUpdateVoiceMemoFolders(ids, folderId: folderId)
+    }
+
+    func batchDelete(_ ids: [String]) async throws {
+        for id in ids {
+            if let message = voiceMessages.first(where: { $0.id == id }) {
+                try await firebaseManager.deleteVoiceMessage(message)
+            }
+        }
+    }
+
+    // MARK: - Tags Management
+    func addTag(_ tag: String, to messageId: String) async throws {
+        try await firebaseManager.addTagToVoiceMemo(messageId, tag: tag)
+        await MainActor.run { loadAllTags() }
+    }
+
+    func removeTag(_ tag: String, from messageId: String) async throws {
+        try await firebaseManager.removeTagFromVoiceMemo(messageId, tag: tag)
+        await MainActor.run { loadAllTags() }
+    }
+
+    func batchAddTag(_ tag: String, to ids: [String]) async throws {
+        for id in ids {
+            try await firebaseManager.addTagToVoiceMemo(id, tag: tag)
+        }
+        await MainActor.run { loadAllTags() }
     }
 
     func createFolder(name: String, forUser: String) async throws -> String {
@@ -3247,9 +3556,17 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     @Published var audioLevels: [CGFloat] = Array(repeating: 0.1, count: 30)
     @Published var currentLevel: CGFloat = 0
     @Published var quality: RecordingQuality = .high
+    @Published var pauseMarkers: [TimeInterval] = [] // Track when pauses occurred
+    @Published var waveformData: [Float] = [] // Store waveform for visualization
+
+    // Trim properties
+    @Published var trimStart: TimeInterval = 0
+    @Published var trimEnd: TimeInterval = 0
+    @Published var isTrimming = false
 
     var audioRecorder: AVAudioRecorder?
     var audioData: Data?
+    var trimmedAudioData: Data?
     private var timer: Timer?
     private var levelTimer: Timer?
     private var levelHistory: [CGFloat] = []
@@ -3282,6 +3599,8 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
             recordingTime = 0
             levelHistory = []
             audioLevels = Array(repeating: 0.1, count: 30)
+            pauseMarkers = []
+            waveformData = []
 
             startTimers()
         } catch {
@@ -3293,6 +3612,8 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
         guard isRecording && !isPaused else { return }
         audioRecorder?.pause()
         isPaused = true
+        // Track when pause occurred
+        pauseMarkers.append(recordingTime)
         timer?.invalidate()
         levelTimer?.invalidate()
     }
@@ -3354,9 +3675,112 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
         isPaused = false
         hasRecording = true
         recordingDuration = recordingTime
+        trimStart = 0
+        trimEnd = recordingDuration
 
         if let url = audioRecorder?.url {
             audioData = try? Data(contentsOf: url)
+            // Generate waveform data from recording
+            generateWaveformData(from: url)
+        }
+    }
+
+    private func generateWaveformData(from url: URL) {
+        guard let audioFile = try? AVAudioFile(forReading: url) else { return }
+
+        let sampleCount = 100
+        let frameCount = UInt32(audioFile.length)
+        let samplesPerBar = Int(frameCount) / sampleCount
+
+        guard samplesPerBar > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: audioFile.processingFormat, frameCapacity: frameCount) else {
+            return
+        }
+
+        try? audioFile.read(into: buffer)
+
+        guard let floatData = buffer.floatChannelData?[0] else { return }
+
+        var waveform: [Float] = []
+        for i in 0..<sampleCount {
+            let startSample = i * samplesPerBar
+            let endSample = min(startSample + samplesPerBar, Int(frameCount))
+
+            var sum: Float = 0
+            for j in startSample..<endSample {
+                sum += abs(floatData[j])
+            }
+            let avg = sum / Float(endSample - startSample)
+            waveform.append(min(1.0, avg * 3))
+        }
+
+        DispatchQueue.main.async {
+            self.waveformData = waveform
+        }
+    }
+
+    // MARK: - Trim Functions
+    func setTrimRange(start: TimeInterval, end: TimeInterval) {
+        trimStart = max(0, start)
+        trimEnd = min(recordingDuration, end)
+    }
+
+    func applyTrim() async -> Bool {
+        guard let url = audioRecorder?.url,
+              trimStart < trimEnd,
+              trimStart >= 0,
+              trimEnd <= recordingDuration else {
+            return false
+        }
+
+        isTrimming = true
+
+        do {
+            let asset = AVURLAsset(url: url)
+            let duration = try await asset.load(.duration)
+
+            let startTime = CMTime(seconds: trimStart, preferredTimescale: 1000)
+            let endTime = CMTime(seconds: trimEnd, preferredTimescale: 1000)
+            let timeRange = CMTimeRange(start: startTime, end: endTime)
+
+            guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
+                await MainActor.run { isTrimming = false }
+                return false
+            }
+
+            let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("trimmed_\(UUID().uuidString).m4a")
+            try? FileManager.default.removeItem(at: outputURL)
+
+            exportSession.outputURL = outputURL
+            exportSession.outputFileType = .m4a
+            exportSession.timeRange = timeRange
+
+            await exportSession.export()
+
+            if exportSession.status == .completed {
+                let trimmedData = try Data(contentsOf: outputURL)
+                await MainActor.run {
+                    self.audioData = trimmedData
+                    self.recordingDuration = trimEnd - trimStart
+                    self.trimStart = 0
+                    self.trimEnd = self.recordingDuration
+                    self.isTrimming = false
+                    // Regenerate waveform for trimmed audio
+                    self.generateWaveformData(from: outputURL)
+                    // Adjust pause markers for trimmed audio
+                    self.pauseMarkers = self.pauseMarkers
+                        .filter { $0 >= trimStart && $0 <= trimEnd }
+                        .map { $0 - trimStart }
+                }
+                return true
+            } else {
+                await MainActor.run { isTrimming = false }
+                return false
+            }
+        } catch {
+            print("Error trimming audio: \(error)")
+            await MainActor.run { isTrimming = false }
+            return false
         }
     }
 
@@ -3370,6 +3794,10 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
         audioData = nil
         audioLevels = Array(repeating: 0.1, count: 30)
         levelHistory = []
+        pauseMarkers = []
+        waveformData = []
+        trimStart = 0
+        trimEnd = 0
     }
 }
 
