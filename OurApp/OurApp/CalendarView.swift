@@ -556,7 +556,7 @@ struct CalendarView: View {
                         showingAddEvent = true
                     }
                 )
-                .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)")
+                .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)-\(selectedDay?.timeIntervalSince1970 ?? 0)")
                 .padding(.horizontal)
                 .padding(.bottom, 16)
                 .transition(.asymmetric(
@@ -2756,7 +2756,6 @@ struct CalendarGridView: View {
                                 onQuickAdd?(date)
                             }
                         )
-                        .id("\(date.timeIntervalSince1970)-\(isSelectedValue)")
                     } else {
                         Color.clear
                             .frame(height: 40)
