@@ -1403,6 +1403,13 @@ struct EventDetailView: View {
                     Task {
                         do {
                             try await FirebaseManager.shared.updateEvent(updatedEvent)
+
+                            // Send push notification for event edit
+                            NotificationManager.shared.notifyEventEdited(event: updatedEvent)
+
+                            // Reschedule local reminders in case date changed
+                            NotificationManager.shared.scheduleEventReminders(for: updatedEvent)
+
                             await MainActor.run {
                                 currentEvent = updatedEvent
                             }
