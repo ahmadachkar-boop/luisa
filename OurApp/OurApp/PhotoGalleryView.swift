@@ -1134,7 +1134,8 @@ struct PhotoGalleryView: View {
                                 }
                             }
                         }
-                    }
+                    },
+                    uploadedByNames: photosInDisplayOrder.map { $0.uploadedBy }
                 )
             }
             }
