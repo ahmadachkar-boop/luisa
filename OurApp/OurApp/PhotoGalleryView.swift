@@ -248,9 +248,8 @@ struct PhotoGalleryView: View {
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
             geometry.contentOffset.y
         } action: { oldValue, newValue in
-            // Auto-hide header when scrolling down (positive scroll offset means scrolled down)
-            // Even a slight scroll (> 5 points) dismisses the header
-            if showingExpandedHeader && newValue > 5 {
+            // Auto-hide header when scrolling down - minimal threshold for instant dismissal
+            if showingExpandedHeader && newValue > 1 {
                 withAnimation(.spring(response: 0.3)) {
                     showingExpandedHeader = false
                 }
@@ -259,6 +258,16 @@ struct PhotoGalleryView: View {
         .safeAreaInset(edge: .top) {
             Color.clear.frame(height: 0)
         }
+        .simultaneousGesture(
+            TapGesture()
+                .onEnded { _ in
+                    if showingExpandedHeader {
+                        withAnimation(.spring(response: 0.3)) {
+                            showingExpandedHeader = false
+                        }
+                    }
+                }
+        )
         .simultaneousGesture(
             MagnificationGesture()
                 .updating($magnificationScale) { value, scale, _ in

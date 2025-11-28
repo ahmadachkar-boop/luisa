@@ -639,14 +639,23 @@ struct CalendarView: View {
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
             geometry.contentOffset.y
         } action: { oldValue, newValue in
-            // Auto-hide header when scrolling down
-            // Even a slight scroll (> 5 points) dismisses the header
-            if showingExpandedHeader && newValue > 5 {
+            // Auto-hide header when scrolling down - minimal threshold for instant dismissal
+            if showingExpandedHeader && newValue > 1 {
                 withAnimation(.spring(response: 0.3)) {
                     showingExpandedHeader = false
                 }
             }
         }
+        .simultaneousGesture(
+            TapGesture()
+                .onEnded { _ in
+                    if showingExpandedHeader {
+                        withAnimation(.spring(response: 0.3)) {
+                            showingExpandedHeader = false
+                        }
+                    }
+                }
+        )
     }
 
     var body: some View {
