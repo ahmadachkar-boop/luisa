@@ -12,7 +12,7 @@ class UserIdentityManager: ObservableObject {
 
     private let keychainKey = "com.ourapp.userIdentity"
 
-    @Published var currentUser: AppUser {
+    @Published var currentUser: AppUser = .ahmad {
         didSet {
             saveToKeychain(currentUser.rawValue)
         }
@@ -23,11 +23,10 @@ class UserIdentityManager: ObservableObject {
     }
 
     private init() {
+        // Load saved user from keychain (must be done after currentUser is initialized)
         if let savedUser = loadFromKeychain(),
            let user = AppUser(rawValue: savedUser) {
             self.currentUser = user
-        } else {
-            self.currentUser = .ahmad // Default to Ahmad
         }
     }
 
