@@ -2626,12 +2626,17 @@ class CalendarViewModel: ObservableObject {
 
     var upcomingEvents: [CalendarEvent] {
         let now = Date()
-        return events.filter { $0.date >= now }.sorted { $0.date < $1.date }
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: now)
+        // Include all events from today (even if the time has passed) and future
+        return events.filter { $0.date >= startOfToday }.sorted { $0.date < $1.date }
     }
 
     var pastEvents: [CalendarEvent] {
-        let now = Date()
-        return events.filter { $0.date < now }.sorted { $0.date > $1.date }
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: Date())
+        // Events before today go to memories/past
+        return events.filter { $0.date < startOfToday }.sorted { $0.date > $1.date }
     }
 
     init() {
