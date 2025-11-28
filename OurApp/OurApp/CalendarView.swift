@@ -2743,6 +2743,7 @@ struct CalendarGridView: View {
                 ForEach(daysInMonth(), id: \.self) { date in
                     if let date = date {
                         let isSelectedValue = selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!)
+                        let _ = print("DEBUG CalendarGrid: date=\(Calendar.current.component(.day, from: date)), isSelected=\(isSelectedValue), selectedDay=\(String(describing: selectedDay))")
 
                         CalendarDayCell(
                             date: date,
@@ -2810,11 +2811,15 @@ struct CalendarGridView: View {
 
     func handleDayTap(date: Date) {
         let isPastDate = date < Date()
+        print("DEBUG: handleDayTap called for date: \(date)")
+        print("DEBUG: Current selectedDay before: \(String(describing: selectedDay))")
 
         // Toggle selection if tapping same day, otherwise select new day
         if selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!) {
+            print("DEBUG: Deselecting day")
             selectedDay = nil
         } else {
+            print("DEBUG: Selecting day: \(date)")
             selectedDay = date
 
             // Auto-switch tabs based on date
@@ -2828,6 +2833,7 @@ struct CalendarGridView: View {
                 }
             }
         }
+        print("DEBUG: selectedDay after: \(String(describing: selectedDay))")
     }
 }
 
@@ -2848,6 +2854,7 @@ struct CalendarDayCell: View {
         let isPastDate = date < Date()
 
         return Button(action: {
+            print("DEBUG CalendarDayCell: Button tapped for day \(Calendar.current.component(.day, from: date)), isSelected=\(isSelected)")
             // Always handle selection first
             onTap()
 
