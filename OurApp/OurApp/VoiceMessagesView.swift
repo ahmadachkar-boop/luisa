@@ -3521,12 +3521,25 @@ class VoiceMessagesViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
 
     func uploadVoiceMessage(audioData: Data, title: String, duration: TimeInterval, fromUser: String) async {
         do {
-            _ = try await firebaseManager.uploadVoiceMessage(
+            let memoId = try await firebaseManager.uploadVoiceMessage(
                 audioData: audioData,
                 title: title,
                 duration: duration,
                 fromUser: fromUser
             )
+
+            // Create a VoiceMessage for notification
+            let memo = VoiceMessage(
+                id: memoId,
+                title: title,
+                duration: duration,
+                createdAt: Date(),
+                audioURL: "",
+                fromUser: fromUser
+            )
+
+            // Send push notification
+            NotificationManager.shared.notifyVoiceMemoCreated(memo: memo)
         } catch {
             print("Error uploading voice message: \(error)")
         }

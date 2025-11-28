@@ -1945,6 +1945,13 @@ struct EventDetailView: View {
                 try await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
                 print("🟢 [UPDATE SUCCESS] Event updated successfully")
 
+                // Send push notification for photos added to event
+                NotificationManager.shared.notifyPhotosAdded(
+                    count: newPhotoURLs.count,
+                    location: currentEvent.title,
+                    eventId: currentEvent.id
+                )
+
                 await MainActor.run {
                     currentEvent.photoURLs = updatedEvent.photoURLs
                     print("🔵 [UI UPDATE] UI updated with new photos")
@@ -2649,10 +2656,22 @@ class CalendarViewModel: ObservableObject {
 
     func addEvent(_ event: CalendarEvent) async throws {
         try await firebaseManager.addCalendarEvent(event)
+
+        // Send push notification
+        NotificationManager.shared.notifyEventCreated(event: event)
+
+        // Schedule local reminders for 1 day and 2 hours before
+        NotificationManager.shared.scheduleEventReminders(for: event)
     }
 
     func updateEvent(_ event: CalendarEvent) async throws {
         try await firebaseManager.updateEvent(event)
+
+        // Send push notification
+        NotificationManager.shared.notifyEventEdited(event: event)
+
+        // Reschedule local reminders in case date changed
+        NotificationManager.shared.scheduleEventReminders(for: event)
     }
 
     func deleteEvent(_ event: CalendarEvent) async throws {

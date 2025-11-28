@@ -1076,6 +1076,12 @@ struct PhotoGalleryView: View {
                         showError = true
                     }
 
+                    // Send push notification for uploaded photos (gallery photos, not event photos)
+                    let successfulUploads = newItems.count - uploadErrors.count
+                    if successfulUploads > 0 {
+                        NotificationManager.shared.notifyPhotosAdded(count: successfulUploads, location: "gallery", eventId: nil)
+                    }
+
                     isUploading = false
                     uploadProgress = 0.0
                     uploadedCount = 0
