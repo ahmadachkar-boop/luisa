@@ -982,17 +982,6 @@ struct PhotoGalleryView: View {
                         contentView
                     }
 
-                    // Tap-outside-to-dismiss overlay for expanded header
-                    if showingExpandedHeader {
-                        Color.clear
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                withAnimation(.spring(response: 0.3)) {
-                                    showingExpandedHeader = false
-                                }
-                            }
-                            .padding(.top, 200) // Start below the header area
-                    }
                 }
                 .toolbar {
                     if selectionMode {
