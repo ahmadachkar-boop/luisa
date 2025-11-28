@@ -1339,7 +1339,7 @@ struct VoiceMessagesView: View {
 
                             VoiceMemoGridCell(
                                 message: message,
-                                isPlaying: viewModel.currentlyPlayingId == message.id,
+                                isPlaying: viewModel.currentlyPlayingId == message.id && viewModel.isPlaying,
                                 selectionMode: selectionMode,
                                 isSelected: selectedMessageIds.contains(message.id ?? ""),
                                 columnCount: columnCount,
