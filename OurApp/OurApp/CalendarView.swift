@@ -1912,7 +1912,7 @@ struct EventDetailView: View {
                 let photoURL = try await FirebaseManager.shared.uploadPhoto(
                     imageData: compressedData,
                     caption: "",
-                    uploadedBy: "You",
+                    uploadedBy: UserIdentityManager.shared.currentUserName,
                     capturedAt: capturedAt,
                     eventId: currentEvent.id,
                     folderId: nil
@@ -2190,7 +2190,7 @@ struct AddEventView: View {
             date: date,
             endDate: isMultiDay ? endDate : nil,
             location: location,
-            createdBy: "You",
+            createdBy: UserIdentityManager.shared.currentUserName,
             isSpecial: isSpecial,
             photoURLs: [],
             googleCalendarId: nil,

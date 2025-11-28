@@ -197,7 +197,7 @@ class OfflineManager: ObservableObject {
             _ = try await firebaseManager.uploadPhoto(
                 imageData: uploadData.imageData,
                 caption: "",
-                uploadedBy: "You",
+                uploadedBy: UserIdentityManager.shared.currentUserName,
                 capturedAt: uploadData.capturedAt,
                 eventId: uploadData.eventId,
                 folderId: uploadData.folderId

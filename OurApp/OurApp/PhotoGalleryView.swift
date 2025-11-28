@@ -1615,7 +1615,7 @@ class PhotoGalleryViewModel: ObservableObject {
         _ = try await firebaseManager.uploadPhoto(
             imageData: imageData,
             caption: "",
-            uploadedBy: "You",
+            uploadedBy: UserIdentityManager.shared.currentUserName,
             capturedAt: capturedAt,
             eventId: eventId,
             folderId: folderId

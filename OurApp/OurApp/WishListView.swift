@@ -252,7 +252,7 @@ struct AddWishListItemView: View {
                             let item = WishListItem(
                                 title: title,
                                 description: description,
-                                addedBy: "You",
+                                addedBy: UserIdentityManager.shared.currentUserName,
                                 createdAt: Date(),
                                 isCompleted: false,
                                 completedDate: nil,
