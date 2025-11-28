@@ -531,15 +531,17 @@ struct CalendarView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
-                // Month indicator for calendar
+                // Month indicator for calendar (centered)
                 Text(currentMonth, format: .dateTime.month(.wide).year())
                     .font(.title3)
                     .fontWeight(.semibold)
                     .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.horizontal)
                     .padding(.top, 8)
                     .padding(.bottom, 12)
+                    .contentTransition(.numericText())
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: currentMonth)
 
                 // Calendar Grid
                 CalendarGridView(
@@ -555,6 +557,11 @@ struct CalendarView: View {
                 .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)-\(selectedDay?.timeIntervalSince1970 ?? 0)")
                 .padding(.horizontal)
                 .padding(.bottom, 16)
+                .transition(.asymmetric(
+                    insertion: .move(edge: .trailing).combined(with: .opacity),
+                    removal: .move(edge: .leading).combined(with: .opacity)
+                ))
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: currentMonth)
                 .gesture(
                     DragGesture(minimumDistance: 30)
                         .onEnded { value in
@@ -562,13 +569,15 @@ struct CalendarView: View {
 
                             if horizontalAmount < -50 {
                                 // Swipe left - next month
-                                withAnimation(.spring(response: 0.3)) {
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
                                     currentMonth = Calendar.current.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
+                                    selectedDay = nil // Clear day selection when changing months
                                 }
                             } else if horizontalAmount > 50 {
                                 // Swipe right - previous month
-                                withAnimation(.spring(response: 0.3)) {
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
                                     currentMonth = Calendar.current.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
+                                    selectedDay = nil // Clear day selection when changing months
                                 }
                             }
                         }
@@ -1496,27 +1505,25 @@ struct EventDetailView: View {
 
                                 Spacer()
 
-                                // Add photos button for past events
-                                if isPastEvent {
-                                    PhotosPicker(selection: $photoPickerItems, matching: .images) {
-                                        HStack(spacing: 4) {
-                                            if isUploadingPhotos {
-                                                ProgressView()
-                                                    .scaleEffect(0.8)
-                                            } else {
-                                                Image(systemName: "plus.circle.fill")
-                                                Text("Add")
-                                                    .font(.caption)
-                                            }
+                                // Add photos button for all events
+                                PhotosPicker(selection: $photoPickerItems, matching: .images) {
+                                    HStack(spacing: 4) {
+                                        if isUploadingPhotos {
+                                            ProgressView()
+                                                .scaleEffect(0.8)
+                                        } else {
+                                            Image(systemName: "plus.circle.fill")
+                                            Text("Add")
+                                                .font(.caption)
                                         }
-                                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.8))
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 6)
-                                        .background(Color(red: 0.95, green: 0.9, blue: 1.0))
-                                        .cornerRadius(15)
                                     }
-                                    .disabled(isUploadingPhotos)
+                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.8))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Color(red: 0.95, green: 0.9, blue: 1.0))
+                                    .cornerRadius(15)
                                 }
+                                .disabled(isUploadingPhotos)
                             }
                             .padding(.horizontal)
 
