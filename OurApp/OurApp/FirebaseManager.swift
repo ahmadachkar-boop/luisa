@@ -182,6 +182,19 @@ class FirebaseManager: ObservableObject {
         try await batch.commit()
     }
 
+    // MARK: - Voice Memo Tags
+    func addTagToVoiceMemo(_ memoId: String, tag: String) async throws {
+        try await db.collection("voiceMessages").document(memoId).updateData([
+            "tags": FieldValue.arrayUnion([tag])
+        ])
+    }
+
+    func removeTagFromVoiceMemo(_ memoId: String, tag: String) async throws {
+        try await db.collection("voiceMessages").document(memoId).updateData([
+            "tags": FieldValue.arrayRemove([tag])
+        ])
+    }
+
     // MARK: - Photos
     func uploadPhoto(imageData: Data, caption: String = "", uploadedBy: String = "You", capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws -> String {
         let fileName = "\(UUID().uuidString).jpg"

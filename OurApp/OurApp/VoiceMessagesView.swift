@@ -3737,7 +3737,8 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
 
         do {
             let asset = AVURLAsset(url: url)
-            let duration = try await asset.load(.duration)
+            // Load asset to ensure it's ready
+            _ = try await asset.load(.duration)
 
             let startTime = CMTime(seconds: trimStart, preferredTimescale: 1000)
             let endTime = CMTime(seconds: trimEnd, preferredTimescale: 1000)
@@ -3755,9 +3756,14 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
             exportSession.outputFileType = .m4a
             exportSession.timeRange = timeRange
 
-            await exportSession.export()
+            // Use exportAsynchronously for compatibility
+            let success = await withCheckedContinuation { continuation in
+                exportSession.exportAsynchronously {
+                    continuation.resume(returning: exportSession.status == .completed)
+                }
+            }
 
-            if exportSession.status == .completed {
+            if success {
                 let trimmedData = try Data(contentsOf: outputURL)
                 await MainActor.run {
                     self.audioData = trimmedData
