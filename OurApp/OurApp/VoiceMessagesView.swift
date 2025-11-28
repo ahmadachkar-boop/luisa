@@ -523,22 +523,95 @@ struct VoiceMessagesView: View {
 
     // MARK: - Empty Folder View
     private var emptyFolderView: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "folder")
-                .font(.system(size: 60))
-                .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
+        VStack(spacing: 0) {
+            // Navigation bar with back button
+            HStack(spacing: 12) {
+                Button(action: {
+                    let previousView = folderNavStack.popLast() ?? .categorySelection
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        currentFolderView = previousView
+                    }
+                }) {
+                    Image(systemName: "chevron.left")
+                        .font(.title3)
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
 
-            Text("No memos here")
-                .font(.title3)
-                .fontWeight(.semibold)
-                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                Text(folderTitle)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
 
-            Text("Add memos to this folder or record a new one")
-                .font(.subheadline)
-                .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
-                .multilineTextAlignment(.center)
+                Spacer()
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.white.opacity(0.9))
+                    .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+            )
+            .padding(.horizontal)
+            .padding(.top, 8)
+
+            Spacer()
+
+            VStack(spacing: 20) {
+                Image(systemName: "folder")
+                    .font(.system(size: 60))
+                    .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
+
+                Text("No memos here")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                Text("Add memos to this folder or record a new one")
+                    .font(.subheadline)
+                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+                    .multilineTextAlignment(.center)
+
+                Button(action: { showingRecorder = true }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "mic.fill")
+                        Text("Record")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.7, green: 0.45, blue: 0.95),
+                                Color(red: 0.55, green: 0.35, blue: 0.85)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .cornerRadius(20)
+                }
+            }
+
+            Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .gesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    let horizontalAmount = value.translation.width
+                    let verticalAmount = abs(value.translation.height)
+
+                    // Swipe right to go back
+                    if horizontalAmount > 50 && abs(horizontalAmount) > verticalAmount * 2 {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            let previousView = folderNavStack.popLast() ?? .categorySelection
+                            currentFolderView = previousView
+                        }
+                    }
+                }
+        )
     }
 
     // MARK: - Empty Search Results View
