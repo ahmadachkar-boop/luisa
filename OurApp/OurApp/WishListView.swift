@@ -357,6 +357,7 @@ struct WishCategoryDetailView: View {
     @State private var isCompletedExpanded = false
     @State private var selectedItem: WishListItem? = nil
     @State private var showingPlanSheet = false
+    @State private var dragOffset: CGFloat = 0
 
     private var categoryColor: Color {
         if let hex = category?.colorHex, let color = Color(hex: hex) {
@@ -502,6 +503,33 @@ struct WishCategoryDetailView: View {
                 }
             }
         }
+        .offset(x: dragOffset)
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    // Only allow dragging from left edge (start location within 30pt of left edge)
+                    if value.startLocation.x < 30 && value.translation.width > 0 {
+                        dragOffset = value.translation.width
+                    }
+                }
+                .onEnded { value in
+                    // If dragged more than 100pt, go back
+                    if value.startLocation.x < 30 && value.translation.width > 100 {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            dragOffset = UIScreen.main.bounds.width
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            onBack()
+                            dragOffset = 0
+                        }
+                    } else {
+                        // Snap back
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            dragOffset = 0
+                        }
+                    }
+                }
+        )
     }
 
     // MARK: - Expandable Header
