@@ -41,9 +41,11 @@ class WidgetDataManager {
         }
 
         // Filter to upcoming events only, sorted by date
-        let now = Date()
+        // Use start of today to include all of today's events (matches CalendarView behavior)
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: Date())
         let upcomingEvents = events
-            .filter { $0.date > now }
+            .filter { $0.date >= startOfToday }
             .sorted { $0.date < $1.date }
             .prefix(5) // Keep only the next 5 events
             .map { event in
