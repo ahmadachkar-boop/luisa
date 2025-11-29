@@ -8,37 +8,7 @@ import UserNotifications
 // MARK: - App Delegate for Push Notifications
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        // Setup notifications
-        NotificationManager.shared.setup()
-        return true
-    }
-
-    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        Messaging.messaging().apnsToken = deviceToken
-        Auth.auth().setAPNSToken(deviceToken, type: .sandbox)
-        print("🟢 [APNS] Registered with token")
-    }
-
-    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        print("🔴 [APNS] Failed to register: \(error.localizedDescription)")
-    }
-
-    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        if Auth.auth().canHandleNotification(userInfo) {
-            completionHandler(.noData)
-            return
-        }
-        completionHandler(.newData)
-    }
-}
-
-@main
-struct OurAppApp: App {
-    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var authManager = AuthenticationManager.shared
-    @Environment(\.scenePhase) private var scenePhase
-
-    init() {
+        // Configure Firebase FIRST before anything else
         print("🔵 [APP INIT] Starting OurApp initialization")
         print("🔵 [APP INIT] Configuring Firebase...")
         FirebaseApp.configure()
@@ -49,50 +19,53 @@ struct OurAppApp: App {
             if let bundleID = Bundle.main.bundleIdentifier {
                 print("🟢 [APP INIT] Bundle ID: \(bundleID)")
             }
-
-            // Sync events to widget at app startup
-            print("🔵 [APP INIT] Syncing events to widget...")
-            WidgetDataManager.shared.syncFromFirebase()
         } else {
             print("🔴 [APP INIT ERROR] Firebase app is nil after configuration!")
         }
+
+        // Setup notifications after Firebase is configured
+        NotificationManager.shared.setup()
+        return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        Messaging.messaging().apnsToken = deviceToken
+        // Only set APNS token if Firebase is configured
+        if FirebaseApp.app() != nil {
+            Auth.auth().setAPNSToken(deviceToken, type: .sandbox)
+        }
+        print("🟢 [APNS] Registered with token")
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        print("🔴 [APNS] Failed to register: \(error.localizedDescription)")
+    }
+
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        // Only handle if Firebase is configured
+        if FirebaseApp.app() != nil, Auth.auth().canHandleNotification(userInfo) {
+            completionHandler(.noData)
+            return
+        }
+        completionHandler(.newData)
+    }
+}
+
+@main
+struct OurAppApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        // Firebase is configured in AppDelegate.didFinishLaunchingWithOptions
+        // Sync events to widget at app startup
+        print("🔵 [APP INIT] Syncing events to widget...")
+        WidgetDataManager.shared.syncFromFirebase()
     }
 
     var body: some Scene {
         WindowGroup {
-            Group {
-                if authManager.isLoading {
-                    // Loading screen while checking auth state
-                    ZStack {
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.95, green: 0.93, blue: 1.0),
-                                Color(red: 0.9, green: 0.85, blue: 0.98)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                        .ignoresSafeArea()
-
-                        ProgressView()
-                            .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
-                    }
-                } else if authManager.showWelcome, let user = authManager.authenticatedUser {
-                    // Welcome screen after authentication
-                    WelcomeView(user: user) {
-                        authManager.dismissWelcome()
-                    }
-                } else if !authManager.isAuthenticated {
-                    // Authentication screen for first-time users
-                    AuthenticationView()
-                } else {
-                    // Main app content
-                    ContentView()
-                        .onOpenURL { url in
-                            GIDSignIn.sharedInstance.handle(url)
-                        }
-                }
-            }
+            RootView()
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             Task { @MainActor in
@@ -121,6 +94,47 @@ struct OurAppApp: App {
                 @unknown default:
                     break
                 }
+            }
+        }
+    }
+}
+
+// MARK: - Root View (handles auth flow after Firebase is configured)
+struct RootView: View {
+    @StateObject private var authManager = AuthenticationManager.shared
+
+    var body: some View {
+        Group {
+            if authManager.isLoading {
+                // Loading screen while checking auth state
+                ZStack {
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.95, green: 0.93, blue: 1.0),
+                            Color(red: 0.9, green: 0.85, blue: 0.98)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .ignoresSafeArea()
+
+                    ProgressView()
+                        .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+            } else if authManager.showWelcome, let user = authManager.authenticatedUser {
+                // Welcome screen after authentication
+                WelcomeView(user: user) {
+                    authManager.dismissWelcome()
+                }
+            } else if !authManager.isAuthenticated {
+                // Authentication screen for first-time users
+                AuthenticationView()
+            } else {
+                // Main app content
+                ContentView()
+                    .onOpenURL { url in
+                        GIDSignIn.sharedInstance.handle(url)
+                    }
             }
         }
     }
