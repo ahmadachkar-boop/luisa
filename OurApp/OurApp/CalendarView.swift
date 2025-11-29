@@ -249,7 +249,10 @@ struct CalendarView: View {
 
     // Helper computed property for upcoming events in current month
     private var next5UpcomingEvents: [CalendarEvent] {
-        Array(viewModel.upcomingEvents.prefix(5))
+        let now = Date()
+        // Only show events that haven't started yet (filter out past events)
+        let futureEvents = viewModel.upcomingEvents.filter { $0.date > now }
+        return Array(futureEvents.prefix(5))
     }
 
     @ViewBuilder
