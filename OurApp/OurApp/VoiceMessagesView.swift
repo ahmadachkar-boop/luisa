@@ -99,6 +99,7 @@ struct VoiceMessagesView: View {
     @State private var newFolderName = ""
     @State private var currentUserCategory: String = "Ahmad" // Track which user we're recording for
     @State private var showingMoveToFolder = false
+    @State private var isFoldersExpanded: Bool = false // Track if folders section is expanded
     @State private var selectedPlaybackIndex: VoiceMemoPlaybackIndex?
 
     // Search state
@@ -871,100 +872,183 @@ struct VoiceMessagesView: View {
 
     // MARK: - Folders Section
     private func foldersSection(forUser user: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Favorites
-            let favoritesCount = viewModel.voiceMessages.filter { $0.fromUser == user && $0.isFavorite == true }.count
-            if favoritesCount > 0 {
-                Button(action: { navigateToFolder(.favorites(user)) }) {
-                    HStack(spacing: 12) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color(red: 0.9, green: 0.4, blue: 0.5).opacity(0.15))
-                                .frame(width: 44, height: 44)
-                            Image(systemName: "heart.fill")
-                                .font(.title3)
-                                .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
-                        }
+        let userFolders = viewModel.folders.filter { $0.forUser == user }
+        let favoritesCount = viewModel.voiceMessages.filter { $0.fromUser == user && $0.isFavorite == true }.count
+        let totalFolderItems = userFolders.count + (favoritesCount > 0 ? 1 : 0)
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Favorites")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-                            Text("\(favoritesCount) memo\(favoritesCount == 1 ? "" : "s")")
+        return VStack(spacing: 0) {
+            // Expandable folder toggle button
+            Button(action: {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    isFoldersExpanded.toggle()
+                }
+            }) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.15))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: "folder.fill")
+                            .font(.title3)
+                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Folders")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                        if totalFolderItems > 0 {
+                            Text("\(totalFolderItems) folder\(totalFolderItems == 1 ? "" : "s")")
+                                .font(.caption)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        } else {
+                            Text("No folders yet")
                                 .font(.caption)
                                 .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
                         }
-
-                        Spacer()
-
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
                     }
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(Color.white)
-                            .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
-                    )
+
+                    Spacer()
+
+                    Image(systemName: isFoldersExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
                 }
-                .buttonStyle(PlainButtonStyle())
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(Color.white)
+                        .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
+                )
             }
+            .buttonStyle(PlainButtonStyle())
+            .padding(.horizontal)
 
-            // Custom folders
-            let userFolders = viewModel.folders.filter { $0.forUser == user }
-            ForEach(userFolders, id: \.id) { folder in
-                let folderCount = viewModel.voiceMessages.filter { $0.folderId == folder.id }.count
-                Button(action: {
-                    if let folderId = folder.id {
-                        navigateToFolder(.folder(folderId, user))
+            // Expanded folder list
+            if isFoldersExpanded {
+                VStack(spacing: 8) {
+                    // Favorites (if any)
+                    if favoritesCount > 0 {
+                        Button(action: { navigateToFolder(.favorites(user)) }) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "heart.fill")
+                                    .font(.subheadline)
+                                    .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
+
+                                Text("Favorites")
+                                    .font(.subheadline)
+                                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                                Spacer()
+
+                                Text("\(favoritesCount)")
+                                    .font(.caption)
+                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color(red: 0.9, green: 0.4, blue: 0.5).opacity(0.15))
+                                    )
+
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2)
+                                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
                     }
-                }) {
-                    HStack(spacing: 12) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.15))
-                                .frame(width: 44, height: 44)
-                            Image(systemName: "folder.fill")
-                                .font(.title3)
-                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                    // Custom folders
+                    ForEach(userFolders, id: \.id) { folder in
+                        let folderCount = viewModel.voiceMessages.filter { $0.folderId == folder.id }.count
+                        Button(action: {
+                            if let folderId = folder.id {
+                                navigateToFolder(.folder(folderId, user))
+                            }
+                        }) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "folder")
+                                    .font(.subheadline)
+                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                                Text(folder.name)
+                                    .font(.subheadline)
+                                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                                Spacer()
+
+                                if folderCount > 0 {
+                                    Text("\(folderCount)")
+                                        .font(.caption)
+                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 2)
+                                        .background(
+                                            Capsule()
+                                                .fill(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.15))
+                                        )
+                                }
+
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2)
+                                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white)
+                            )
                         }
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(folder.name)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-                            Text("\(folderCount) memo\(folderCount == 1 ? "" : "s")")
-                                .font(.caption)
-                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        .buttonStyle(PlainButtonStyle())
+                        .contextMenu {
+                            Button(role: .destructive, action: {
+                                Task {
+                                    try? await viewModel.deleteFolder(folder)
+                                }
+                            }) {
+                                Label("Delete Folder", systemImage: "trash")
+                            }
                         }
-
-                        Spacer()
-
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
                     }
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(Color.white)
-                            .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .contextMenu {
-                    Button(role: .destructive, action: {
-                        Task {
-                            try? await viewModel.deleteFolder(folder)
-                        }
+
+                    // Create new folder button
+                    Button(action: {
+                        newFolderName = ""
+                        showingCreateFolder = true
                     }) {
-                        Label("Delete Folder", systemImage: "trash")
+                        HStack(spacing: 10) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.subheadline)
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                            Text("Create New Folder")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [5]))
+                        )
                     }
+                    .buttonStyle(PlainButtonStyle())
                 }
+                .padding(.horizontal, 32)
+                .padding(.top, 8)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(.horizontal)
     }
 
     // MARK: - Expandable Header (hidden when collapsed)
