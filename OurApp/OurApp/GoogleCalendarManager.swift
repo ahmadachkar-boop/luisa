@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import FirebaseAuth
 
 /*
  SETUP REQUIRED:
@@ -107,10 +108,14 @@ class GoogleCalendarManager: ObservableObject {
                             print("✅ [GOOGLE CALENDAR] Found existing OurApp calendar ID")
                         }
 
-                        // Start periodic sync if auto-sync is enabled
+                        // Start periodic sync if auto-sync is enabled AND Firebase auth is complete
                         if self.autoSyncEnabled {
-                            print("🔄 [GOOGLE SYNC] Auto-sync enabled, starting periodic sync")
-                            self.startPeriodicSync()
+                            if Auth.auth().currentUser != nil {
+                                print("🔄 [GOOGLE SYNC] Auto-sync enabled, starting periodic sync")
+                                self.startPeriodicSync()
+                            } else {
+                                print("⚠️ [GOOGLE SYNC] Auto-sync enabled but waiting for phone auth")
+                            }
                         }
                     } else {
                         print("⚠️ [GOOGLE SIGN-IN] Restored user but missing calendar scope")
@@ -246,6 +251,17 @@ class GoogleCalendarManager: ObservableObject {
         stopPeriodicSync()
     }
 
+    /// Called when Firebase phone auth is completed to start sync if ready
+    func onPhoneAuthCompleted() {
+        guard isSignedIn, autoSyncEnabled else {
+            print("⚠️ [GOOGLE SYNC] Phone auth completed but Google not signed in or auto-sync disabled")
+            return
+        }
+
+        print("🔄 [GOOGLE SYNC] Phone auth completed, starting sync...")
+        startPeriodicSync()
+    }
+
     // MARK: - Calendar Management
 
     private func findOrCreateOurAppCalendar(user: GIDGoogleUser) async throws {
@@ -321,6 +337,12 @@ class GoogleCalendarManager: ObservableObject {
 
         guard let user = GIDSignIn.sharedInstance.currentUser else {
             throw GoogleCalendarError.notSignedIn
+        }
+
+        // Check if user is authenticated with Firebase (phone auth)
+        guard Auth.auth().currentUser != nil else {
+            print("⚠️ [GOOGLE SYNC] Cannot sync - Firebase phone auth not completed")
+            throw GoogleCalendarError.apiError("Please complete phone authentication first")
         }
 
         // Refresh access token if needed

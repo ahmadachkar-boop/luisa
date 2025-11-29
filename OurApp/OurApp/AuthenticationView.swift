@@ -72,6 +72,12 @@ class AuthenticationManager: ObservableObject {
     func dismissWelcome() {
         showWelcome = false
         isAuthenticated = true
+
+        // Notify GoogleCalendarManager that phone auth is complete
+        // so it can start syncing if Google Sign-in was already done
+        Task { @MainActor in
+            GoogleCalendarManager.shared.onPhoneAuthCompleted()
+        }
     }
 }
 
