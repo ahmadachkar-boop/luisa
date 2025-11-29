@@ -1,6 +1,7 @@
 import SwiftUI
 import FirebaseCore
 import FirebaseMessaging
+import FirebaseAuth
 import GoogleSignIn
 import UserNotifications
 
@@ -14,17 +15,27 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         Messaging.messaging().apnsToken = deviceToken
+        Auth.auth().setAPNSToken(deviceToken, type: .sandbox)
         print("🟢 [APNS] Registered with token")
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
         print("🔴 [APNS] Failed to register: \(error.localizedDescription)")
     }
+
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        if Auth.auth().canHandleNotification(userInfo) {
+            completionHandler(.noData)
+            return
+        }
+        completionHandler(.newData)
+    }
 }
 
 @main
 struct OurAppApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @StateObject private var authManager = AuthenticationManager.shared
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -49,10 +60,39 @@ struct OurAppApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .onOpenURL { url in
-                    GIDSignIn.sharedInstance.handle(url)
+            Group {
+                if authManager.isLoading {
+                    // Loading screen while checking auth state
+                    ZStack {
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.95, green: 0.93, blue: 1.0),
+                                Color(red: 0.9, green: 0.85, blue: 0.98)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                        .ignoresSafeArea()
+
+                        ProgressView()
+                            .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
+                    }
+                } else if authManager.showWelcome, let user = authManager.authenticatedUser {
+                    // Welcome screen after authentication
+                    WelcomeView(user: user) {
+                        authManager.dismissWelcome()
+                    }
+                } else if !authManager.isAuthenticated {
+                    // Authentication screen for first-time users
+                    AuthenticationView()
+                } else {
+                    // Main app content
+                    ContentView()
+                        .onOpenURL { url in
+                            GIDSignIn.sharedInstance.handle(url)
+                        }
                 }
+            }
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             Task { @MainActor in
