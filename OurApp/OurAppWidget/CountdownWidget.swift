@@ -182,19 +182,19 @@ struct CountdownWidgetSmallView: View {
                     // Content
                     VStack(alignment: .leading, spacing: 0) {
                         // Top section - Badge and Title
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 4) {
                             // Badge
                             Text(entry.badgeText)
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(.system(size: 9, weight: .semibold))
                                 .foregroundColor(.white)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
                                 .background(Color.white.opacity(0.2))
                                 .clipShape(Capsule())
 
                             // Event title
                             Text(entry.eventTitle)
-                                .font(.system(size: 18, weight: .bold))
+                                .font(.system(size: 17, weight: .bold))
                                 .foregroundColor(.white)
                                 .lineLimit(2)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -206,25 +206,25 @@ struct CountdownWidgetSmallView: View {
                         HStack(alignment: .bottom) {
                             // Date
                             Text(entry.shortDateText)
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(.white.opacity(0.6))
                                 .textCase(.uppercase)
 
                             Spacer()
 
                             // Countdown
-                            VStack(alignment: .trailing, spacing: 0) {
+                            VStack(alignment: .trailing, spacing: -2) {
                                 Text("\(entry.countdownValue)")
-                                    .font(.system(size: 32, weight: .light))
+                                    .font(.system(size: 34, weight: .light))
                                     .foregroundColor(.white)
                                 Text(entry.countdownUnit)
-                                    .font(.system(size: 10, weight: .medium))
+                                    .font(.system(size: 9, weight: .medium))
                                     .foregroundColor(.white.opacity(0.6))
                                     .textCase(.uppercase)
                             }
                         }
                     }
-                    .padding(16)
+                    .padding(10)
                 }
             }
         }
@@ -263,26 +263,26 @@ struct CountdownWidgetMediumView: View {
                         // Top section
                         HStack(alignment: .top) {
                             // Left - Badge, Title, Description
-                            VStack(alignment: .leading, spacing: 6) {
+                            VStack(alignment: .leading, spacing: 4) {
                                 // Badge
                                 Text(entry.badgeText)
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(.system(size: 10, weight: .semibold))
                                     .foregroundColor(.white)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 4)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
                                     .background(Color.white.opacity(0.2))
                                     .clipShape(Capsule())
 
                                 // Event title
                                 Text(entry.eventTitle)
-                                    .font(.system(size: 22, weight: .bold))
+                                    .font(.system(size: 20, weight: .bold))
                                     .foregroundColor(.white)
                                     .lineLimit(1)
 
                                 // Location/Description
                                 if !entry.location.isEmpty {
                                     Text(entry.location)
-                                        .font(.system(size: 13))
+                                        .font(.system(size: 12))
                                         .foregroundColor(.white.opacity(0.7))
                                         .lineLimit(1)
                                 }
@@ -291,12 +291,12 @@ struct CountdownWidgetMediumView: View {
                             Spacer()
 
                             // Right - Countdown
-                            VStack(alignment: .trailing, spacing: 0) {
+                            VStack(alignment: .trailing, spacing: -2) {
                                 Text("\(entry.countdownValue)")
-                                    .font(.system(size: 36, weight: .light))
+                                    .font(.system(size: 38, weight: .light))
                                     .foregroundColor(.white.opacity(0.9))
                                 Text("\(entry.countdownUnit) left")
-                                    .font(.system(size: 10, weight: .medium))
+                                    .font(.system(size: 9, weight: .medium))
                                     .foregroundColor(.white.opacity(0.6))
                                     .textCase(.uppercase)
                             }
@@ -305,39 +305,39 @@ struct CountdownWidgetMediumView: View {
                         Spacer()
 
                         // Bottom - Calendar date
-                        HStack(spacing: 6) {
+                        HStack(spacing: 5) {
                             Image(systemName: "calendar")
-                                .font(.system(size: 12))
+                                .font(.system(size: 11))
                                 .foregroundColor(.white.opacity(0.7))
                             Text(entry.fullDateText)
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(.white.opacity(0.8))
                         }
                     }
-                    .padding(20)
+                    .padding(12)
                 }
             }
         }
     }
 
     var emptyView: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             Image(systemName: "calendar.badge.plus")
-                .font(.system(size: 40))
+                .font(.system(size: 36))
                 .foregroundColor(.white.opacity(0.7))
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text("No Upcoming Plans")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.white)
                 Text("Tap to add your next adventure!")
-                    .font(.system(size: 12))
+                    .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.7))
             }
 
             Spacer()
         }
-        .padding(20)
+        .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
