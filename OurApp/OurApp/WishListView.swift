@@ -1136,7 +1136,8 @@ struct EditPlannedDateView: View {
                     Task {
                         var updatedItem = item
                         updatedItem.plannedDate = nil
-                        updatedItem.calendarEventId = nil
+                        // Don't clear calendarEventId here - let updateItemDate handle it
+                        // so it knows to delete the calendar event
                         await onSave(updatedItem)
                         dismiss()
                     }
