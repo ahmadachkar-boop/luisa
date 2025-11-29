@@ -38,6 +38,10 @@ struct OurAppApp: App {
             if let bundleID = Bundle.main.bundleIdentifier {
                 print("🟢 [APP INIT] Bundle ID: \(bundleID)")
             }
+
+            // Sync events to widget at app startup
+            print("🔵 [APP INIT] Syncing events to widget...")
+            WidgetDataManager.shared.syncFromFirebase()
         } else {
             print("🔴 [APP INIT ERROR] Firebase app is nil after configuration!")
         }
@@ -57,6 +61,9 @@ struct OurAppApp: App {
                 switch newPhase {
                 case .active:
                     print("🟢 [APP LIFECYCLE] App became active")
+                    // Sync events to widget when app becomes active
+                    WidgetDataManager.shared.syncFromFirebase()
+
                     // Restart periodic sync if needed
                     if manager.isSignedIn && manager.autoSyncEnabled {
                         print("🔄 [GOOGLE SYNC] Restarting periodic sync on app activation")
