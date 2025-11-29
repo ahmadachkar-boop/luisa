@@ -441,25 +441,13 @@ struct VoiceMessagesView: View {
             .onAppear {
                 updateMessagesCache()
             }
-            .onChange(of: viewModel.messages.count) { _, _ in
+            .onChange(of: viewModel.voiceMessages.count) { _, _ in
                 updateMessagesCache()
             }
             .onChange(of: sortOption) { _, _ in
                 updateMessagesCache()
             }
-            .onChange(of: filterStartDate) { _, _ in
-                updateMessagesCache()
-            }
-            .onChange(of: filterEndDate) { _, _ in
-                updateMessagesCache()
-            }
             .onChange(of: currentFolderView) { _, _ in
-                updateMessagesCache()
-            }
-            .onChange(of: selectedTagFilter) { _, _ in
-                updateMessagesCache()
-            }
-            .onChange(of: searchText) { _, _ in
                 updateMessagesCache()
             }
         }

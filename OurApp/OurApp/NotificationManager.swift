@@ -100,7 +100,7 @@ class NotificationManager: NSObject, ObservableObject {
                     "processed": false
                 ]
 
-                try? await db.collection("notifications").addDocument(data: notification)
+                _ = try? await db.collection("notifications").addDocument(data: notification)
             }
             print("🔔 [NOTIFICATIONS] Queued event created notification for both users")
         }
@@ -123,7 +123,7 @@ class NotificationManager: NSObject, ObservableObject {
                     "processed": false
                 ]
 
-                try? await db.collection("notifications").addDocument(data: notification)
+                _ = try? await db.collection("notifications").addDocument(data: notification)
             }
             print("🔔 [NOTIFICATIONS] Queued event edited notification for both users")
         }
@@ -179,7 +179,7 @@ class NotificationManager: NSObject, ObservableObject {
                     "processed": false
                 ]
 
-                try? await db.collection("notifications").addDocument(data: notification)
+                _ = try? await db.collection("notifications").addDocument(data: notification)
             }
             print("🔔 [NOTIFICATIONS] Queued photos added notification for both users")
         }
@@ -202,7 +202,7 @@ class NotificationManager: NSObject, ObservableObject {
                     "processed": false
                 ]
 
-                try? await db.collection("notifications").addDocument(data: notification)
+                _ = try? await db.collection("notifications").addDocument(data: notification)
             }
             print("🔔 [NOTIFICATIONS] Queued voice memo notification for both users")
         }
@@ -228,7 +228,7 @@ class NotificationManager: NSObject, ObservableObject {
                     "processed": false
                 ]
 
-                try? await db.collection("notifications").addDocument(data: notification)
+                _ = try? await db.collection("notifications").addDocument(data: notification)
             }
             print("🔔 [NOTIFICATIONS] Queued wish added notification for both users")
         }
@@ -256,7 +256,7 @@ class NotificationManager: NSObject, ObservableObject {
                     "processed": false
                 ]
 
-                try? await db.collection("notifications").addDocument(data: notification)
+                _ = try? await db.collection("notifications").addDocument(data: notification)
             }
             print("🔔 [NOTIFICATIONS] Queued wish planned notification for both users")
         }
@@ -280,7 +280,7 @@ class NotificationManager: NSObject, ObservableObject {
                     "processed": false
                 ]
 
-                try? await db.collection("notifications").addDocument(data: notification)
+                _ = try? await db.collection("notifications").addDocument(data: notification)
             }
             print("🔔 [NOTIFICATIONS] Queued wish completed notification for both users")
         }

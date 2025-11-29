@@ -1256,8 +1256,6 @@ struct PhotoGalleryView: View {
     private func saveSelectedPhotos() {
         guard !selectedPhotoIndices.isEmpty else { return }
 
-        let totalCount = selectedPhotoIndices.count
-
         Task {
             var savedCount = 0
             var errorOccurred = false
