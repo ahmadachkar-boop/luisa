@@ -305,25 +305,44 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
 
         // Download image
         isLoading = true
+
+        // Capture screen scale on main thread before going to background
+        let screenScale = UIScreen.main.scale
+
         Task(priority: .userInitiated) {
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
 
-                // Use downsampling for better performance with large images
+                // Use ImageProcessor actor for background processing (off main thread)
                 if let thumbnailSize = thumbnailSize {
-                    if let downsampledImage = downsampleImage(data: data, toSize: thumbnailSize) {
+                    // Process thumbnail on background thread via actor
+                    if let downsampledImage = await ImageProcessor.shared.downsampleImage(
+                        data: data,
+                        toSize: thumbnailSize,
+                        scale: screenScale
+                    ) {
                         ImageCache.shared.set(downsampledImage, forKey: cacheKey)
                         await MainActor.run {
                             self.image = downsampledImage
                             self.isLoading = false
                         }
+                    } else {
+                        await MainActor.run {
+                            self.isLoading = false
+                        }
                     }
-                } else if let downloadedImage = UIImage(data: data) {
-                    // Cache the full image
-                    ImageCache.shared.set(downloadedImage, forKey: cacheKey)
-                    await MainActor.run {
-                        self.image = downloadedImage
-                        self.isLoading = false
+                } else {
+                    // Process full image on background thread via actor
+                    if let downloadedImage = await ImageProcessor.shared.createImage(from: data) {
+                        ImageCache.shared.set(downloadedImage, forKey: cacheKey)
+                        await MainActor.run {
+                            self.image = downloadedImage
+                            self.isLoading = false
+                        }
+                    } else {
+                        await MainActor.run {
+                            self.isLoading = false
+                        }
                     }
                 }
             } catch {
@@ -334,15 +353,21 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
             }
         }
     }
+}
 
-    // Efficient image downsampling using ImageIO
-    private func downsampleImage(data: Data, toSize maxDimension: CGFloat) -> UIImage? {
+// MARK: - Background Image Processing Actor
+actor ImageProcessor {
+    static let shared = ImageProcessor()
+
+    private init() {}
+
+    /// Efficient image downsampling using ImageIO - runs on background thread
+    func downsampleImage(data: Data, toSize maxDimension: CGFloat, scale: CGFloat) -> UIImage? {
         let imageSourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let imageSource = CGImageSourceCreateWithData(data as CFData, imageSourceOptions) else {
             return nil
         }
 
-        let scale = UIScreen.main.scale
         let maxDimensionInPixels = maxDimension * scale
 
         let downsampleOptions = [
@@ -357,6 +382,11 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
         }
 
         return UIImage(cgImage: downsampledImage)
+    }
+
+    /// Process full-size image on background thread
+    func createImage(from data: Data) -> UIImage? {
+        return UIImage(data: data)
     }
 }
 

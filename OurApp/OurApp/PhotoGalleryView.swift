@@ -175,9 +175,27 @@ struct PhotoGalleryView: View {
         }.map { (key: $0.key, photos: $0.value) }
     }
 
-    // Flat array of photos in display order (newest first)
+    // Cached photos in display order to avoid recomputation
+    @State private var cachedPhotosInDisplayOrder: [Photo] = []
+    @State private var lastPhotosCacheKey: String = ""
+
+    // Flat array of photos in display order (newest first) - computed with caching
     private var photosInDisplayOrder: [Photo] {
-        photosByMonth.flatMap { $0.photos }
+        // Create a cache key based on filter/sort state
+        let cacheKey = "\(filteredPhotos.count)-\(sortOption.rawValue)-\(filterStartDate?.timeIntervalSince1970 ?? 0)-\(filterEndDate?.timeIntervalSince1970 ?? 0)"
+
+        if cacheKey == lastPhotosCacheKey && !cachedPhotosInDisplayOrder.isEmpty {
+            return cachedPhotosInDisplayOrder
+        }
+
+        return photosByMonth.flatMap { $0.photos }
+    }
+
+    // Update cache when needed
+    private func updatePhotosCache() {
+        let cacheKey = "\(filteredPhotos.count)-\(sortOption.rawValue)-\(filterStartDate?.timeIntervalSince1970 ?? 0)-\(filterEndDate?.timeIntervalSince1970 ?? 0)"
+        cachedPhotosInDisplayOrder = photosByMonth.flatMap { $0.photos }
+        lastPhotosCacheKey = cacheKey
     }
 
     // Current folder title for display

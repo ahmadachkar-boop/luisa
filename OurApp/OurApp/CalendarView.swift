@@ -169,7 +169,7 @@ struct CalendarView: View {
     @State private var recapPhotoData: RecapPhotoData?
     @State private var countdownBannerIndex = 0
     @State private var lastBannerInteractionTime = Date()
-    @State private var bannerInactivityTimer: Timer?
+    private let bannerTimerId = "calendarBannerInactivity"
     @State private var searchText = ""
     @State private var selectedTags: Set<String> = []
     @State private var showingFilterSheet = false
@@ -781,8 +781,8 @@ struct CalendarView: View {
                 resetBannerInactivityTimer()
             }
             .onDisappear {
-                // Clean up timer when view disappears
-                bannerInactivityTimer?.invalidate()
+                // Clean up timer when view disappears using TimerManager
+                TimerManager.shared.invalidate(id: bannerTimerId)
             }
         }
         .navigationTitle("Our Plans 💜")
@@ -869,11 +869,8 @@ struct CalendarView: View {
     }
 
     func resetBannerInactivityTimer() {
-        // Invalidate existing timer
-        bannerInactivityTimer?.invalidate()
-
-        // Start new timer that resets to first event after 1 minute of inactivity
-        bannerInactivityTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: false) { _ in
+        // Use TimerManager for proper cleanup - resets to first event after 1 minute of inactivity
+        TimerManager.shared.schedule(id: bannerTimerId, interval: 60.0, repeats: false) { [self] in
             withAnimation(.easeInOut(duration: 0.5)) {
                 countdownBannerIndex = 0
             }
@@ -2659,6 +2656,8 @@ class CalendarViewModel: ObservableObject {
     @Published var photos: [Photo] = []
 
     private let firebaseManager = FirebaseManager.shared
+    private var lastWeatherFetchTime: Date?
+    private let weatherFetchThrottleInterval: TimeInterval = 5 * 60 // 5 minutes
 
     var upcomingEvents: [CalendarEvent] {
         let now = Date()
@@ -2727,12 +2726,28 @@ class CalendarViewModel: ObservableObject {
     }
 
     func fetchWeatherForEvents() async {
+        // Throttle weather API calls to prevent excessive requests
+        if let lastFetch = lastWeatherFetchTime,
+           Date().timeIntervalSince(lastFetch) < weatherFetchThrottleInterval {
+            print("⏭️ [WEATHER] Skipping fetch - throttled (last fetch: \(Int(Date().timeIntervalSince(lastFetch)))s ago)")
+            return
+        }
+
         // Fetch weather for upcoming events that have location but no weather cached
         let eventsNeedingWeather = upcomingEvents.filter { event in
             !event.location.isEmpty &&
             event.weatherForecast == nil &&
             event.date.timeIntervalSinceNow < 10 * 24 * 60 * 60 // Within 10 days
         }
+
+        guard !eventsNeedingWeather.isEmpty else {
+            print("ℹ️ [WEATHER] No events need weather data")
+            return
+        }
+
+        // Update last fetch time
+        lastWeatherFetchTime = Date()
+        print("🌤 [WEATHER] Fetching weather for \(eventsNeedingWeather.count) events")
 
         for event in eventsNeedingWeather {
             if let weather = await WeatherService.shared.fetchWeatherForEvent(location: event.location, date: event.date) {
@@ -2741,6 +2756,12 @@ class CalendarViewModel: ObservableObject {
                 try? await firebaseManager.updateEvent(updatedEvent)
             }
         }
+    }
+
+    /// Force a weather refresh, bypassing throttle (for manual refresh)
+    func forceRefreshWeather() async {
+        lastWeatherFetchTime = nil
+        await fetchWeatherForEvents()
     }
 }
 
