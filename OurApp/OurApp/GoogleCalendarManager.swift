@@ -62,6 +62,12 @@ class GoogleCalendarManager: ObservableObject {
     private var periodicSyncTimer: Timer?
     private let syncInterval: TimeInterval = 30 * 60 // 30 minutes
 
+    // Incremental sync support
+    private var syncToken: String? {
+        get { UserDefaults.standard.string(forKey: "googleCalendarSyncToken") }
+        set { UserDefaults.standard.set(newValue, forKey: "googleCalendarSyncToken") }
+    }
+
     private init() {
         // Load saved preferences
         autoSyncEnabled = UserDefaults.standard.bool(forKey: "googleCalendarAutoSync")
@@ -152,8 +158,10 @@ class GoogleCalendarManager: ObservableObject {
         isSignedIn = false
         lastSyncDate = nil
         ourAppCalendarId = nil
+        syncToken = nil // Clear sync token for fresh start on next sign-in
         UserDefaults.standard.removeObject(forKey: "lastSyncDate")
         UserDefaults.standard.removeObject(forKey: "ourAppCalendarId")
+        UserDefaults.standard.removeObject(forKey: "googleCalendarSyncToken")
     }
 
     // MARK: - Periodic Sync
@@ -391,20 +399,84 @@ class GoogleCalendarManager: ObservableObject {
 
     private func fetchGoogleCalendarEvents(user: GIDGoogleUser, calendarId: String, startDate: Date, endDate: Date) async throws -> [[String: Any]] {
         let accessToken = user.accessToken.tokenString
-
-        // Format dates for API (RFC3339)
-        let formatter = ISO8601DateFormatter()
-        let timeMin = formatter.string(from: startDate)
-        let timeMax = formatter.string(from: endDate)
-
         let encodedCalendarId = calendarId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? calendarId
         var components = URLComponents(string: "https://www.googleapis.com/calendar/v3/calendars/\(encodedCalendarId)/events")!
-        components.queryItems = [
-            URLQueryItem(name: "timeMin", value: timeMin),
-            URLQueryItem(name: "timeMax", value: timeMax),
-            URLQueryItem(name: "singleEvents", value: "true"),
-            URLQueryItem(name: "orderBy", value: "startTime")
-        ]
+
+        // Try incremental sync if we have a sync token
+        if let token = syncToken {
+            print("🔄 [GOOGLE SYNC] Using incremental sync with token")
+            components.queryItems = [
+                URLQueryItem(name: "syncToken", value: token)
+            ]
+        } else {
+            // Full sync - use date range
+            print("🔄 [GOOGLE SYNC] Performing full sync (no token)")
+            let formatter = ISO8601DateFormatter()
+            let timeMin = formatter.string(from: startDate)
+            let timeMax = formatter.string(from: endDate)
+
+            components.queryItems = [
+                URLQueryItem(name: "timeMin", value: timeMin),
+                URLQueryItem(name: "timeMax", value: timeMax),
+                URLQueryItem(name: "singleEvents", value: "true"),
+                URLQueryItem(name: "orderBy", value: "startTime")
+            ]
+        }
+
+        var request = URLRequest(url: components.url!)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GoogleCalendarError.apiError("Invalid response")
+        }
+
+        // Handle 410 Gone - sync token expired, need full sync
+        if httpResponse.statusCode == 410 {
+            print("⚠️ [GOOGLE SYNC] Sync token expired, clearing and retrying full sync")
+            syncToken = nil
+            return try await fetchGoogleCalendarEvents(user: user, calendarId: calendarId, startDate: startDate, endDate: endDate)
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            throw GoogleCalendarError.apiError("Failed to fetch events (status: \(httpResponse.statusCode))")
+        }
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return []
+        }
+
+        // Store the new sync token for next incremental sync
+        if let newSyncToken = json["nextSyncToken"] as? String {
+            syncToken = newSyncToken
+            print("✅ [GOOGLE SYNC] Stored new sync token for incremental sync")
+        }
+
+        // Handle pagination if there's a nextPageToken
+        var allItems = json["items"] as? [[String: Any]] ?? []
+
+        if let nextPageToken = json["nextPageToken"] as? String {
+            let moreItems = try await fetchNextPage(user: user, calendarId: calendarId, pageToken: nextPageToken)
+            allItems.append(contentsOf: moreItems)
+        }
+
+        let itemCount = allItems.count
+        if itemCount > 0 {
+            print("📅 [GOOGLE SYNC] Fetched \(itemCount) events")
+        } else {
+            print("📅 [GOOGLE SYNC] No new/changed events")
+        }
+
+        return allItems
+    }
+
+    private func fetchNextPage(user: GIDGoogleUser, calendarId: String, pageToken: String) async throws -> [[String: Any]] {
+        let accessToken = user.accessToken.tokenString
+        let encodedCalendarId = calendarId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? calendarId
+
+        var components = URLComponents(string: "https://www.googleapis.com/calendar/v3/calendars/\(encodedCalendarId)/events")!
+        components.queryItems = [URLQueryItem(name: "pageToken", value: pageToken)]
 
         var request = URLRequest(url: components.url!)
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
@@ -413,12 +485,24 @@ class GoogleCalendarManager: ObservableObject {
 
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
-            throw GoogleCalendarError.apiError("Failed to fetch events")
+            return []
         }
 
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let items = json["items"] as? [[String: Any]] else {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return []
+        }
+
+        // Store the sync token if this is the last page
+        if let newSyncToken = json["nextSyncToken"] as? String {
+            syncToken = newSyncToken
+        }
+
+        var items = json["items"] as? [[String: Any]] ?? []
+
+        // Continue pagination if needed
+        if let nextToken = json["nextPageToken"] as? String {
+            let moreItems = try await fetchNextPage(user: user, calendarId: calendarId, pageToken: nextToken)
+            items.append(contentsOf: moreItems)
         }
 
         return items

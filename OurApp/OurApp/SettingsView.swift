@@ -7,55 +7,36 @@ enum AppUser: String, CaseIterable {
     case luisa = "Luisa"
 }
 
-class UserIdentityManager: ObservableObject {
-    static let shared = UserIdentityManager()
+// MARK: - Keychain Actor for background operations
+actor KeychainActor {
+    static let shared = KeychainActor()
 
-    private let keychainKey = "com.ourapp.userIdentity"
+    private init() {}
 
-    @Published var currentUser: AppUser = .ahmad {
-        didSet {
-            saveToKeychain(currentUser.rawValue)
-        }
-    }
-
-    var currentUserName: String {
-        currentUser.rawValue
-    }
-
-    private init() {
-        // Load saved user from keychain (must be done after currentUser is initialized)
-        if let savedUser = loadFromKeychain(),
-           let user = AppUser(rawValue: savedUser) {
-            self.currentUser = user
-        }
-    }
-
-    // MARK: - Keychain Operations
-
-    private func saveToKeychain(_ value: String) {
+    func save(_ value: String, forKey key: String) {
         guard let data = value.data(using: .utf8) else { return }
 
         // Delete any existing item first
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: keychainKey
+            kSecAttrAccount as String: key
         ]
         SecItemDelete(deleteQuery as CFDictionary)
 
         // Add the new item
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: keychainKey,
+            kSecAttrAccount as String: key,
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
         ]
         SecItemAdd(addQuery as CFDictionary, nil)
     }
 
-    private func loadFromKeychain() -> String? {
+    func load(forKey key: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: keychainKey,
+            kSecAttrAccount as String: key,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
@@ -70,6 +51,42 @@ class UserIdentityManager: ObservableObject {
         }
 
         return string
+    }
+}
+
+class UserIdentityManager: ObservableObject {
+    static let shared = UserIdentityManager()
+
+    private let keychainKey = "com.ourapp.userIdentity"
+    @Published var isLoading = true
+
+    @Published var currentUser: AppUser = .ahmad {
+        didSet {
+            // Save to keychain asynchronously
+            Task {
+                await KeychainActor.shared.save(currentUser.rawValue, forKey: keychainKey)
+            }
+        }
+    }
+
+    var currentUserName: String {
+        currentUser.rawValue
+    }
+
+    private init() {
+        // Load saved user from keychain asynchronously to avoid blocking app launch
+        Task { @MainActor in
+            await loadUserAsync()
+        }
+    }
+
+    @MainActor
+    private func loadUserAsync() async {
+        if let savedUser = await KeychainActor.shared.load(forKey: keychainKey),
+           let user = AppUser(rawValue: savedUser) {
+            self.currentUser = user
+        }
+        self.isLoading = false
     }
 }
 

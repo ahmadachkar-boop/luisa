@@ -3310,6 +3310,103 @@ struct WaveformView: View {
     }
 }
 
+// MARK: - Audio Cache Manager
+class AudioCache {
+    static let shared = AudioCache()
+
+    private let diskCacheURL: URL
+    private let maxDiskBytes: Int64 = 200 * 1024 * 1024 // 200 MB for audio cache
+    private let cacheQueue = DispatchQueue(label: "com.ourapp.audiocache", attributes: .concurrent)
+
+    private init() {
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        diskCacheURL = cacheDir.appendingPathComponent("AudioCache", isDirectory: true)
+
+        // Create directory if needed
+        try? FileManager.default.createDirectory(at: diskCacheURL, withIntermediateDirectories: true)
+
+        // Clean up cache on init
+        Task {
+            await cleanupCacheIfNeeded()
+        }
+    }
+
+    private func cacheKey(for urlString: String) -> String {
+        // Create a safe filename from URL
+        return urlString.data(using: .utf8)?.base64EncodedString()
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "+", with: "-")
+            .prefix(100).description ?? urlString.hashValue.description
+    }
+
+    func get(forURL urlString: String) -> Data? {
+        let fileURL = diskCacheURL.appendingPathComponent(cacheKey(for: urlString))
+        return try? Data(contentsOf: fileURL)
+    }
+
+    func set(_ data: Data, forURL urlString: String) {
+        let fileURL = diskCacheURL.appendingPathComponent(cacheKey(for: urlString))
+
+        cacheQueue.async(flags: .barrier) {
+            do {
+                try data.write(to: fileURL)
+                print("🎵 [AUDIO CACHE] Cached audio: \(urlString.suffix(30))...")
+            } catch {
+                print("⚠️ [AUDIO CACHE] Failed to cache: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func remove(forURL urlString: String) {
+        let fileURL = diskCacheURL.appendingPathComponent(cacheKey(for: urlString))
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    func clear() {
+        try? FileManager.default.removeItem(at: diskCacheURL)
+        try? FileManager.default.createDirectory(at: diskCacheURL, withIntermediateDirectories: true)
+    }
+
+    private func cleanupCacheIfNeeded() async {
+        let fileManager = FileManager.default
+
+        guard let files = try? fileManager.contentsOfDirectory(at: diskCacheURL, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else {
+            return
+        }
+
+        var totalSize: Int64 = 0
+        var fileInfos: [(url: URL, size: Int64, date: Date)] = []
+
+        for file in files {
+            guard let attrs = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                  let size = attrs.fileSize,
+                  let date = attrs.contentModificationDate else {
+                continue
+            }
+            totalSize += Int64(size)
+            fileInfos.append((url: file, size: Int64(size), date: date))
+        }
+
+        // If over limit, delete oldest files
+        if totalSize > maxDiskBytes {
+            print("🧹 [AUDIO CACHE] Cleaning up cache (size: \(totalSize / 1024 / 1024)MB)")
+
+            // Sort by date, oldest first
+            fileInfos.sort { $0.date < $1.date }
+
+            for fileInfo in fileInfos {
+                try? fileManager.removeItem(at: fileInfo.url)
+                totalSize -= fileInfo.size
+                if totalSize <= Int64(Double(maxDiskBytes) * 0.7) { // Clean to 70%
+                    break
+                }
+            }
+
+            print("✅ [AUDIO CACHE] Cleanup complete (new size: \(totalSize / 1024 / 1024)MB)")
+        }
+    }
+}
+
 // MARK: - View Model
 class VoiceMessagesViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var voiceMessages: [VoiceMessage] = []
@@ -3705,7 +3802,21 @@ class VoiceMessagesViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
 
         Task {
             do {
-                let (data, _) = try await URLSession.shared.data(from: url)
+                // Check cache first
+                let audioURLString = message.audioURL
+                let data: Data
+
+                if let cachedData = AudioCache.shared.get(forURL: audioURLString) {
+                    print("✅ [AUDIO] Playing from cache")
+                    data = cachedData
+                } else {
+                    print("📥 [AUDIO] Downloading audio...")
+                    let (downloadedData, _) = try await URLSession.shared.data(from: url)
+                    data = downloadedData
+
+                    // Cache the downloaded audio for future playback
+                    AudioCache.shared.set(data, forURL: audioURLString)
+                }
 
                 await MainActor.run {
                     do {
