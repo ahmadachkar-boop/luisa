@@ -19,6 +19,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             if let bundleID = Bundle.main.bundleIdentifier {
                 print("🟢 [APP INIT] Bundle ID: \(bundleID)")
             }
+
+            // Sync events to widget after Firebase is configured
+            print("🔵 [APP INIT] Syncing events to widget...")
+            WidgetDataManager.shared.syncFromFirebase()
         } else {
             print("🔴 [APP INIT ERROR] Firebase app is nil after configuration!")
         }
@@ -58,9 +62,7 @@ struct OurAppApp: App {
 
     init() {
         // Firebase is configured in AppDelegate.didFinishLaunchingWithOptions
-        // Sync events to widget at app startup
-        print("🔵 [APP INIT] Syncing events to widget...")
-        WidgetDataManager.shared.syncFromFirebase()
+        // Widget sync moved to AppDelegate after Firebase is configured
     }
 
     var body: some Scene {
