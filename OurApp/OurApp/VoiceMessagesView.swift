@@ -2044,7 +2044,7 @@ struct VoiceMemoGridCell: View {
                 Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: columnCount == 1 ? 20 : 18))
                     .foregroundColor(.white)
-                    .offset(x: isPlaying ? 0 : 2)
+                    .offset(x: isPlaying ? 0 : 4)
             }
         }
         .buttonStyle(PlainButtonStyle())
@@ -2289,7 +2289,7 @@ struct FullScreenVoiceMemoPlayer: View {
                                 Image(systemName: viewModel.currentlyPlayingId == memo.id && viewModel.isPlaying ? "pause.fill" : "play.fill")
                                     .font(.system(size: 32))
                                     .foregroundColor(Color(red: 0.2, green: 0.15, blue: 0.35))
-                                    .offset(x: viewModel.currentlyPlayingId == memo.id && viewModel.isPlaying ? 0 : 3)
+                                    .offset(x: viewModel.currentlyPlayingId == memo.id && viewModel.isPlaying ? 0 : 5)
                             }
                         }
 
