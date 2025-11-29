@@ -2,6 +2,7 @@ import SwiftUI
 import AVFoundation
 import UIKit
 import MediaPlayer
+import CommonCrypto
 
 // MARK: - Sort Options
 enum VoiceMemoSortOption: String, CaseIterable {
@@ -3346,10 +3347,20 @@ class AudioCache {
     private let diskCacheURL: URL
     private let maxDiskBytes: Int64 = 200 * 1024 * 1024 // 200 MB for audio cache
     private let cacheQueue = DispatchQueue(label: "com.ourapp.audiocache", attributes: .concurrent)
+    private let cacheVersionKey = "AudioCacheVersion"
+    private let currentCacheVersion = 2 // Increment when cache key algorithm changes
 
     private init() {
         let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         diskCacheURL = cacheDir.appendingPathComponent("AudioCache", isDirectory: true)
+
+        // Check if cache version changed (algorithm fix) - clear old corrupted cache
+        let storedVersion = UserDefaults.standard.integer(forKey: cacheVersionKey)
+        if storedVersion != currentCacheVersion {
+            print("🧹 [AUDIO CACHE] Cache version changed, clearing old cache")
+            try? FileManager.default.removeItem(at: diskCacheURL)
+            UserDefaults.standard.set(currentCacheVersion, forKey: cacheVersionKey)
+        }
 
         // Create directory if needed
         try? FileManager.default.createDirectory(at: diskCacheURL, withIntermediateDirectories: true)
@@ -3361,11 +3372,18 @@ class AudioCache {
     }
 
     private func cacheKey(for urlString: String) -> String {
-        // Create a safe filename from URL
-        return urlString.data(using: .utf8)?.base64EncodedString()
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "+", with: "-")
-            .prefix(100).description ?? urlString.hashValue.description
+        // Create a unique hash of the URL to avoid collisions
+        // Firebase Storage URLs share long common prefixes, so we need a proper hash
+        guard let data = urlString.data(using: .utf8) else {
+            return String(urlString.hashValue)
+        }
+
+        var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        data.withUnsafeBytes { buffer in
+            _ = CC_SHA256(buffer.baseAddress, CC_LONG(buffer.count), &hash)
+        }
+
+        return hash.map { String(format: "%02x", $0) }.joined()
     }
 
     func get(forURL urlString: String) -> Data? {
