@@ -1419,8 +1419,9 @@ class WishListViewModel: ObservableObject {
 
         do {
             if let event = calendarEvent {
-                // Create the calendar event first to get its ID
-                try await firebaseManager.addCalendarEvent(event)
+                // Create the calendar event and get its ID
+                let eventId = try await firebaseManager.addCalendarEventWithId(event)
+                updatedItem.calendarEventId = eventId
             }
 
             try await firebaseManager.updateWishListItem(updatedItem)
@@ -1435,16 +1436,26 @@ class WishListViewModel: ObservableObject {
     }
 
     func updateItemDate(_ item: WishListItem) async {
+        var updatedItem = item
+
         do {
-            // If removing the date and there's a calendar event, delete it
-            if item.plannedDate == nil, let eventId = item.calendarEventId {
+            if let eventId = item.calendarEventId {
                 let events = try await firebaseManager.fetchAllEvents()
-                if let event = events.first(where: { $0.id == eventId }) {
-                    try await firebaseManager.deleteCalendarEvent(event)
+                if let existingEvent = events.first(where: { $0.id == eventId }) {
+                    if let newDate = item.plannedDate {
+                        // Date was changed - update the calendar event
+                        var updatedEvent = existingEvent
+                        updatedEvent.date = newDate
+                        try await firebaseManager.updateCalendarEvent(updatedEvent)
+                    } else {
+                        // Date was removed - delete the calendar event
+                        try await firebaseManager.deleteCalendarEvent(existingEvent)
+                        updatedItem.calendarEventId = nil
+                    }
                 }
             }
 
-            try await firebaseManager.updateWishListItem(item)
+            try await firebaseManager.updateWishListItem(updatedItem)
         } catch {
             print("Error updating wish list item date: \(error)")
         }

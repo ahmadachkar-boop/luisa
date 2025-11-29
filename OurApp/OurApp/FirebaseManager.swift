@@ -456,6 +456,12 @@ class FirebaseManager: ObservableObject {
         try db.collection("calendarEvents").addDocument(from: event)
     }
 
+    /// Adds a calendar event and returns the document ID
+    func addCalendarEventWithId(_ event: CalendarEvent) async throws -> String {
+        let docRef = try db.collection("calendarEvents").addDocument(from: event)
+        return docRef.documentID
+    }
+
     func getCalendarEvents() -> AsyncThrowingStream<[CalendarEvent], Error> {
         AsyncThrowingStream { continuation in
             let listener = db.collection("calendarEvents")
