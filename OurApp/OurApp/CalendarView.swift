@@ -546,20 +546,17 @@ struct CalendarView: View {
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: currentMonth)
 
                 // Calendar Grid wrapped in container for proper animation handling
-                Group {
-                    CalendarGridView(
-                        currentMonth: currentMonth,
-                        events: viewModel.events,
-                        selectedDay: $selectedDay,
-                        selectedTab: $selectedTab,
-                        onQuickAdd: { date in
-                            quickAddDate = date
-                            showingAddEvent = true
-                        }
-                    )
-                    .id("grid-\(selectedDay?.timeIntervalSince1970 ?? 0)") // Force cell updates on selection change
-                }
-                .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)") // Only animate on month change
+                CalendarGridView(
+                    currentMonth: currentMonth,
+                    events: viewModel.events,
+                    selectedDay: $selectedDay,
+                    selectedTab: $selectedTab,
+                    onQuickAdd: { date in
+                        quickAddDate = date
+                        showingAddEvent = true
+                    }
+                )
+                .id("grid-\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)-\(selectedDay?.timeIntervalSince1970 ?? 0)")
                 .padding(.horizontal)
                 .padding(.bottom, 16)
                 .transition(.asymmetric(
@@ -567,6 +564,17 @@ struct CalendarView: View {
                     removal: .move(edge: monthNavigationDirection > 0 ? .leading : .trailing).combined(with: .opacity)
                 ))
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: currentMonth)
+                .animation(nil, value: selectedDay) // Prevent re-animation when day selection changes
+                .simultaneousGesture(
+                    TapGesture()
+                        .onEnded { _ in
+                            if showingExpandedHeader {
+                                withAnimation(.spring(response: 0.3)) {
+                                    showingExpandedHeader = false
+                                }
+                            }
+                        }
+                )
                 .gesture(
                     DragGesture(minimumDistance: 30)
                         .onEnded { value in
