@@ -1290,6 +1290,54 @@ struct VoiceMessagesView: View {
                         }
                     }
                     .padding(.horizontal, 4)
+
+                    // Audio output toggle
+                    HStack {
+                        Text("Play audio through")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+
+                        Spacer()
+
+                        HStack(spacing: 8) {
+                            Button(action: {
+                                viewModel.useSpeaker = true
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "speaker.wave.2.fill")
+                                        .font(.caption)
+                                    Text("Speaker")
+                                        .font(.subheadline.weight(.medium))
+                                }
+                                .foregroundColor(viewModel.useSpeaker ? .white : Color(red: 0.5, green: 0.4, blue: 0.8))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(viewModel.useSpeaker ? Color(red: 0.6, green: 0.4, blue: 0.85) : Color(red: 0.95, green: 0.92, blue: 1.0))
+                                )
+                            }
+
+                            Button(action: {
+                                viewModel.useSpeaker = false
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "phone.fill")
+                                        .font(.caption)
+                                    Text("Earpiece")
+                                        .font(.subheadline.weight(.medium))
+                                }
+                                .foregroundColor(!viewModel.useSpeaker ? .white : Color(red: 0.5, green: 0.4, blue: 0.8))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(!viewModel.useSpeaker ? Color(red: 0.6, green: 0.4, blue: 0.85) : Color(red: 0.95, green: 0.92, blue: 1.0))
+                                )
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 4)
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 20)
@@ -3465,6 +3513,14 @@ class VoiceMessagesViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
     @Published var currentWaveform: [Float] = []
     @Published var allTags: [String] = [] // All unique tags across memos
 
+    // Audio output preference - true = main speaker, false = earpiece
+    @Published var useSpeaker: Bool = true {
+        didSet {
+            UserDefaults.standard.set(useSpeaker, forKey: "voiceMemoUseSpeaker")
+            configureAudioSession()
+        }
+    }
+
     private var audioPlayer: AVAudioPlayer?
     private var progressTimer: Timer?
     private let firebaseManager = FirebaseManager.shared
@@ -3474,6 +3530,8 @@ class VoiceMessagesViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
 
     override init() {
         super.init()
+        // Load speaker preference
+        useSpeaker = UserDefaults.standard.object(forKey: "voiceMemoUseSpeaker") as? Bool ?? true
         configureAudioSession()
         loadVoiceMessages()
         loadFolders()
@@ -3510,9 +3568,14 @@ class VoiceMessagesViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
         do {
             let session = AVAudioSession.sharedInstance()
             // Use .playback category for background audio support
-            try session.setCategory(.playback, mode: .spokenAudio, options: [.allowBluetooth, .allowAirPlay])
+            // Add .defaultToSpeaker option when useSpeaker is true to play through main speaker
+            var options: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowAirPlay]
+            if useSpeaker {
+                options.insert(.defaultToSpeaker)
+            }
+            try session.setCategory(.playback, mode: .default, options: options)
             try session.setActive(true)
-            print("Audio session configured for background playback")
+            print("Audio session configured - Speaker: \(useSpeaker ? "Main" : "Earpiece")")
         } catch {
             print("Failed to configure audio session: \(error)")
         }
