@@ -99,8 +99,6 @@ struct VoiceMessagesView: View {
     @State private var newFolderName = ""
     @State private var currentUserCategory: String = "Ahmad" // Track which user we're recording for
     @State private var showingMoveToFolder = false
-    @State private var expandedFolderUser: String? = nil // Track which user's folders are expanded
-    @State private var folderCreationUser: String = "" // Track which user we're creating folder for
     @State private var selectedPlaybackIndex: VoiceMemoPlaybackIndex?
 
     // Search state
@@ -373,14 +371,13 @@ struct VoiceMessagesView: View {
                 TextField("Folder Name", text: $newFolderName)
                 Button("Cancel", role: .cancel) {
                     newFolderName = ""
-                    folderCreationUser = ""
                 }
                 Button("Create") {
-                    let user = folderCreationUser.isEmpty ? (currentUser ?? "Ahmad") : folderCreationUser
-                    Task {
-                        _ = try? await viewModel.createFolder(name: newFolderName, forUser: user)
-                        newFolderName = ""
-                        folderCreationUser = ""
+                    if let user = currentUser {
+                        Task {
+                            _ = try? await viewModel.createFolder(name: newFolderName, forUser: user)
+                            newFolderName = ""
+                        }
                     }
                 }
             } message: {
@@ -485,9 +482,6 @@ struct VoiceMessagesView: View {
                     currentUserCategory = "Ahmad"
                 }
 
-                // Folder section for Ahmad
-                folderSection(forUser: "Ahmad", color: Color(red: 0.4, green: 0.6, blue: 0.9))
-
                 // From Luisa Category
                 CategoryCard(
                     title: "From Luisa",
@@ -499,9 +493,6 @@ struct VoiceMessagesView: View {
                     navigateToFolder(.allMemos("Luisa"))
                     currentUserCategory = "Luisa"
                 }
-
-                // Folder section for Luisa
-                folderSection(forUser: "Luisa", color: Color(red: 0.9, green: 0.5, blue: 0.6))
 
                 // Quick Access Section - All Favorites only
                 let totalFavorites = viewModel.voiceMessages.filter { $0.isFavorite == true }.count
@@ -551,137 +542,6 @@ struct VoiceMessagesView: View {
                 }
             }
             .padding(.vertical)
-        }
-    }
-
-    // MARK: - Folder Section
-    @ViewBuilder
-    private func folderSection(forUser user: String, color: Color) -> some View {
-        let userFolders = viewModel.folders.filter { $0.forUser == user }
-        let isExpanded = expandedFolderUser == user
-
-        VStack(spacing: 0) {
-            // Folder toggle button
-            Button(action: {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    if expandedFolderUser == user {
-                        expandedFolderUser = nil
-                    } else {
-                        expandedFolderUser = user
-                    }
-                }
-            }) {
-                HStack(spacing: 12) {
-                    Image(systemName: "folder.fill")
-                        .font(.title3)
-                        .foregroundColor(color)
-
-                    Text("Folders")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-
-                    if !userFolders.isEmpty {
-                        Text("(\(userFolders.count))")
-                            .font(.caption)
-                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                    }
-
-                    Spacer()
-
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.caption)
-                        .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.white.opacity(0.8))
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .padding(.horizontal)
-
-            // Expanded folder list
-            if isExpanded {
-                VStack(spacing: 8) {
-                    // Existing folders
-                    ForEach(userFolders) { folder in
-                        Button(action: {
-                            if let folderId = folder.id {
-                                navigateToFolder(.folder(folderId, user))
-                                currentUserCategory = user
-                            }
-                        }) {
-                            HStack(spacing: 10) {
-                                Image(systemName: "folder")
-                                    .font(.subheadline)
-                                    .foregroundColor(color.opacity(0.8))
-
-                                Text(folder.name)
-                                    .font(.subheadline)
-                                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-
-                                Spacer()
-
-                                // Count of memos in this folder
-                                let folderMemoCount = viewModel.voiceMessages.filter { $0.folderId == folder.id }.count
-                                if folderMemoCount > 0 {
-                                    Text("\(folderMemoCount)")
-                                        .font(.caption)
-                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 2)
-                                        .background(
-                                            Capsule()
-                                                .fill(color.opacity(0.15))
-                                        )
-                                }
-
-                                Image(systemName: "chevron.right")
-                                    .font(.caption2)
-                                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color.white)
-                            )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
-
-                    // Create new folder button
-                    Button(action: {
-                        folderCreationUser = user
-                        newFolderName = ""
-                        showingCreateFolder = true
-                    }) {
-                        HStack(spacing: 10) {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.subheadline)
-                                .foregroundColor(color)
-
-                            Text("Create New Folder")
-                                .font(.subheadline.weight(.medium))
-                                .foregroundColor(color)
-
-                            Spacer()
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .strokeBorder(color.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [5]))
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-                .padding(.horizontal, 32)
-                .padding(.top, 8)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
         }
     }
 
@@ -860,62 +720,70 @@ struct VoiceMessagesView: View {
 
     // MARK: - Content View
     private var contentView: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                // Expandable header
-                expandableHeader
-                    .padding(.horizontal)
-                    .padding(.top, 4)
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Top anchor for scroll-to-top
+                    Color.clear
+                        .frame(height: 0)
+                        .id("top-anchor")
 
-                // Navigation bar
-                navigationBar
-                    .padding(.horizontal)
-                    .padding(.top, 8)
+                    // Expandable header
+                    expandableHeader
+                        .padding(.horizontal)
+                        .padding(.top, 4)
 
-                // Active filters indicator
-                if hasDateFilter || sortOption != .newestFirst || hasSearchFilter {
-                    activeFiltersBar
+                    // Navigation bar
+                    navigationBar
                         .padding(.horizontal)
                         .padding(.top, 8)
-                }
 
-                // Folders section (when in allMemos view and not searching)
-                if case .allMemos(let user) = currentFolderView, !hasSearchFilter {
-                    foldersSection(forUser: user)
-                        .padding(.top, 12)
-                }
+                    // Active filters indicator
+                    if hasDateFilter || sortOption != .newestFirst || hasSearchFilter {
+                        activeFiltersBar
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                    }
 
-                // Empty search results
-                if hasSearchFilter && filteredMessages.isEmpty {
-                    emptySearchResultsView
-                } else {
-                    // Voice memo grid
-                    voiceMemoGridView
-                        .simultaneousGesture(
-                            TapGesture()
-                                .onEnded { _ in
-                                    if showingExpandedHeader {
-                                        withAnimation(.spring(response: 0.3)) {
-                                            showingExpandedHeader = false
+                    // Folders section (when in allMemos view and not searching)
+                    if case .allMemos(let user) = currentFolderView, !hasSearchFilter {
+                        foldersSection(forUser: user)
+                            .padding(.top, 12)
+                    }
+
+                    // Empty search results
+                    if hasSearchFilter && filteredMessages.isEmpty {
+                        emptySearchResultsView
+                    } else {
+                        // Voice memo grid
+                        voiceMemoGridView
+                            .simultaneousGesture(
+                                TapGesture()
+                                    .onEnded { _ in
+                                        if showingExpandedHeader {
+                                            withAnimation(.spring(response: 0.3)) {
+                                                showingExpandedHeader = false
+                                            }
                                         }
                                     }
-                                }
-                        )
+                            )
+                    }
                 }
             }
-        }
-        .refreshable {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                showingExpandedHeader = true
+            .refreshable {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    showingExpandedHeader = true
+                }
             }
-        }
-        .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            geometry.contentOffset.y
-        } action: { oldValue, newValue in
-            // Auto-hide header when scrolling down - minimal threshold for instant dismissal
-            if showingExpandedHeader && newValue > 1 {
-                withAnimation(.spring(response: 0.3)) {
-                    showingExpandedHeader = false
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.y
+            } action: { oldValue, newValue in
+                // Auto-hide header when scrolling down - scroll to top with animation
+                if showingExpandedHeader && newValue > 1 {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        showingExpandedHeader = false
+                        scrollProxy.scrollTo("top-anchor", anchor: .top)
+                    }
                 }
             }
         }

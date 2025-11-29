@@ -512,13 +512,19 @@ struct CalendarView: View {
 
     @ViewBuilder
     private var calendarScrollContent: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: 0) {
-                // Expandable header (hidden when collapsed)
-                expandableHeader
+        ScrollViewReader { scrollProxy in
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 0) {
+                    // Top anchor for scroll-to-top
+                    Color.clear
+                        .frame(height: 0)
+                        .id("calendar-top-anchor")
 
-                // Upcoming Events Banner (persistent across all months)
-                upcomingEventsBanner
+                    // Expandable header (hidden when collapsed)
+                    expandableHeader
+
+                    // Upcoming Events Banner (persistent across all months)
+                    upcomingEventsBanner
 
                 // Sync indicator
                 if googleCalendarManager.isSyncing {
@@ -650,19 +656,21 @@ struct CalendarView: View {
                     )
             }
         }
-        .refreshable {
-            // Show the expanded header when user pulls down
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                showingExpandedHeader = true
+            .refreshable {
+                // Show the expanded header when user pulls down
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    showingExpandedHeader = true
+                }
             }
-        }
-        .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            geometry.contentOffset.y
-        } action: { oldValue, newValue in
-            // Auto-hide header when scrolling down - minimal threshold for instant dismissal
-            if showingExpandedHeader && newValue > 1 {
-                withAnimation(.spring(response: 0.3)) {
-                    showingExpandedHeader = false
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.y
+            } action: { oldValue, newValue in
+                // Auto-hide header when scrolling down - scroll to top with animation
+                if showingExpandedHeader && newValue > 1 {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        showingExpandedHeader = false
+                        scrollProxy.scrollTo("calendar-top-anchor", anchor: .top)
+                    }
                 }
             }
         }

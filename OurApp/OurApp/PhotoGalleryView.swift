@@ -205,78 +205,86 @@ struct PhotoGalleryView: View {
     }
 
     private var contentView: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                // Expandable header (hidden when collapsed)
-                expandableHeader
-                    .padding(.horizontal)
-                    .padding(.top, 4)
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Top anchor for scroll-to-top
+                    Color.clear
+                        .frame(height: 0)
+                        .id("photos-top-anchor")
 
-                // Folder navigation bar
-                folderNavigationBar
-                    .padding(.horizontal)
-                    .padding(.top, 8)
+                    // Expandable header (hidden when collapsed)
+                    expandableHeader
+                        .padding(.horizontal)
+                        .padding(.top, 4)
 
-                // Upload progress bar
-                if isUploading {
-                    uploadProgressBar
+                    // Folder navigation bar
+                    folderNavigationBar
                         .padding(.horizontal)
                         .padding(.top, 8)
-                }
 
-                // Active filters indicator
-                if hasDateFilter || sortOption != .newestFirst {
-                    activeFiltersBar
-                        .padding(.horizontal)
-                        .padding(.top, 8)
-                }
+                    // Upload progress bar
+                    if isUploading {
+                        uploadProgressBar
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                    }
 
-                // Show folders or photos based on current view
-                if currentFolderView == .events || currentFolderView == .specialEvents {
-                    folderListView
-                        .simultaneousGesture(
-                            TapGesture()
-                                .onEnded { _ in
-                                    if showingExpandedHeader {
-                                        withAnimation(.spring(response: 0.3)) {
-                                            showingExpandedHeader = false
+                    // Active filters indicator
+                    if hasDateFilter || sortOption != .newestFirst {
+                        activeFiltersBar
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                    }
+
+                    // Show folders or photos based on current view
+                    if currentFolderView == .events || currentFolderView == .specialEvents {
+                        folderListView
+                            .simultaneousGesture(
+                                TapGesture()
+                                    .onEnded { _ in
+                                        if showingExpandedHeader {
+                                            withAnimation(.spring(response: 0.3)) {
+                                                showingExpandedHeader = false
+                                            }
                                         }
                                     }
-                                }
-                        )
-                } else {
-                    photoGridView
-                        .simultaneousGesture(
-                            TapGesture()
-                                .onEnded { _ in
-                                    if showingExpandedHeader {
-                                        withAnimation(.spring(response: 0.3)) {
-                                            showingExpandedHeader = false
+                            )
+                    } else {
+                        photoGridView
+                            .simultaneousGesture(
+                                TapGesture()
+                                    .onEnded { _ in
+                                        if showingExpandedHeader {
+                                            withAnimation(.spring(response: 0.3)) {
+                                                showingExpandedHeader = false
+                                            }
                                         }
                                     }
-                                }
-                        )
+                            )
+                    }
                 }
             }
-        }
-        .refreshable {
-            // Show the expanded header when user pulls down
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                showingExpandedHeader = true
-            }
-        }
-        .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            geometry.contentOffset.y
-        } action: { oldValue, newValue in
-            // Auto-hide header when scrolling down - minimal threshold for instant dismissal
-            if showingExpandedHeader && newValue > 1 {
-                withAnimation(.spring(response: 0.3)) {
-                    showingExpandedHeader = false
+            .refreshable {
+                // Show the expanded header when user pulls down
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    showingExpandedHeader = true
                 }
             }
-        }
-        .safeAreaInset(edge: .top) {
-            Color.clear.frame(height: 0)
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.y
+            } action: { oldValue, newValue in
+                // Auto-hide header when scrolling down - scroll to top with animation
+                if showingExpandedHeader && newValue > 1 {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        showingExpandedHeader = false
+                        scrollProxy.scrollTo("photos-top-anchor", anchor: .top)
+                    }
+                }
+            }
+            .safeAreaInset(edge: .top) {
+                Color.clear.frame(height: 0)
+            }
         }
         .simultaneousGesture(
             MagnificationGesture()
