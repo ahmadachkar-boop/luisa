@@ -803,11 +803,15 @@ struct WishItemRow: View {
                     )
                 }
 
-                // Added by
+                // Added by and date
                 HStack(spacing: 4) {
                     Image(systemName: "heart.fill")
                         .font(.caption2)
                     Text(item.addedBy)
+                        .font(.caption2)
+                    Text("•")
+                        .font(.caption2)
+                    Text(item.createdAt, style: .date)
                         .font(.caption2)
                 }
                 .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.8))
@@ -1271,6 +1275,8 @@ class WishListViewModel: ObservableObject {
     func addItem(_ item: WishListItem) async {
         do {
             try await firebaseManager.addWishListItem(item)
+            // Send notification
+            NotificationManager.shared.notifyWishAdded(item: item, category: item.category)
         } catch {
             print("Error adding wish list item: \(error)")
         }
@@ -1283,6 +1289,10 @@ class WishListViewModel: ObservableObject {
 
         do {
             try await firebaseManager.updateWishListItem(updatedItem)
+            // Send notification only when marking as completed
+            if updatedItem.isCompleted {
+                NotificationManager.shared.notifyWishCompleted(item: updatedItem)
+            }
         } catch {
             print("Error updating wish list item: \(error)")
         }
@@ -1311,10 +1321,14 @@ class WishListViewModel: ObservableObject {
             if let event = calendarEvent {
                 // Create the calendar event first to get its ID
                 try await firebaseManager.addCalendarEvent(event)
-                // Note: In a production app, you'd want to get the event ID back and store it
             }
 
             try await firebaseManager.updateWishListItem(updatedItem)
+
+            // Send notification when item is planned
+            if let plannedDate = updatedItem.plannedDate {
+                NotificationManager.shared.notifyWishPlanned(item: updatedItem, plannedDate: plannedDate)
+            }
         } catch {
             print("Error planning wish list item: \(error)")
         }

@@ -188,6 +188,78 @@ class NotificationManager: NSObject, ObservableObject {
         print("🔔 [NOTIFICATIONS] Queued voice memo notification for both users")
     }
 
+    // MARK: - Wishlist Notifications
+
+    func notifyWishAdded(item: WishListItem, category: String) {
+        let currentUser = UserIdentityManager.shared.currentUserName
+
+        // Send to both users
+        for recipient in ["Ahmad", "Luisa"] {
+            let notification: [String: Any] = [
+                "type": "wish_added",
+                "title": "New Wish Added",
+                "body": "\(currentUser) added '\(item.title)' to \(category)",
+                "recipient": recipient,
+                "sender": currentUser,
+                "wishId": item.id ?? "",
+                "category": category,
+                "createdAt": FieldValue.serverTimestamp(),
+                "processed": false
+            ]
+
+            db.collection("notifications").addDocument(data: notification)
+        }
+        print("🔔 [NOTIFICATIONS] Queued wish added notification for both users")
+    }
+
+    func notifyWishPlanned(item: WishListItem, plannedDate: Date) {
+        let currentUser = UserIdentityManager.shared.currentUserName
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        dateFormatter.timeStyle = .short
+        let dateString = dateFormatter.string(from: plannedDate)
+
+        // Send to both users
+        for recipient in ["Ahmad", "Luisa"] {
+            let notification: [String: Any] = [
+                "type": "wish_planned",
+                "title": "Wish Planned",
+                "body": "\(currentUser) scheduled '\(item.title)' for \(dateString)",
+                "recipient": recipient,
+                "sender": currentUser,
+                "wishId": item.id ?? "",
+                "plannedDate": plannedDate,
+                "createdAt": FieldValue.serverTimestamp(),
+                "processed": false
+            ]
+
+            db.collection("notifications").addDocument(data: notification)
+        }
+        print("🔔 [NOTIFICATIONS] Queued wish planned notification for both users")
+    }
+
+    func notifyWishCompleted(item: WishListItem) {
+        let currentUser = UserIdentityManager.shared.currentUserName
+
+        // Send to both users
+        for recipient in ["Ahmad", "Luisa"] {
+            let notification: [String: Any] = [
+                "type": "wish_completed",
+                "title": "Wish Completed! 🎉",
+                "body": "\(currentUser) completed '\(item.title)'",
+                "recipient": recipient,
+                "sender": currentUser,
+                "wishId": item.id ?? "",
+                "category": item.category,
+                "createdAt": FieldValue.serverTimestamp(),
+                "processed": false
+            ]
+
+            db.collection("notifications").addDocument(data: notification)
+        }
+        print("🔔 [NOTIFICATIONS] Queued wish completed notification for both users")
+    }
+
     // MARK: - Schedule Local Reminders for Events
 
     func scheduleEventReminders(for event: CalendarEvent) {
