@@ -95,12 +95,7 @@ struct CountdownProvider: TimelineProvider {
         guard let sharedDefaults = UserDefaults(suiteName: "group.com.ourapp"),
               let data = sharedDefaults.data(forKey: "upcomingEvents"),
               let events = try? JSONDecoder().decode([WidgetEvent].self, from: data),
-              !events.isEmpty else {
-            return nil
-        }
-
-        // Events are already filtered and sorted by the app, just get the first one
-        guard let nextEvent = events.first else {
+              let nextEvent = events.first(where: { $0.date > Date() }) else {
             return nil
         }
 
