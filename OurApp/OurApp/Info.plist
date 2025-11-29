@@ -23,6 +23,12 @@
 				<string>com.googleusercontent.apps.147528790359-oj9snngdl2msc8p6qtpkte5u21ausvh0</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>app-1-257685655143-ios-2f51fc8d45dd32941f0ec2</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>
