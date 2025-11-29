@@ -116,6 +116,9 @@ struct VoiceMessagesView: View {
     @State private var selectedTagFilter: String? = nil
     @State private var newTagText = ""
 
+    // Cached messages by month to avoid expensive recomputation
+    @State private var cachedMessagesByMonth: [(key: String, messages: [VoiceMessage])] = []
+
     // Magnification gesture state
     @GestureState private var magnificationScale: CGFloat = 1.0
 
@@ -223,8 +226,17 @@ struct VoiceMessagesView: View {
         return messages
     }
 
-    // Group messages by month
+    // Group messages by month - uses cached value
     private var messagesByMonth: [(key: String, messages: [VoiceMessage])] {
+        if !cachedMessagesByMonth.isEmpty {
+            return cachedMessagesByMonth
+        }
+        // Fallback for initial load
+        return computeMessagesByMonth()
+    }
+
+    // Compute messages grouped by month (expensive operation)
+    private func computeMessagesByMonth() -> [(key: String, messages: [VoiceMessage])] {
         let grouped = Dictionary(grouping: filteredMessages) { message -> String in
             let formatter = DateFormatter()
             formatter.dateFormat = "MMMM yyyy"
@@ -247,6 +259,11 @@ struct VoiceMessagesView: View {
         }
 
         return sortedMonths.map { (key: $0.key, messages: $0.value) }
+    }
+
+    // Update cached messages when dependencies change
+    private func updateMessagesCache() {
+        cachedMessagesByMonth = computeMessagesByMonth()
     }
 
     var body: some View {
@@ -420,6 +437,30 @@ struct VoiceMessagesView: View {
                 if let message = newValue {
                     prepareShareItems(for: message)
                 }
+            }
+            .onAppear {
+                updateMessagesCache()
+            }
+            .onChange(of: viewModel.messages.count) { _, _ in
+                updateMessagesCache()
+            }
+            .onChange(of: sortOption) { _, _ in
+                updateMessagesCache()
+            }
+            .onChange(of: filterStartDate) { _, _ in
+                updateMessagesCache()
+            }
+            .onChange(of: filterEndDate) { _, _ in
+                updateMessagesCache()
+            }
+            .onChange(of: currentFolderView) { _, _ in
+                updateMessagesCache()
+            }
+            .onChange(of: selectedTagFilter) { _, _ in
+                updateMessagesCache()
+            }
+            .onChange(of: searchText) { _, _ in
+                updateMessagesCache()
             }
         }
     }
@@ -3800,6 +3841,9 @@ class VoiceMessagesViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
             currentWaveform = generatePlaceholderWaveform(count: 50)
         }
 
+        // Capture the message ID to check for race conditions
+        let targetMessageId = message.id
+
         Task {
             do {
                 // Check cache first
@@ -3819,6 +3863,12 @@ class VoiceMessagesViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
                 }
 
                 await MainActor.run {
+                    // Check if user switched to a different memo during download
+                    guard self.currentlyPlayingId == targetMessageId else {
+                        print("⚠️ [AUDIO] Memo changed during download, aborting playback of: \(message.title)")
+                        return
+                    }
+
                     do {
                         audioPlayer = try AVAudioPlayer(data: data)
                         audioPlayer?.delegate = self

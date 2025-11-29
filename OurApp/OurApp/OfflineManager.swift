@@ -190,18 +190,29 @@ class OfflineManager: ObservableObject {
 
         switch operation.type {
         case .uploadPhoto:
-            // Photo upload data: [imageData: Data, capturedAt: Date?, eventId: String?, folderId: String?]
+            // Photo upload data: [imageFilePath: String, capturedAt: Date?, eventId: String?, folderId: String?]
             guard let uploadData = try? JSONDecoder().decode(PhotoUploadData.self, from: operation.data) else {
                 throw OfflineError.invalidData
             }
+
+            // Load image data from temporary file
+            let tempFileURL = cacheDirectory.appendingPathComponent(uploadData.imageFilePath)
+            guard let imageData = try? Data(contentsOf: tempFileURL) else {
+                print("OfflineManager: Could not load image from temp file - \(uploadData.imageFilePath)")
+                throw OfflineError.invalidData
+            }
+
             _ = try await firebaseManager.uploadPhoto(
-                imageData: uploadData.imageData,
+                imageData: imageData,
                 caption: "",
                 uploadedBy: UserIdentityManager.shared.currentUserName,
                 capturedAt: uploadData.capturedAt,
                 eventId: uploadData.eventId,
                 folderId: uploadData.folderId
             )
+
+            // Clean up temporary file after successful upload
+            try? FileManager.default.removeItem(at: tempFileURL)
 
         case .deletePhoto:
             guard let photo = try? JSONDecoder().decode(Photo.self, from: operation.data) else {
@@ -243,7 +254,7 @@ class OfflineManager: ObservableObject {
 
     // MARK: - Helper Data Structures
     struct PhotoUploadData: Codable {
-        let imageData: Data
+        let imageFilePath: String // Path to temporary file instead of raw data
         let capturedAt: Date?
         let eventId: String?
         let folderId: String?
@@ -266,8 +277,19 @@ class OfflineManager: ObservableObject {
 
     // MARK: - Convenience Methods
     func queuePhotoUpload(imageData: Data, capturedAt: Date?, eventId: String?, folderId: String?) {
+        // Save image data to a temporary file to avoid memory-intensive JSON encoding
+        let tempFileName = "pending_upload_\(UUID().uuidString).jpg"
+        let tempFileURL = cacheDirectory.appendingPathComponent(tempFileName)
+
+        do {
+            try imageData.write(to: tempFileURL)
+        } catch {
+            print("OfflineManager: Failed to save image for offline upload - \(error)")
+            return
+        }
+
         let uploadData = PhotoUploadData(
-            imageData: imageData,
+            imageFilePath: tempFileName,
             capturedAt: capturedAt,
             eventId: eventId,
             folderId: folderId

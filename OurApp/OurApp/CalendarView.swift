@@ -179,8 +179,20 @@ struct CalendarView: View {
     @State private var eventsLoadedGeneration = 0 // Increments when events first load
     @State private var quickAddDate: Date? = nil // For quick add from calendar tap
 
-    // Memoized filtered events - computed only when dependencies change
+    // Cached filtered events to avoid expensive recomputation
+    @State private var cachedFilteredEvents: [CalendarEvent] = []
+
+    // Memoized filtered events - uses cached value
     private var filteredEvents: [CalendarEvent] {
+        if !cachedFilteredEvents.isEmpty || viewModel.events.isEmpty {
+            return cachedFilteredEvents
+        }
+        // Fallback for initial load
+        return computeFilteredEvents()
+    }
+
+    // Compute filtered events (expensive operation)
+    private func computeFilteredEvents() -> [CalendarEvent] {
         let baseEvents: [CalendarEvent]
 
         if isMonthInPast(currentMonth) {
@@ -238,6 +250,11 @@ struct CalendarView: View {
         }
 
         return filtered
+    }
+
+    // Update cached events when dependencies change
+    private func updateEventsCache() {
+        cachedFilteredEvents = computeFilteredEvents()
     }
 
     // Get all unique tags from events
@@ -787,6 +804,24 @@ struct CalendarView: View {
         }
         .navigationTitle("Our Plans 💜")
         .navigationBarTitleDisplayMode(.large)
+        .onAppear {
+            updateEventsCache()
+        }
+        .onChange(of: viewModel.events.count) { _, _ in
+            updateEventsCache()
+        }
+        .onChange(of: currentMonth) { _, _ in
+            updateEventsCache()
+        }
+        .onChange(of: selectedTab) { _, _ in
+            updateEventsCache()
+        }
+        .onChange(of: selectedDay) { _, _ in
+            updateEventsCache()
+        }
+        .onChange(of: selectedTags) { _, _ in
+            updateEventsCache()
+        }
     }
 
     // MARK: - Helper Functions

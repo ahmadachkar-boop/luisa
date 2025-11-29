@@ -177,25 +177,20 @@ struct PhotoGalleryView: View {
 
     // Cached photos in display order to avoid recomputation
     @State private var cachedPhotosInDisplayOrder: [Photo] = []
-    @State private var lastPhotosCacheKey: String = ""
 
-    // Flat array of photos in display order (newest first) - computed with caching
+    // Flat array of photos in display order (newest first) - uses cached value
     private var photosInDisplayOrder: [Photo] {
-        // Create a cache key based on filter/sort state
-        let cacheKey = "\(filteredPhotos.count)-\(sortOption.rawValue)-\(filterStartDate?.timeIntervalSince1970 ?? 0)-\(filterEndDate?.timeIntervalSince1970 ?? 0)"
-
-        if cacheKey == lastPhotosCacheKey && !cachedPhotosInDisplayOrder.isEmpty {
+        // Return cached value; cache is updated via onChange modifiers
+        if !cachedPhotosInDisplayOrder.isEmpty {
             return cachedPhotosInDisplayOrder
         }
-
+        // Fallback for initial load before cache is populated
         return photosByMonth.flatMap { $0.photos }
     }
 
-    // Update cache when needed
+    // Update cache when photos, filters, or sort options change
     private func updatePhotosCache() {
-        let cacheKey = "\(filteredPhotos.count)-\(sortOption.rawValue)-\(filterStartDate?.timeIntervalSince1970 ?? 0)-\(filterEndDate?.timeIntervalSince1970 ?? 0)"
         cachedPhotosInDisplayOrder = photosByMonth.flatMap { $0.photos }
-        lastPhotosCacheKey = cacheKey
     }
 
     // Current folder title for display
@@ -1238,6 +1233,24 @@ struct PhotoGalleryView: View {
             )
             .presentationDetents([.medium])
         }
+        .onAppear {
+            updatePhotosCache()
+        }
+        .onChange(of: viewModel.photos.count) { _, _ in
+            updatePhotosCache()
+        }
+        .onChange(of: sortOption) { _, _ in
+            updatePhotosCache()
+        }
+        .onChange(of: filterStartDate) { _, _ in
+            updatePhotosCache()
+        }
+        .onChange(of: filterEndDate) { _, _ in
+            updatePhotosCache()
+        }
+        .onChange(of: currentFolderView) { _, _ in
+            updatePhotosCache()
+        }
     }
 
     private func saveSelectedPhotos() {
@@ -1253,57 +1266,55 @@ struct PhotoGalleryView: View {
                 guard index < photosInDisplayOrder.count else { continue }
                 let photo = photosInDisplayOrder[index]
 
-                // Load image
+                // Load image - try cache first, then async download
+                var imageToSave: UIImage?
+
                 if let cachedImage = ImageCache.shared.get(forKey: photo.imageURL) {
-                    let imageSaver = ImageSaver()
-                    imageSaver.successHandler = {
-                        savedCount += 1
-                        if savedCount == totalCount {
-                            Task { @MainActor in
-                                savedPhotoCount = totalCount
-                                showingSaveSuccess = true
-                                selectionMode = false
-                                selectedPhotoIndices.removeAll()
-                            }
+                    imageToSave = cachedImage
+                } else if let url = URL(string: photo.imageURL) {
+                    // Use async URLSession instead of blocking Data(contentsOf:)
+                    do {
+                        let (data, _) = try await URLSession.shared.data(from: url)
+                        if let image = UIImage(data: data) {
+                            ImageCache.shared.set(image, forKey: photo.imageURL)
+                            imageToSave = image
                         }
+                    } catch {
+                        print("Failed to download image for saving: \(error)")
                     }
-                    imageSaver.errorHandler = { error in
-                        if !errorOccurred {
-                            errorOccurred = true
-                            Task { @MainActor in
-                                saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
-                                showingSaveError = true
-                            }
-                        }
-                    }
-                    imageSaver.writeToPhotoAlbum(image: cachedImage)
-                } else if let url = URL(string: photo.imageURL),
-                          let data = try? Data(contentsOf: url),
-                          let image = UIImage(data: data) {
-                    ImageCache.shared.set(image, forKey: photo.imageURL)
-                    let imageSaver = ImageSaver()
-                    imageSaver.successHandler = {
-                        savedCount += 1
-                        if savedCount == totalCount {
-                            Task { @MainActor in
-                                savedPhotoCount = totalCount
-                                showingSaveSuccess = true
-                                selectionMode = false
-                                selectedPhotoIndices.removeAll()
-                            }
-                        }
-                    }
-                    imageSaver.errorHandler = { error in
-                        if !errorOccurred {
-                            errorOccurred = true
-                            Task { @MainActor in
-                                saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
-                                showingSaveError = true
-                            }
-                        }
-                    }
-                    imageSaver.writeToPhotoAlbum(image: image)
                 }
+
+                if let image = imageToSave {
+                    // Use continuation to bridge callback-based API to async/await
+                    await withCheckedContinuation { continuation in
+                        let imageSaver = ImageSaver()
+                        imageSaver.successHandler = {
+                            savedCount += 1
+                            continuation.resume()
+                        }
+                        imageSaver.errorHandler = { error in
+                            if !errorOccurred {
+                                errorOccurred = true
+                                Task { @MainActor in
+                                    saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
+                                    showingSaveError = true
+                                }
+                            }
+                            continuation.resume()
+                        }
+                        imageSaver.writeToPhotoAlbum(image: image)
+                    }
+                }
+            }
+
+            // Show success after all photos are processed
+            await MainActor.run {
+                if savedCount > 0 && !errorOccurred {
+                    savedPhotoCount = savedCount
+                    showingSaveSuccess = true
+                }
+                selectionMode = false
+                selectedPhotoIndices.removeAll()
             }
         }
     }
