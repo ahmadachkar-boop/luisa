@@ -173,3 +173,20 @@ struct WishListItem: Identifiable, Codable {
         case category
     }
 }
+
+// MARK: - Wish Category Model
+struct WishCategory: Identifiable, Codable {
+    @DocumentID var id: String?
+    var name: String
+    var icon: String // SF Symbol name
+    var colorHex: String // Hex color for the category
+    var createdAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case icon
+        case colorHex
+        case createdAt
+    }
+}
