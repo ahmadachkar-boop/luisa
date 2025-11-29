@@ -2774,12 +2774,10 @@ struct CalendarGridView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 8) {
                 ForEach(daysInMonth(), id: \.self) { date in
                     if let date = date {
-                        let isSelectedValue = selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!)
-
                         CalendarDayCell(
                             date: date,
                             events: eventsForDay(date),
-                            isSelected: isSelectedValue,
+                            selectedDay: $selectedDay,
                             isToday: calendar.isDateInToday(date),
                             onTap: {
                                 handleDayTap(date: date)
@@ -2788,7 +2786,6 @@ struct CalendarGridView: View {
                                 onQuickAdd?(date)
                             }
                         )
-                        .id("cell-\(date.timeIntervalSince1970)-\(isSelectedValue)") // Force individual cell updates
                     } else {
                         Color.clear
                             .frame(height: 40)
@@ -2872,13 +2869,20 @@ struct CalendarGridView: View {
 struct CalendarDayCell: View {
     let date: Date
     let events: [CalendarEvent]
-    let isSelected: Bool
+    @Binding var selectedDay: Date? // Binding to observe changes directly
     let isToday: Bool
     let onTap: () -> Void
     var onQuickAdd: (() -> Void)? = nil // Quick add for empty days
 
     @State private var showTooltip = false
     @State private var showQuickAddPrompt = false
+
+    private let calendar = Calendar.current
+
+    // Compute isSelected in body so it updates when binding changes
+    private var isSelected: Bool {
+        selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!)
+    }
 
     var body: some View {
         let dayNum = Calendar.current.component(.day, from: date)
