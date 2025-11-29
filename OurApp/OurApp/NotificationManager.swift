@@ -87,22 +87,22 @@ class NotificationManager: NSObject, ObservableObject {
         Task {
             let currentUser = await getCurrentUser()
 
-            // Send only to the OTHER user (not the sender)
-            let recipient = currentUser == "Ahmad" ? "Luisa" : "Ahmad"
+            // Send to both users
+            for recipient in ["Ahmad", "Luisa"] {
+                let notification: [String: Any] = [
+                    "type": "event_created",
+                    "title": "New Event",
+                    "body": "\(currentUser) created a new event: \(event.title)",
+                    "recipient": recipient,
+                    "sender": currentUser,
+                    "eventId": event.id ?? "",
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "processed": false
+                ]
 
-            let notification: [String: Any] = [
-                "type": "event_created",
-                "title": "New Event",
-                "body": "\(currentUser) created a new event: \(event.title)",
-                "recipient": recipient,
-                "sender": currentUser,
-                "eventId": event.id ?? "",
-                "createdAt": FieldValue.serverTimestamp(),
-                "processed": false
-            ]
-
-            db.collection("notifications").addDocument(data: notification)
-            print("🔔 [NOTIFICATIONS] Queued event created notification for \(recipient)")
+                try? await db.collection("notifications").addDocument(data: notification)
+            }
+            print("🔔 [NOTIFICATIONS] Queued event created notification for both users")
         }
     }
 
@@ -110,22 +110,22 @@ class NotificationManager: NSObject, ObservableObject {
         Task {
             let currentUser = await getCurrentUser()
 
-            // Send only to the OTHER user (not the sender)
-            let recipient = currentUser == "Ahmad" ? "Luisa" : "Ahmad"
+            // Send to both users
+            for recipient in ["Ahmad", "Luisa"] {
+                let notification: [String: Any] = [
+                    "type": "event_edited",
+                    "title": "Event Updated",
+                    "body": "\(currentUser) updated the event: \(event.title)",
+                    "recipient": recipient,
+                    "sender": currentUser,
+                    "eventId": event.id ?? "",
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "processed": false
+                ]
 
-            let notification: [String: Any] = [
-                "type": "event_edited",
-                "title": "Event Updated",
-                "body": "\(currentUser) updated the event: \(event.title)",
-                "recipient": recipient,
-                "sender": currentUser,
-                "eventId": event.id ?? "",
-                "createdAt": FieldValue.serverTimestamp(),
-                "processed": false
-            ]
-
-            db.collection("notifications").addDocument(data: notification)
-            print("🔔 [NOTIFICATIONS] Queued event edited notification for \(recipient)")
+                try? await db.collection("notifications").addDocument(data: notification)
+            }
+            print("🔔 [NOTIFICATIONS] Queued event edited notification for both users")
         }
     }
 
@@ -164,24 +164,24 @@ class NotificationManager: NSObject, ObservableObject {
                 body = "\(count) \(photoText) added to the gallery by \(currentUser)"
             }
 
-            // Send only to the OTHER user (not the sender)
-            let recipient = currentUser == "Ahmad" ? "Luisa" : "Ahmad"
+            // Send to both users
+            for recipient in ["Ahmad", "Luisa"] {
+                let notification: [String: Any] = [
+                    "type": "photos_added",
+                    "title": "New Photos",
+                    "body": body,
+                    "recipient": recipient,
+                    "sender": currentUser,
+                    "photoCount": count,
+                    "eventId": eventId ?? "",
+                    "isEventPhoto": eventId != nil && !eventId!.isEmpty,
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "processed": false
+                ]
 
-            let notification: [String: Any] = [
-                "type": "photos_added",
-                "title": "New Photos",
-                "body": body,
-                "recipient": recipient,
-                "sender": currentUser,
-                "photoCount": count,
-                "eventId": eventId ?? "",
-                "isEventPhoto": eventId != nil && !eventId!.isEmpty,
-                "createdAt": FieldValue.serverTimestamp(),
-                "processed": false
-            ]
-
-            db.collection("notifications").addDocument(data: notification)
-            print("🔔 [NOTIFICATIONS] Queued photos added notification for \(recipient)")
+                try? await db.collection("notifications").addDocument(data: notification)
+            }
+            print("🔔 [NOTIFICATIONS] Queued photos added notification for both users")
         }
     }
 
@@ -189,22 +189,22 @@ class NotificationManager: NSObject, ObservableObject {
         Task {
             let currentUser = await getCurrentUser()
 
-            // Send only to the OTHER user (not the sender)
-            let recipient = currentUser == "Ahmad" ? "Luisa" : "Ahmad"
+            // Send to both users
+            for recipient in ["Ahmad", "Luisa"] {
+                let notification: [String: Any] = [
+                    "type": "voice_memo_created",
+                    "title": "New Voice Memo",
+                    "body": "\(currentUser) recorded a new voice memo: \(memo.title)",
+                    "recipient": recipient,
+                    "sender": currentUser,
+                    "memoId": memo.id ?? "",
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "processed": false
+                ]
 
-            let notification: [String: Any] = [
-                "type": "voice_memo_created",
-                "title": "New Voice Memo",
-                "body": "\(currentUser) recorded a new voice memo: \(memo.title)",
-                "recipient": recipient,
-                "sender": currentUser,
-                "memoId": memo.id ?? "",
-                "createdAt": FieldValue.serverTimestamp(),
-                "processed": false
-            ]
-
-            db.collection("notifications").addDocument(data: notification)
-            print("🔔 [NOTIFICATIONS] Queued voice memo notification for \(recipient)")
+                try? await db.collection("notifications").addDocument(data: notification)
+            }
+            print("🔔 [NOTIFICATIONS] Queued voice memo notification for both users")
         }
     }
 
@@ -214,23 +214,23 @@ class NotificationManager: NSObject, ObservableObject {
         Task {
             let currentUser = await getCurrentUser()
 
-            // Send only to the OTHER user (not the sender)
-            let recipient = currentUser == "Ahmad" ? "Luisa" : "Ahmad"
+            // Send to both users
+            for recipient in ["Ahmad", "Luisa"] {
+                let notification: [String: Any] = [
+                    "type": "wish_added",
+                    "title": "New Wish Added",
+                    "body": "\(currentUser) added '\(item.title)' to \(category)",
+                    "recipient": recipient,
+                    "sender": currentUser,
+                    "wishId": item.id ?? "",
+                    "category": category,
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "processed": false
+                ]
 
-            let notification: [String: Any] = [
-                "type": "wish_added",
-                "title": "New Wish Added",
-                "body": "\(currentUser) added '\(item.title)' to \(category)",
-                "recipient": recipient,
-                "sender": currentUser,
-                "wishId": item.id ?? "",
-                "category": category,
-                "createdAt": FieldValue.serverTimestamp(),
-                "processed": false
-            ]
-
-            db.collection("notifications").addDocument(data: notification)
-            print("🔔 [NOTIFICATIONS] Queued wish added notification for \(recipient)")
+                try? await db.collection("notifications").addDocument(data: notification)
+            }
+            print("🔔 [NOTIFICATIONS] Queued wish added notification for both users")
         }
     }
 
@@ -242,23 +242,23 @@ class NotificationManager: NSObject, ObservableObject {
             dateFormatter.timeStyle = .short
             let dateString = dateFormatter.string(from: plannedDate)
 
-            // Send only to the OTHER user (not the sender)
-            let recipient = currentUser == "Ahmad" ? "Luisa" : "Ahmad"
+            // Send to both users
+            for recipient in ["Ahmad", "Luisa"] {
+                let notification: [String: Any] = [
+                    "type": "wish_planned",
+                    "title": "Wish Planned",
+                    "body": "\(currentUser) scheduled '\(item.title)' for \(dateString)",
+                    "recipient": recipient,
+                    "sender": currentUser,
+                    "wishId": item.id ?? "",
+                    "plannedDate": plannedDate,
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "processed": false
+                ]
 
-            let notification: [String: Any] = [
-                "type": "wish_planned",
-                "title": "Wish Planned",
-                "body": "\(currentUser) scheduled '\(item.title)' for \(dateString)",
-                "recipient": recipient,
-                "sender": currentUser,
-                "wishId": item.id ?? "",
-                "plannedDate": plannedDate,
-                "createdAt": FieldValue.serverTimestamp(),
-                "processed": false
-            ]
-
-            db.collection("notifications").addDocument(data: notification)
-            print("🔔 [NOTIFICATIONS] Queued wish planned notification for \(recipient)")
+                try? await db.collection("notifications").addDocument(data: notification)
+            }
+            print("🔔 [NOTIFICATIONS] Queued wish planned notification for both users")
         }
     }
 
@@ -266,23 +266,23 @@ class NotificationManager: NSObject, ObservableObject {
         Task {
             let currentUser = await getCurrentUser()
 
-            // Send only to the OTHER user (not the sender)
-            let recipient = currentUser == "Ahmad" ? "Luisa" : "Ahmad"
+            // Send to both users
+            for recipient in ["Ahmad", "Luisa"] {
+                let notification: [String: Any] = [
+                    "type": "wish_completed",
+                    "title": "Wish Completed! 🎉",
+                    "body": "\(currentUser) completed '\(item.title)'",
+                    "recipient": recipient,
+                    "sender": currentUser,
+                    "wishId": item.id ?? "",
+                    "category": item.category,
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "processed": false
+                ]
 
-            let notification: [String: Any] = [
-                "type": "wish_completed",
-                "title": "Wish Completed! 🎉",
-                "body": "\(currentUser) completed '\(item.title)'",
-                "recipient": recipient,
-                "sender": currentUser,
-                "wishId": item.id ?? "",
-                "category": item.category,
-                "createdAt": FieldValue.serverTimestamp(),
-                "processed": false
-            ]
-
-            db.collection("notifications").addDocument(data: notification)
-            print("🔔 [NOTIFICATIONS] Queued wish completed notification for \(recipient)")
+                try? await db.collection("notifications").addDocument(data: notification)
+            }
+            print("🔔 [NOTIFICATIONS] Queued wish completed notification for both users")
         }
     }
 
