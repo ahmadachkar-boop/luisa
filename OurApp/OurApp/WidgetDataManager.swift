@@ -7,7 +7,7 @@ import WidgetKit
 class WidgetDataManager {
     static let shared = WidgetDataManager()
 
-    private let appGroupIdentifier = "group.com.ourapp.shared"
+    private let appGroupIdentifier = "group.com.ourapp"
     private let eventsKey = "upcomingEvents"
 
     private var sharedDefaults: UserDefaults? {
