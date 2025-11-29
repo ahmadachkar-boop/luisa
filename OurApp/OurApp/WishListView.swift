@@ -355,8 +355,9 @@ struct WishCategoryDetailView: View {
     @State private var showingExpandedHeader = false
     @State private var searchText = ""
     @State private var isCompletedExpanded = false
-    @State private var selectedItem: WishListItem? = nil
-    @State private var showingPlanSheet = false
+    @State private var itemToPlan: WishListItem? = nil
+    @State private var itemToEditDate: WishListItem? = nil
+    @State private var showingDateOptions = false
     @State private var dragOffset: CGFloat = 0
 
     private var categoryColor: Color {
@@ -453,8 +454,11 @@ struct WishCategoryDetailView: View {
                                             Task { await viewModel.toggleComplete(item) }
                                         },
                                         onPlan: {
-                                            selectedItem = item
-                                            showingPlanSheet = true
+                                            itemToPlan = item
+                                        },
+                                        onEditDate: {
+                                            itemToEditDate = item
+                                            showingDateOptions = true
                                         },
                                         onDelete: {
                                             Task { await viewModel.deleteItem(item) }
@@ -496,11 +500,14 @@ struct WishCategoryDetailView: View {
                 await viewModel.addItem(item)
             }
         }
-        .sheet(isPresented: $showingPlanSheet) {
-            if let item = selectedItem {
-                PlanWishItemView(item: item, categoryColor: categoryColor) { updatedItem, calendarEvent in
-                    await viewModel.planItem(updatedItem, createEvent: calendarEvent)
-                }
+        .sheet(item: $itemToPlan) { item in
+            PlanWishItemView(item: item, categoryColor: categoryColor) { updatedItem, calendarEvent in
+                await viewModel.planItem(updatedItem, createEvent: calendarEvent)
+            }
+        }
+        .sheet(item: $itemToEditDate) { item in
+            EditPlannedDateView(item: item, categoryColor: categoryColor) { updatedItem in
+                await viewModel.updateItemDate(updatedItem)
             }
         }
         .offset(x: dragOffset)
@@ -761,6 +768,7 @@ struct WishItemRow: View {
     let categoryColor: Color
     let onToggleComplete: () -> Void
     let onPlan: () -> Void
+    let onEditDate: () -> Void
     let onDelete: () -> Void
 
     @State private var showingDeleteAlert = false
@@ -786,21 +794,26 @@ struct WishItemRow: View {
                         .lineLimit(2)
                 }
 
-                // Planned date badge
+                // Planned date badge - tappable to edit
                 if let plannedDate = item.plannedDate {
-                    HStack(spacing: 4) {
-                        Image(systemName: "calendar")
-                            .font(.caption)
-                        Text(plannedDate, style: .date)
-                            .font(.caption)
+                    Button(action: onEditDate) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "calendar")
+                                .font(.caption)
+                            Text(plannedDate, style: .date)
+                                .font(.caption)
+                            Image(systemName: "pencil")
+                                .font(.system(size: 8))
+                        }
+                        .foregroundColor(Color(red: 0.4, green: 0.6, blue: 0.9))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .fill(Color(red: 0.4, green: 0.6, blue: 0.9).opacity(0.15))
+                        )
                     }
-                    .foregroundColor(Color(red: 0.4, green: 0.6, blue: 0.9))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(Color(red: 0.4, green: 0.6, blue: 0.9).opacity(0.15))
-                    )
+                    .buttonStyle(PlainButtonStyle())
                 }
 
                 // Added by and date
@@ -1043,6 +1056,93 @@ struct PlanWishItemView: View {
                     .foregroundColor(categoryColor)
                     .fontWeight(.semibold)
                 }
+            }
+        }
+    }
+}
+
+// MARK: - Edit Planned Date View
+struct EditPlannedDateView: View {
+    @Environment(\.dismiss) var dismiss
+    let item: WishListItem
+    let categoryColor: Color
+    let onSave: (WishListItem) async -> Void
+
+    @State private var plannedDate: Date
+    @State private var showingRemoveConfirmation = false
+
+    init(item: WishListItem, categoryColor: Color, onSave: @escaping (WishListItem) async -> Void) {
+        self.item = item
+        self.categoryColor = categoryColor
+        self.onSave = onSave
+        self._plannedDate = State(initialValue: item.plannedDate ?? Date())
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section {
+                    HStack {
+                        Text("Wish")
+                        Spacer()
+                        Text(item.title)
+                            .foregroundColor(categoryColor)
+                    }
+                }
+
+                Section {
+                    DatePicker("Date & Time", selection: $plannedDate)
+                        .tint(categoryColor)
+                } header: {
+                    Text("Change Date")
+                }
+
+                Section {
+                    Button(role: .destructive, action: {
+                        showingRemoveConfirmation = true
+                    }) {
+                        HStack {
+                            Image(systemName: "calendar.badge.minus")
+                            Text("Remove from Calendar")
+                        }
+                    }
+                } footer: {
+                    Text("This will remove the planned date and any associated calendar event.")
+                }
+            }
+            .navigationTitle("Edit Date")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Save") {
+                        Task {
+                            var updatedItem = item
+                            updatedItem.plannedDate = plannedDate
+                            await onSave(updatedItem)
+                            dismiss()
+                        }
+                    }
+                    .foregroundColor(categoryColor)
+                    .fontWeight(.semibold)
+                }
+            }
+            .alert("Remove Planned Date?", isPresented: $showingRemoveConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Remove", role: .destructive) {
+                    Task {
+                        var updatedItem = item
+                        updatedItem.plannedDate = nil
+                        updatedItem.calendarEventId = nil
+                        await onSave(updatedItem)
+                        dismiss()
+                    }
+                }
+            } message: {
+                Text("This will remove the planned date from '\(item.title)'")
             }
         }
     }
@@ -1331,6 +1431,22 @@ class WishListViewModel: ObservableObject {
             }
         } catch {
             print("Error planning wish list item: \(error)")
+        }
+    }
+
+    func updateItemDate(_ item: WishListItem) async {
+        do {
+            // If removing the date and there's a calendar event, delete it
+            if item.plannedDate == nil, let eventId = item.calendarEventId {
+                let events = try await firebaseManager.fetchAllEvents()
+                if let event = events.first(where: { $0.id == eventId }) {
+                    try await firebaseManager.deleteCalendarEvent(event)
+                }
+            }
+
+            try await firebaseManager.updateWishListItem(item)
+        } catch {
+            print("Error updating wish list item date: \(error)")
         }
     }
 
