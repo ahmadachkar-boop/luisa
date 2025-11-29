@@ -9,12 +9,29 @@ class WidgetDataManager {
 
     private let appGroupIdentifier = "group.com.ourapp"
     private let eventsKey = "upcomingEvents"
+    private let firebaseManager = FirebaseManager.shared
 
     private var sharedDefaults: UserDefaults? {
         UserDefaults(suiteName: appGroupIdentifier)
     }
 
     private init() {}
+
+    // MARK: - Sync from Firebase (call at app startup)
+    func syncFromFirebase() {
+        Task {
+            do {
+                // Get events directly from Firebase (one-time fetch)
+                let events = try await firebaseManager.fetchAllEvents()
+                await MainActor.run {
+                    self.syncEvents(events)
+                    print("WidgetDataManager: Synced \(events.count) events from Firebase to widget")
+                }
+            } catch {
+                print("WidgetDataManager: Failed to sync from Firebase: \(error.localizedDescription)")
+            }
+        }
+    }
 
     // MARK: - Sync Events to Widget
     func syncEvents(_ events: [CalendarEvent]) {
@@ -23,7 +40,7 @@ class WidgetDataManager {
             return
         }
 
-        // Filter to upcoming events only, sorted by date
+        // Filter to future events only (exclude events where time has passed)
         let now = Date()
         let upcomingEvents = events
             .filter { $0.date > now }

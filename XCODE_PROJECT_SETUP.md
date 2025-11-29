@@ -110,7 +110,73 @@ Now follow the Firebase setup from SETUP_GUIDE.md starting at "Step 2: Set Up Fi
    - ✅ **"OurApp" target** is selected
 4. Click **"Finish"**
 
-## Step 11: Build and Run! 🚀
+## Step 11: Add Widget Extension (IMPORTANT!)
+
+For the countdown widget to appear on the home screen, you must add it as a separate target:
+
+### 11.1: Create Widget Extension Target
+
+1. In Xcode, go to **File** → **New** → **Target...**
+2. Search for **"Widget Extension"** and select it
+3. Click **Next**
+4. Configure the widget:
+   - **Product Name**: `OurAppWidget`
+   - **Team**: Same as your main app
+   - **Bundle Identifier**: Will auto-fill (e.g., `com.yourname.OurApp.OurAppWidget`)
+   - **Include Live Activity**: Uncheck this
+   - **Include Configuration App Intent**: Uncheck this
+5. Click **Finish**
+6. If prompted to activate the scheme, click **Activate**
+
+### 11.2: Delete Template Widget Files
+
+Xcode creates template files we don't need:
+
+1. In the left sidebar, expand the new **OurAppWidget** folder
+2. Delete ALL the template Swift files Xcode created (OurAppWidget.swift, etc.)
+3. Keep the **Assets.xcassets** folder
+
+### 11.3: Add Our Widget Files
+
+1. From `/OurApp/OurAppWidget/` folder, drag these files into the OurAppWidget target:
+   - `CountdownWidget.swift`
+   - `Info.plist`
+   - `OurAppWidget.entitlements`
+2. When prompted:
+   - Check **"Copy items if needed"**
+   - Make sure **"OurAppWidget" target** is selected
+   - Click **Finish**
+
+### 11.4: Configure Widget Info.plist
+
+1. Click on the blue **OurApp** project icon
+2. Select **OurAppWidget** under TARGETS
+3. Click **Build Settings** tab
+4. Search for "Info.plist"
+5. Set **Info.plist File** to: `OurAppWidget/Info.plist`
+
+### 11.5: Add App Group Capability (CRITICAL!)
+
+Both the main app AND widget need the same App Group to share data:
+
+**For Main App:**
+1. Select **OurApp** target → **Signing & Capabilities**
+2. Click **+ Capability** → **App Groups**
+3. Click **+** and add: `group.com.ourapp`
+
+**For Widget:**
+1. Select **OurAppWidget** target → **Signing & Capabilities**
+2. Click **+ Capability** → **App Groups**
+3. Click **+** and add the SAME group: `group.com.ourapp`
+
+### 11.6: Set Widget Entitlements
+
+1. Select **OurAppWidget** target
+2. Click **Build Settings** tab
+3. Search for "Code Signing Entitlements"
+4. Set to: `OurAppWidget/OurAppWidget.entitlements`
+
+## Step 12: Build and Run!
 
 1. Select a simulator from the device dropdown (e.g., "iPhone 15 Pro")
 2. Click the ▶️ Play button (or press Cmd+R)
@@ -132,6 +198,14 @@ Now follow the Firebase setup from SETUP_GUIDE.md starting at "Step 2: Set Up Fi
 ### Still not working?
 - Create a completely fresh project in a different location
 - Then manually copy over just the Swift files (not the whole folder)
+
+### Widget Not Appearing in Widget Gallery?
+- Make sure you completed Step 11 (Add Widget Extension)
+- Verify both app and widget have the SAME App Group: `group.com.ourapp`
+- Check that the widget target has `Info.plist` with `NSExtensionPointIdentifier: com.apple.widgetkit-extension`
+- Clean build folder: **Product** → **Clean Build Folder**
+- Delete the app from simulator/device and reinstall
+- Make sure the widget scheme is embedded in the main app (check "Embed in Application" in widget target settings)
 
 ---
 

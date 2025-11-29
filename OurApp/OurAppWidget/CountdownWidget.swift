@@ -23,33 +23,64 @@ struct CountdownEntry: TimelineEntry {
         return max(0, components.hour ?? 0)
     }
 
-    var countdownText: String {
+    // Badge text (Tomorrow, Today, In 3 days, etc.)
+    var badgeText: String {
         let totalHours = Calendar.current.dateComponents([.hour], from: Date(), to: eventDate).hour ?? 0
 
         if totalHours < 0 {
-            return "Event passed"
-        } else if totalHours < 1 {
-            // Less than 1 hour - show minutes
-            let minutes = Calendar.current.dateComponents([.minute], from: Date(), to: eventDate).minute ?? 0
-            if minutes > 0 {
-                return "\(minutes) min"
-            }
-            return "Now!"
+            return "Passed"
         } else if totalHours < 24 {
-            // Less than 1 day - show hours
-            return "\(totalHours) hour\(totalHours == 1 ? "" : "s")"
+            return "Today"
         } else if daysRemaining == 1 {
-            return "Tomorrow!"
+            return "Tomorrow"
+        } else if daysRemaining <= 7 {
+            return "This Week"
         } else {
-            return "\(daysRemaining) days"
+            return "Upcoming"
         }
+    }
+
+    // Countdown number value
+    var countdownValue: Int {
+        let totalHours = Calendar.current.dateComponents([.hour], from: Date(), to: eventDate).hour ?? 0
+
+        if totalHours < 24 {
+            return max(0, totalHours)
+        } else {
+            return daysRemaining
+        }
+    }
+
+    // Countdown unit (day, days, hour, hours)
+    var countdownUnit: String {
+        let totalHours = Calendar.current.dateComponents([.hour], from: Date(), to: eventDate).hour ?? 0
+
+        if totalHours < 24 {
+            return totalHours == 1 ? "hour" : "hours"
+        } else {
+            return daysRemaining == 1 ? "day" : "days"
+        }
+    }
+
+    // Formatted date string (e.g., "Nov 28")
+    var shortDateText: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter.string(from: eventDate)
+    }
+
+    // Full date string (e.g., "Friday, Nov 28")
+    var fullDateText: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE, MMM d"
+        return formatter.string(from: eventDate)
     }
 
     static var placeholder: CountdownEntry {
         CountdownEntry(
             date: Date(),
             eventTitle: "Date Night",
-            eventDate: Calendar.current.date(byAdding: .day, value: 3, to: Date()) ?? Date(),
+            eventDate: Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date(),
             isSpecial: true,
             location: "Our favorite spot",
             isEmpty: false
@@ -119,9 +150,22 @@ struct WidgetEvent: Codable {
     let isSpecial: Bool
 }
 
-// MARK: - Widget Views
+// MARK: - Decorative Circle View
+struct DecorativeCircle: View {
+    let size: CGFloat
+    let opacity: Double
+    let offsetX: CGFloat
+    let offsetY: CGFloat
 
-// Small Widget View
+    var body: some View {
+        Circle()
+            .fill(Color.white.opacity(opacity))
+            .frame(width: size, height: size)
+            .offset(x: offsetX, y: offsetY)
+    }
+}
+
+// MARK: - Small Widget View
 struct CountdownWidgetSmallView: View {
     let entry: CountdownEntry
 
@@ -129,26 +173,60 @@ struct CountdownWidgetSmallView: View {
         if entry.isEmpty {
             emptyView
         } else {
-            VStack(alignment: .leading, spacing: 8) {
-                // Countdown badge
-                Text(entry.countdownText)
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+            GeometryReader { geometry in
+                ZStack {
+                    // Decorative circles
+                    DecorativeCircle(size: 96, opacity: 0.1, offsetX: geometry.size.width - 48, offsetY: -32)
+                    DecorativeCircle(size: 64, opacity: 0.05, offsetX: -24, offsetY: geometry.size.height - 24)
 
-                // Event title
-                Text(entry.eventTitle)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.9))
-                    .lineLimit(2)
+                    // Content
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Top section - Badge and Title
+                        VStack(alignment: .leading, spacing: 4) {
+                            // Badge
+                            Text(entry.badgeText)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.white.opacity(0.2))
+                                .clipShape(Capsule())
 
-                Spacer()
+                            // Event title
+                            Text(entry.eventTitle)
+                                .font(.system(size: 17, weight: .bold))
+                                .foregroundColor(.white)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
 
-                // Date
-                Text(entry.eventDate, format: .dateTime.month(.abbreviated).day())
-                    .font(.caption)
-                    .foregroundColor(.white.opacity(0.7))
+                        Spacer()
+
+                        // Bottom section - Date and Countdown
+                        HStack(alignment: .bottom) {
+                            // Date
+                            Text(entry.shortDateText)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.white.opacity(0.6))
+                                .textCase(.uppercase)
+
+                            Spacer()
+
+                            // Countdown
+                            VStack(alignment: .trailing, spacing: -2) {
+                                Text("\(entry.countdownValue)")
+                                    .font(.system(size: 34, weight: .light))
+                                    .foregroundColor(.white)
+                                Text(entry.countdownUnit)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.6))
+                                    .textCase(.uppercase)
+                            }
+                        }
+                    }
+                    .padding(5)
+                }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
@@ -159,14 +237,14 @@ struct CountdownWidgetSmallView: View {
                 .foregroundColor(.white.opacity(0.7))
 
             Text("No Plans Yet")
-                .font(.caption)
+                .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.white.opacity(0.8))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-// Medium Widget View
+// MARK: - Medium Widget View
 struct CountdownWidgetMediumView: View {
     let entry: CountdownEntry
 
@@ -174,72 +252,92 @@ struct CountdownWidgetMediumView: View {
         if entry.isEmpty {
             emptyView
         } else {
-            HStack(spacing: 16) {
-                // Left side - Countdown
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(entry.countdownText)
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+            GeometryReader { geometry in
+                ZStack {
+                    // Decorative circles
+                    DecorativeCircle(size: 128, opacity: 0.1, offsetX: geometry.size.width - 64, offsetY: -48)
+                    DecorativeCircle(size: 80, opacity: 0.05, offsetX: geometry.size.width / 2, offsetY: geometry.size.height - 40)
 
-                    Text("until")
-                        .font(.caption)
-                        .foregroundColor(.white.opacity(0.6))
-                }
-                .frame(minWidth: 80)
+                    // Content
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Top section
+                        HStack(alignment: .top) {
+                            // Left - Badge, Title, Description
+                            VStack(alignment: .leading, spacing: 4) {
+                                // Badge
+                                Text(entry.badgeText)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Color.white.opacity(0.2))
+                                    .clipShape(Capsule())
 
-                // Right side - Event details
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        if entry.isSpecial {
-                            Image(systemName: "star.fill")
-                                .font(.caption)
-                                .foregroundColor(.yellow)
+                                // Event title
+                                Text(entry.eventTitle)
+                                    .font(.system(size: 20, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .lineLimit(1)
+
+                                // Location/Description
+                                if !entry.location.isEmpty {
+                                    Text(entry.location)
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.white.opacity(0.7))
+                                        .lineLimit(1)
+                                }
+                            }
+
+                            Spacer()
+
+                            // Right - Countdown
+                            VStack(alignment: .trailing, spacing: -2) {
+                                Text("\(entry.countdownValue)")
+                                    .font(.system(size: 38, weight: .light))
+                                    .foregroundColor(.white.opacity(0.9))
+                                Text("\(entry.countdownUnit) left")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.6))
+                                    .textCase(.uppercase)
+                            }
                         }
-                        Text(entry.eventTitle)
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .lineLimit(1)
-                    }
 
-                    Text(entry.eventDate, format: .dateTime.weekday(.wide).month(.abbreviated).day())
-                        .font(.subheadline)
-                        .foregroundColor(.white.opacity(0.8))
+                        Spacer()
 
-                    if !entry.location.isEmpty {
-                        HStack(spacing: 4) {
-                            Image(systemName: "location.fill")
-                                .font(.caption2)
-                            Text(entry.location)
-                                .font(.caption)
-                                .lineLimit(1)
+                        // Bottom - Calendar date
+                        HStack(spacing: 5) {
+                            Image(systemName: "calendar")
+                                .font(.system(size: 11))
+                                .foregroundColor(.white.opacity(0.7))
+                            Text(entry.fullDateText)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.white.opacity(0.8))
                         }
-                        .foregroundColor(.white.opacity(0.7))
                     }
+                    .padding(12)
                 }
-
-                Spacer()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
     var emptyView: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             Image(systemName: "calendar.badge.plus")
-                .font(.system(size: 40))
+                .font(.system(size: 36))
                 .foregroundColor(.white.opacity(0.7))
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text("No Upcoming Plans")
-                    .font(.headline)
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.white)
                 Text("Tap to add your next adventure!")
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.7))
             }
 
             Spacer()
         }
+        .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
@@ -269,27 +367,13 @@ struct CountdownWidget: Widget {
         StaticConfiguration(kind: kind, provider: CountdownProvider()) { entry in
             CountdownWidgetEntryView(entry: entry)
                 .containerBackground(for: .widget) {
-                    widgetBackground(for: entry)
+                    // Purple background matching the design (bg-purple-400 ~ #a855f7)
+                    Color(red: 0.66, green: 0.33, blue: 0.97)
                 }
         }
         .configurationDisplayName("Event Countdown")
         .description("See your next upcoming plan at a glance.")
         .supportedFamilies([.systemSmall, .systemMedium])
-    }
-
-    @ViewBuilder
-    private func widgetBackground(for entry: CountdownEntry) -> some View {
-        if entry.isEmpty {
-            Color(red: 0.5, green: 0.4, blue: 0.7)
-        } else {
-            LinearGradient(
-                colors: entry.isSpecial ?
-                    [Color(red: 0.85, green: 0.35, blue: 0.75), Color(red: 0.7, green: 0.25, blue: 0.6)] :
-                    [Color(red: 0.6, green: 0.4, blue: 0.85), Color(red: 0.45, green: 0.3, blue: 0.7)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
     }
 }
 
