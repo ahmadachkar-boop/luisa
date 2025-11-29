@@ -234,8 +234,28 @@ struct PhotoGalleryView: View {
                 // Show folders or photos based on current view
                 if currentFolderView == .events || currentFolderView == .specialEvents {
                     folderListView
+                        .simultaneousGesture(
+                            TapGesture()
+                                .onEnded { _ in
+                                    if showingExpandedHeader {
+                                        withAnimation(.spring(response: 0.3)) {
+                                            showingExpandedHeader = false
+                                        }
+                                    }
+                                }
+                        )
                 } else {
                     photoGridView
+                        .simultaneousGesture(
+                            TapGesture()
+                                .onEnded { _ in
+                                    if showingExpandedHeader {
+                                        withAnimation(.spring(response: 0.3)) {
+                                            showingExpandedHeader = false
+                                        }
+                                    }
+                                }
+                        )
                 }
             }
         }
@@ -959,9 +979,9 @@ struct PhotoGalleryView: View {
                     // Background gradient - light periwinkle
                     LinearGradient(
                         colors: [
-                            Color(red: 0.8, green: 0.8, blue: 1.0),
-                            Color(red: 0.9, green: 0.9, blue: 1.0),
-                            Color.white
+                            Color(red: 0.88, green: 0.88, blue: 1.0),
+                            Color(red: 0.92, green: 0.92, blue: 1.0),
+                            Color(red: 0.96, green: 0.96, blue: 1.0)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
