@@ -163,6 +163,7 @@ struct CalendarView: View {
     @State private var selectedEventForDetail: CalendarEvent?
     @State private var selectedTab = 0 // 0 = Upcoming, 1 = Memories
     @State private var currentMonth = Date()
+    @State private var monthNavigationDirection: Int = 0 // -1 = backward, 1 = forward, 0 = none
     @State private var selectedDay: Date? = nil // For filtering by specific day
     @State private var summaryCardExpanded = true // Start expanded
     @State private var recapPhotoData: RecapPhotoData?
@@ -248,7 +249,10 @@ struct CalendarView: View {
 
     // Helper computed property for upcoming events in current month
     private var next5UpcomingEvents: [CalendarEvent] {
-        Array(viewModel.upcomingEvents.prefix(5))
+        let now = Date()
+        // Only show events that haven't started yet (filter out past events)
+        let futureEvents = viewModel.upcomingEvents.filter { $0.date > now }
+        return Array(futureEvents.prefix(5))
     }
 
     @ViewBuilder
@@ -322,11 +326,12 @@ struct CalendarView: View {
     }
 
     private var backgroundGradient: some View {
+        // Light periwinkle gradient
         LinearGradient(
             colors: [
-                Color(red: 0.98, green: 0.96, blue: 1.0),
-                Color(red: 0.96, green: 0.94, blue: 0.99),
-                Color.white
+                Color(red: 0.88, green: 0.88, blue: 1.0),
+                Color(red: 0.92, green: 0.92, blue: 1.0),
+                Color(red: 0.96, green: 0.96, blue: 1.0)
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -510,13 +515,19 @@ struct CalendarView: View {
 
     @ViewBuilder
     private var calendarScrollContent: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: 0) {
-                // Expandable header (hidden when collapsed)
-                expandableHeader
+        ScrollViewReader { scrollProxy in
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 0) {
+                    // Top anchor for scroll-to-top
+                    Color.clear
+                        .frame(height: 0)
+                        .id("calendar-top-anchor")
 
-                // Upcoming Events Banner (persistent across all months)
-                upcomingEventsBanner
+                    // Expandable header (hidden when collapsed)
+                    expandableHeader
+
+                    // Upcoming Events Banner (persistent across all months)
+                    upcomingEventsBanner
 
                 // Sync indicator
                 if googleCalendarManager.isSyncing {
@@ -531,17 +542,19 @@ struct CalendarView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
-                // Month indicator for calendar
+                // Month indicator for calendar (centered)
                 Text(currentMonth, format: .dateTime.month(.wide).year())
                     .font(.title3)
                     .fontWeight(.semibold)
                     .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.horizontal)
                     .padding(.top, 8)
                     .padding(.bottom, 12)
+                    .contentTransition(.numericText())
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: currentMonth)
 
-                // Calendar Grid
+                // Calendar Grid wrapped in container for proper animation handling
                 CalendarGridView(
                     currentMonth: currentMonth,
                     events: viewModel.events,
@@ -552,23 +565,32 @@ struct CalendarView: View {
                         showingAddEvent = true
                     }
                 )
-                .id("\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)-\(selectedDay?.timeIntervalSince1970 ?? 0)")
+                .id("grid-\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)")
                 .padding(.horizontal)
                 .padding(.bottom, 16)
+                .transition(.asymmetric(
+                    insertion: .move(edge: monthNavigationDirection > 0 ? .trailing : .leading).combined(with: .opacity),
+                    removal: .move(edge: monthNavigationDirection > 0 ? .leading : .trailing).combined(with: .opacity)
+                ))
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: currentMonth)
                 .gesture(
                     DragGesture(minimumDistance: 30)
                         .onEnded { value in
                             let horizontalAmount = value.translation.width
 
                             if horizontalAmount < -50 {
-                                // Swipe left - next month
-                                withAnimation(.spring(response: 0.3)) {
+                                // Swipe left - next month (forward)
+                                monthNavigationDirection = 1
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
                                     currentMonth = Calendar.current.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
+                                    selectedDay = nil // Clear day selection when changing months
                                 }
                             } else if horizontalAmount > 50 {
-                                // Swipe right - previous month
-                                withAnimation(.spring(response: 0.3)) {
+                                // Swipe right - previous month (backward)
+                                monthNavigationDirection = -1
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
                                     currentMonth = Calendar.current.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
+                                    selectedDay = nil // Clear day selection when changing months
                                 }
                             }
                         }
@@ -588,6 +610,16 @@ struct CalendarView: View {
                     .id(currentMonth)
                     .padding(.horizontal)
                     .padding(.bottom, 16)
+                    .simultaneousGesture(
+                        TapGesture()
+                            .onEnded { _ in
+                                if showingExpandedHeader {
+                                    withAnimation(.spring(response: 0.3)) {
+                                        showingExpandedHeader = false
+                                    }
+                                }
+                            }
+                    )
                 }
 
                 // Custom Tab Selector (only show for current month)
@@ -615,21 +647,33 @@ struct CalendarView: View {
 
                 // Events list
                 eventsListSection
+                    .simultaneousGesture(
+                        TapGesture()
+                            .onEnded { _ in
+                                if showingExpandedHeader {
+                                    withAnimation(.spring(response: 0.3)) {
+                                        showingExpandedHeader = false
+                                    }
+                                }
+                            }
+                    )
             }
         }
-        .refreshable {
-            // Show the expanded header when user pulls down
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                showingExpandedHeader = true
+            .refreshable {
+                // Show the expanded header when user pulls down
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    showingExpandedHeader = true
+                }
             }
-        }
-        .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            geometry.contentOffset.y
-        } action: { oldValue, newValue in
-            // Auto-hide header when scrolling down
-            if showingExpandedHeader && newValue > 50 {
-                withAnimation(.spring(response: 0.3)) {
-                    showingExpandedHeader = false
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.y
+            } action: { oldValue, newValue in
+                // Auto-hide header when scrolling down - scroll to top with animation
+                if showingExpandedHeader && newValue > 1 {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        showingExpandedHeader = false
+                        scrollProxy.scrollTo("calendar-top-anchor", anchor: .top)
+                    }
                 }
             }
         }
@@ -1403,6 +1447,13 @@ struct EventDetailView: View {
                     Task {
                         do {
                             try await FirebaseManager.shared.updateEvent(updatedEvent)
+
+                            // Send push notification for event edit
+                            NotificationManager.shared.notifyEventEdited(event: updatedEvent)
+
+                            // Reschedule local reminders in case date changed
+                            NotificationManager.shared.scheduleEventReminders(for: updatedEvent)
+
                             await MainActor.run {
                                 currentEvent = updatedEvent
                             }
@@ -1428,19 +1479,17 @@ struct EventDetailView: View {
         ZStack {
             // Background (either custom image or gradient)
             if let backgroundURL = currentEvent.backgroundImageURL {
-                AsyncImage(url: URL(string: backgroundURL)) { phase in
-                    if let image = phase.image {
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .scaleEffect(currentEvent.backgroundScale ?? 1.0)
-                            .offset(
-                                x: CGFloat(currentEvent.backgroundOffsetX ?? 0.0),
-                                y: CGFloat(currentEvent.backgroundOffsetY ?? 0.0)
-                            )
-                    } else {
-                        defaultGradientBackground(isSpecial: currentEvent.isSpecial)
-                    }
+                CachedAsyncImage(url: URL(string: backgroundURL)) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .scaleEffect(currentEvent.backgroundScale ?? 1.0)
+                        .offset(
+                            x: CGFloat(currentEvent.backgroundOffsetX ?? 0.0),
+                            y: CGFloat(currentEvent.backgroundOffsetY ?? 0.0)
+                        )
+                } placeholder: {
+                    defaultGradientBackground(isSpecial: currentEvent.isSpecial)
                 }
             } else {
                 defaultGradientBackground(isSpecial: currentEvent.isSpecial)
@@ -1489,27 +1538,25 @@ struct EventDetailView: View {
 
                                 Spacer()
 
-                                // Add photos button for past events
-                                if isPastEvent {
-                                    PhotosPicker(selection: $photoPickerItems, matching: .images) {
-                                        HStack(spacing: 4) {
-                                            if isUploadingPhotos {
-                                                ProgressView()
-                                                    .scaleEffect(0.8)
-                                            } else {
-                                                Image(systemName: "plus.circle.fill")
-                                                Text("Add")
-                                                    .font(.caption)
-                                            }
+                                // Add photos button for all events
+                                PhotosPicker(selection: $photoPickerItems, matching: .images) {
+                                    HStack(spacing: 4) {
+                                        if isUploadingPhotos {
+                                            ProgressView()
+                                                .scaleEffect(0.8)
+                                        } else {
+                                            Image(systemName: "plus.circle.fill")
+                                            Text("Add")
+                                                .font(.caption)
                                         }
-                                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.8))
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 6)
-                                        .background(Color(red: 0.95, green: 0.9, blue: 1.0))
-                                        .cornerRadius(15)
                                     }
-                                    .disabled(isUploadingPhotos)
+                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.8))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Color(red: 0.95, green: 0.9, blue: 1.0))
+                                    .cornerRadius(15)
                                 }
+                                .disabled(isUploadingPhotos)
                             }
                             .padding(.horizontal)
 
@@ -1533,18 +1580,16 @@ struct EventDetailView: View {
                                     HStack(spacing: 12) {
                                         ForEach(Array(currentEvent.photoURLs.enumerated()), id: \.offset) { index, photoURL in
                                             ZStack(alignment: .topTrailing) {
-                                                AsyncImage(url: URL(string: photoURL)) { phase in
-                                                    if let image = phase.image {
-                                                        image
-                                                            .resizable()
-                                                            .scaledToFill()
-                                                            .frame(width: 250, height: 250)
-                                                            .clipped()
-                                                    } else {
-                                                        Color.gray.opacity(0.2)
-                                                            .frame(width: 250, height: 250)
-                                                            .overlay(ProgressView())
-                                                    }
+                                                CachedAsyncImage(url: URL(string: photoURL), thumbnailSize: 500) { image in
+                                                    image
+                                                        .resizable()
+                                                        .scaledToFill()
+                                                        .frame(width: 250, height: 250)
+                                                        .clipped()
+                                                } placeholder: {
+                                                    Color.gray.opacity(0.2)
+                                                        .frame(width: 250, height: 250)
+                                                        .overlay(ProgressView())
                                                 }
                                                 .clipShape(RoundedRectangle(cornerRadius: 15))
                                                 .overlay(
@@ -1912,7 +1957,7 @@ struct EventDetailView: View {
                 let photoURL = try await FirebaseManager.shared.uploadPhoto(
                     imageData: compressedData,
                     caption: "",
-                    uploadedBy: "You",
+                    uploadedBy: UserIdentityManager.shared.currentUserName,
                     capturedAt: capturedAt,
                     eventId: currentEvent.id,
                     folderId: nil
@@ -1944,6 +1989,13 @@ struct EventDetailView: View {
             do {
                 try await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
                 print("🟢 [UPDATE SUCCESS] Event updated successfully")
+
+                // Send push notification for photos added to event
+                NotificationManager.shared.notifyPhotosAdded(
+                    count: newPhotoURLs.count,
+                    location: currentEvent.title,
+                    eventId: currentEvent.id
+                )
 
                 await MainActor.run {
                     currentEvent.photoURLs = updatedEvent.photoURLs
@@ -2190,7 +2242,7 @@ struct AddEventView: View {
             date: date,
             endDate: isMultiDay ? endDate : nil,
             location: location,
-            createdBy: "You",
+            createdBy: UserIdentityManager.shared.currentUserName,
             isSpecial: isSpecial,
             photoURLs: [],
             googleCalendarId: nil,
@@ -2394,16 +2446,14 @@ struct EditEventView: View {
 
             ZStack {
                 if let backgroundURL = backgroundImageURL {
-                    AsyncImage(url: URL(string: backgroundURL)) { phase in
-                        if let image = phase.image {
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .scaleEffect(backgroundScale)
-                                .offset(x: backgroundOffsetX, y: backgroundOffsetY)
-                        } else {
-                            defaultBackground
-                        }
+                    CachedAsyncImage(url: URL(string: backgroundURL)) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .scaleEffect(backgroundScale)
+                            .offset(x: backgroundOffsetX, y: backgroundOffsetY)
+                    } placeholder: {
+                        defaultBackground
                     }
                 } else {
                     defaultBackground
@@ -2612,12 +2662,17 @@ class CalendarViewModel: ObservableObject {
 
     var upcomingEvents: [CalendarEvent] {
         let now = Date()
-        return events.filter { $0.date >= now }.sorted { $0.date < $1.date }
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: now)
+        // Include all events from today (even if the time has passed) and future
+        return events.filter { $0.date >= startOfToday }.sorted { $0.date < $1.date }
     }
 
     var pastEvents: [CalendarEvent] {
-        let now = Date()
-        return events.filter { $0.date < now }.sorted { $0.date > $1.date }
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: Date())
+        // Events before today go to memories/past
+        return events.filter { $0.date < startOfToday }.sorted { $0.date > $1.date }
     }
 
     init() {
@@ -2649,10 +2704,22 @@ class CalendarViewModel: ObservableObject {
 
     func addEvent(_ event: CalendarEvent) async throws {
         try await firebaseManager.addCalendarEvent(event)
+
+        // Send push notification
+        NotificationManager.shared.notifyEventCreated(event: event)
+
+        // Schedule local reminders for 1 day and 2 hours before
+        NotificationManager.shared.scheduleEventReminders(for: event)
     }
 
     func updateEvent(_ event: CalendarEvent) async throws {
         try await firebaseManager.updateEvent(event)
+
+        // Send push notification
+        NotificationManager.shared.notifyEventEdited(event: event)
+
+        // Reschedule local reminders in case date changed
+        NotificationManager.shared.scheduleEventReminders(for: event)
     }
 
     func deleteEvent(_ event: CalendarEvent) async throws {
@@ -2706,15 +2773,10 @@ struct CalendarGridView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 8) {
                 ForEach(daysInMonth(), id: \.self) { date in
                     if let date = date {
-                        let isSelectedValue = selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!)
-                        let dayNum = calendar.component(.day, from: date)
-                        let hasEvents = !eventsForDay(date).isEmpty
-                        let _ = hasEvents ? print("🟢 Creating CalendarDayCell - Day \(dayNum), isSelected: \(isSelectedValue), selectedDay: \(selectedDay.map { calendar.component(.day, from: $0) } ?? 0)") : ()
-
                         CalendarDayCell(
                             date: date,
                             events: eventsForDay(date),
-                            isSelected: isSelectedValue,
+                            selectedDay: $selectedDay,
                             isToday: calendar.isDateInToday(date),
                             onTap: {
                                 handleDayTap(date: date)
@@ -2776,47 +2838,29 @@ struct CalendarGridView: View {
     }
 
     func handleDayTap(date: Date) {
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "MMM d, yyyy HH:mm"
-        let isPastDate = date < Date()
+        // Compare using start of day so today is not considered "past"
+        let startOfSelectedDay = calendar.startOfDay(for: date)
+        let startOfToday = calendar.startOfDay(for: Date())
+        let isPastDate = startOfSelectedDay < startOfToday
 
-        print("🔵 handleDayTap called")
-        print("   Date tapped: \(dateFormatter.string(from: date))")
-        print("   Is past date: \(isPastDate)")
-        print("   Current selectedDay: \(selectedDay.map { dateFormatter.string(from: $0) } ?? "nil")")
-        print("   Current tab: \(selectedTab)")
-
-        // Set selection immediately without animation to ensure state is updated
+        // Toggle selection if tapping same day, otherwise select new day
         if selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!) {
-            print("   ❌ Deselecting (same day tapped)")
-            selectedDay = nil // Deselect if tapping same day
+            selectedDay = nil
         } else {
-            print("   ✅ Setting selectedDay to: \(dateFormatter.string(from: date))")
             selectedDay = date
 
-            print("   New selectedDay value: \(selectedDay.map { dateFormatter.string(from: $0) } ?? "nil")")
-
             // Auto-switch tabs based on date
+            // Today and future dates go to "upcoming", past dates go to "memories"
             if isPastDate && selectedTab == 0 {
-                // Switch to Memories tab for past dates
-                print("   📱 Switching to Memories tab (animated)")
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     selectedTab = 1
                 }
             } else if !isPastDate && selectedTab == 1 {
-                // Switch to Upcoming tab for future dates
-                print("   📱 Switching to Upcoming tab (animated)")
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     selectedTab = 0
                 }
-            } else {
-                print("   📱 No tab switch needed")
             }
         }
-
-        print("   Final selectedDay: \(selectedDay.map { dateFormatter.string(from: $0) } ?? "nil")")
-        print("   Final tab: \(selectedTab)")
-        print("🔵 handleDayTap completed")
     }
 }
 
@@ -2824,7 +2868,7 @@ struct CalendarGridView: View {
 struct CalendarDayCell: View {
     let date: Date
     let events: [CalendarEvent]
-    let isSelected: Bool
+    @Binding var selectedDay: Date? // Binding to observe changes directly
     let isToday: Bool
     let onTap: () -> Void
     var onQuickAdd: (() -> Void)? = nil // Quick add for empty days
@@ -2832,12 +2876,22 @@ struct CalendarDayCell: View {
     @State private var showTooltip = false
     @State private var showQuickAddPrompt = false
 
+    private let calendar = Calendar.current
+
+    // Compute isSelected in body so it updates when binding changes
+    private var isSelected: Bool {
+        selectedDay != nil && calendar.isDate(date, inSameDayAs: selectedDay!)
+    }
+
     var body: some View {
         let dayNum = Calendar.current.component(.day, from: date)
         let isPastDate = date < Date()
-        let _ = print("🟡 CalendarDayCell body - Day \(dayNum), isPast: \(isPastDate), isSelected: \(isSelected), hasEvents: \(!events.isEmpty)")
 
         return Button(action: {
+            // Always handle selection first
+            onTap()
+
+            // Then show additional UI for empty days
             if events.isEmpty {
                 if onQuickAdd != nil && !isPastDate {
                     // Show "Add Event" prompt for empty future days
@@ -2861,8 +2915,6 @@ struct CalendarDayCell: View {
                         }
                     }
                 }
-            } else {
-                onTap()
             }
         }) {
             VStack(spacing: 4) {
@@ -3116,17 +3168,15 @@ struct MonthSummaryCard: View {
                                 }
                             }) {
                                 GeometryReader { geometry in
-                                    AsyncImage(url: URL(string: photoURL)) { phase in
-                                        if let image = phase.image {
-                                            image
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fill)
-                                                .frame(width: geometry.size.width, height: geometry.size.height)
-                                                .clipped()
-                                        } else {
-                                            Color.gray.opacity(0.2)
-                                                .overlay(ProgressView())
-                                        }
+                                    CachedAsyncImage(url: URL(string: photoURL), thumbnailSize: 280) { image in
+                                        image
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                            .frame(width: geometry.size.width, height: geometry.size.height)
+                                            .clipped()
+                                    } placeholder: {
+                                        Color.gray.opacity(0.2)
+                                            .overlay(ProgressView())
                                     }
                                 }
                                 .frame(height: 140)
@@ -3307,12 +3357,12 @@ struct MonthPhotosGridView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                // Background gradient
+                // Background gradient - light periwinkle
                 LinearGradient(
                     colors: [
-                        Color(red: 0.98, green: 0.96, blue: 1.0),
-                        Color(red: 0.96, green: 0.94, blue: 0.99),
-                        Color.white
+                        Color(red: 0.88, green: 0.88, blue: 1.0),
+                        Color(red: 0.92, green: 0.92, blue: 1.0),
+                        Color(red: 0.96, green: 0.96, blue: 1.0)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
@@ -3343,18 +3393,16 @@ struct MonthPhotosGridView: View {
                                         onPhotoTap(photoURLs, index)
                                     }
                                 }) {
-                                    AsyncImage(url: URL(string: photoURL)) { phase in
-                                        if let image = phase.image {
-                                            image
-                                                .resizable()
-                                                .scaledToFill()
-                                                .frame(width: 110, height: 110)
-                                                .clipped()
-                                        } else {
-                                            Color.gray.opacity(0.2)
-                                                .frame(width: 110, height: 110)
-                                                .overlay(ProgressView())
-                                        }
+                                    CachedAsyncImage(url: URL(string: photoURL), thumbnailSize: 220) { image in
+                                        image
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(width: 110, height: 110)
+                                            .clipped()
+                                    } placeholder: {
+                                        Color.gray.opacity(0.2)
+                                            .frame(width: 110, height: 110)
+                                            .overlay(ProgressView())
                                     }
                                     .aspectRatio(1, contentMode: .fill)
                                     .clipShape(RoundedRectangle(cornerRadius: 12))

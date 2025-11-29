@@ -182,6 +182,19 @@ class FirebaseManager: ObservableObject {
         try await batch.commit()
     }
 
+    // MARK: - Voice Memo Tags
+    func addTagToVoiceMemo(_ memoId: String, tag: String) async throws {
+        try await db.collection("voiceMessages").document(memoId).updateData([
+            "tags": FieldValue.arrayUnion([tag])
+        ])
+    }
+
+    func removeTagFromVoiceMemo(_ memoId: String, tag: String) async throws {
+        try await db.collection("voiceMessages").document(memoId).updateData([
+            "tags": FieldValue.arrayRemove([tag])
+        ])
+    }
+
     // MARK: - Photos
     func uploadPhoto(imageData: Data, caption: String = "", uploadedBy: String = "You", capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws -> String {
         let fileName = "\(UUID().uuidString).jpg"
@@ -443,6 +456,12 @@ class FirebaseManager: ObservableObject {
         try db.collection("calendarEvents").addDocument(from: event)
     }
 
+    /// Adds a calendar event and returns the document ID
+    func addCalendarEventWithId(_ event: CalendarEvent) async throws -> String {
+        let docRef = try db.collection("calendarEvents").addDocument(from: event)
+        return docRef.documentID
+    }
+
     func getCalendarEvents() -> AsyncThrowingStream<[CalendarEvent], Error> {
         AsyncThrowingStream { continuation in
             let listener = db.collection("calendarEvents")
@@ -606,5 +625,44 @@ class FirebaseManager: ObservableObject {
     func deleteWishListItem(_ item: WishListItem) async throws {
         guard let id = item.id else { return }
         try await db.collection("wishList").document(id).delete()
+    }
+
+    // MARK: - Wish Categories
+    func addWishCategory(_ category: WishCategory) async throws {
+        try db.collection("wishCategories").addDocument(from: category)
+    }
+
+    func getWishCategories() -> AsyncThrowingStream<[WishCategory], Error> {
+        AsyncThrowingStream { continuation in
+            let listener = db.collection("wishCategories")
+                .order(by: "createdAt", descending: false)
+                .addSnapshotListener { snapshot, error in
+                    if let error = error {
+                        continuation.finish(throwing: error)
+                        return
+                    }
+                    guard let documents = snapshot?.documents else {
+                        continuation.yield([])
+                        return
+                    }
+                    let categories = documents.compactMap { doc -> WishCategory? in
+                        try? doc.data(as: WishCategory.self)
+                    }
+                    continuation.yield(categories)
+                }
+            continuation.onTermination = { _ in
+                listener.remove()
+            }
+        }
+    }
+
+    func updateWishCategory(_ category: WishCategory) async throws {
+        guard let id = category.id else { return }
+        try db.collection("wishCategories").document(id).setData(from: category)
+    }
+
+    func deleteWishCategory(_ category: WishCategory) async throws {
+        guard let id = category.id else { return }
+        try await db.collection("wishCategories").document(id).delete()
     }
 }

@@ -2,7 +2,7 @@ import Foundation
 import FirebaseFirestore
 
 // MARK: - Voice Message Model
-struct VoiceMessage: Identifiable, Codable {
+struct VoiceMessage: Identifiable, Codable, Equatable {
     @DocumentID var id: String?
     var title: String
     var duration: TimeInterval
@@ -11,6 +11,9 @@ struct VoiceMessage: Identifiable, Codable {
     var fromUser: String
     var folderId: String? // Reference to custom folder
     var isFavorite: Bool? // Whether the memo is marked as favorite
+    var tags: [String]? // Custom tags for the memo
+    var waveformData: [Float]? // Stored waveform visualization data
+    var pauseMarkers: [TimeInterval]? // Timestamps where recording was paused
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -21,6 +24,9 @@ struct VoiceMessage: Identifiable, Codable {
         case fromUser
         case folderId
         case isFavorite
+        case tags
+        case waveformData
+        case pauseMarkers
     }
 }
 
@@ -155,6 +161,8 @@ struct WishListItem: Identifiable, Codable {
     var isCompleted: Bool
     var completedDate: Date?
     var category: String // e.g., "Place to Visit", "Activity", "Restaurant", "Experience"
+    var plannedDate: Date? // When the wish is planned for
+    var calendarEventId: String? // Reference to calendar event if planned
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -165,5 +173,24 @@ struct WishListItem: Identifiable, Codable {
         case isCompleted
         case completedDate
         case category
+        case plannedDate
+        case calendarEventId
+    }
+}
+
+// MARK: - Wish Category Model
+struct WishCategory: Identifiable, Codable {
+    @DocumentID var id: String?
+    var name: String
+    var icon: String // SF Symbol name
+    var colorHex: String // Hex color for the category
+    var createdAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case icon
+        case colorHex
+        case createdAt
     }
 }

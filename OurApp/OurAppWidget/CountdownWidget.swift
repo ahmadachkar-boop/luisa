@@ -24,19 +24,24 @@ struct CountdownEntry: TimelineEntry {
     }
 
     var countdownText: String {
-        if daysRemaining > 1 {
-            return "\(daysRemaining) days"
+        let totalHours = Calendar.current.dateComponents([.hour], from: Date(), to: eventDate).hour ?? 0
+
+        if totalHours < 0 {
+            return "Event passed"
+        } else if totalHours < 1 {
+            // Less than 1 hour - show minutes
+            let minutes = Calendar.current.dateComponents([.minute], from: Date(), to: eventDate).minute ?? 0
+            if minutes > 0 {
+                return "\(minutes) min"
+            }
+            return "Now!"
+        } else if totalHours < 24 {
+            // Less than 1 day - show hours
+            return "\(totalHours) hour\(totalHours == 1 ? "" : "s")"
         } else if daysRemaining == 1 {
             return "Tomorrow!"
-        } else if daysRemaining == 0 {
-            let hours = hoursRemaining
-            if hours > 0 {
-                return "\(hours) hour\(hours == 1 ? "" : "s")"
-            } else {
-                return "Today!"
-            }
         } else {
-            return "Event passed"
+            return "\(daysRemaining) days"
         }
     }
 
@@ -77,19 +82,17 @@ struct CountdownProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<CountdownEntry>) -> Void) {
         let entry = loadNextEvent() ?? .empty
 
-        // Update timeline every hour, or at midnight for day changes
+        // Update timeline every 15 minutes for more accurate countdowns
         let calendar = Calendar.current
-        let nextHour = calendar.date(byAdding: .hour, value: 1, to: Date()) ?? Date()
-        let nextMidnight = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: Date()) ?? Date())
-        let nextUpdate = min(nextHour, nextMidnight)
+        let next15Minutes = calendar.date(byAdding: .minute, value: 15, to: Date()) ?? Date()
 
-        let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
+        let timeline = Timeline(entries: [entry], policy: .after(next15Minutes))
         completion(timeline)
     }
 
     private func loadNextEvent() -> CountdownEntry? {
         // Load from shared UserDefaults (App Group)
-        guard let sharedDefaults = UserDefaults(suiteName: "group.com.ourapp.shared"),
+        guard let sharedDefaults = UserDefaults(suiteName: "group.com.ourapp"),
               let data = sharedDefaults.data(forKey: "upcomingEvents"),
               let events = try? JSONDecoder().decode([WidgetEvent].self, from: data),
               let nextEvent = events.first(where: { $0.date > Date() }) else {

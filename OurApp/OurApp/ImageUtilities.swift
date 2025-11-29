@@ -442,6 +442,7 @@ struct FullScreenPhotoViewer: View {
     let chronologicalPositions: [Int]? // Optional chronological position (1-based) for each photo
     let favoriteStates: [Bool]? // Optional favorite states for each photo
     let onToggleFavorite: ((Int) -> Void)? // Optional callback to toggle favorite
+    let uploadedByNames: [String]? // Optional names of who uploaded each photo
 
     // Use a unique ID to force complete view recreation
     @State private var viewID = UUID()
@@ -459,7 +460,7 @@ struct FullScreenPhotoViewer: View {
     @State private var loadedImages: [Int: UIImage] = [:]
     @State private var localFavoriteStates: [Bool] = []
 
-    init(photoURLs: [String], initialIndex: Int, onDismiss: @escaping () -> Void, onDelete: ((Int) -> Void)? = nil, captureDates: [Date?]? = nil, chronologicalPositions: [Int]? = nil, favoriteStates: [Bool]? = nil, onToggleFavorite: ((Int) -> Void)? = nil) {
+    init(photoURLs: [String], initialIndex: Int, onDismiss: @escaping () -> Void, onDelete: ((Int) -> Void)? = nil, captureDates: [Date?]? = nil, chronologicalPositions: [Int]? = nil, favoriteStates: [Bool]? = nil, onToggleFavorite: ((Int) -> Void)? = nil, uploadedByNames: [String]? = nil) {
         self.photoURLs = photoURLs
         self.initialIndex = initialIndex
         self.onDismiss = onDismiss
@@ -468,6 +469,7 @@ struct FullScreenPhotoViewer: View {
         self.chronologicalPositions = chronologicalPositions
         self.favoriteStates = favoriteStates
         self.onToggleFavorite = onToggleFavorite
+        self.uploadedByNames = uploadedByNames
 
         // Initialize directly with the index we want
         let safeIndex = max(0, min(initialIndex, photoURLs.count - 1))
@@ -582,22 +584,35 @@ struct FullScreenPhotoViewer: View {
                 }
 
                 // Bottom info area
-                VStack(spacing: 12) {
+                VStack(spacing: 8) {
+                    // Added by (if available)
+                    if let uploadedByNames = uploadedByNames,
+                       currentIndex < uploadedByNames.count {
+                        Text("Added by \(uploadedByNames[currentIndex])")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule()
+                                    .fill(Color.black.opacity(0.6))
+                            )
+                    }
+
                     // Capture date (if available)
                     if let captureDates = captureDates,
                        currentIndex < captureDates.count,
                        let captureDate = captureDates[currentIndex] {
                         Text(captureDate, style: .date)
                             .font(.caption)
-                            .foregroundColor(.white.opacity(0.8))
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 6)
+                            .foregroundColor(.white.opacity(0.9))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
                             .background(
                                 Capsule()
-                                    .fill(Color.black.opacity(0.5))
-                                    .blur(radius: 10)
+                                    .fill(Color.black.opacity(0.4))
                             )
-                            .shadow(radius: 2)
                     }
 
                     // Page indicators (max 10 dots)

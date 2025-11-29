@@ -205,58 +205,86 @@ struct PhotoGalleryView: View {
     }
 
     private var contentView: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                // Expandable header (hidden when collapsed)
-                expandableHeader
-                    .padding(.horizontal)
-                    .padding(.top, 4)
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Top anchor for scroll-to-top
+                    Color.clear
+                        .frame(height: 0)
+                        .id("photos-top-anchor")
 
-                // Folder navigation bar
-                folderNavigationBar
-                    .padding(.horizontal)
-                    .padding(.top, 8)
+                    // Expandable header (hidden when collapsed)
+                    expandableHeader
+                        .padding(.horizontal)
+                        .padding(.top, 4)
 
-                // Upload progress bar
-                if isUploading {
-                    uploadProgressBar
+                    // Folder navigation bar
+                    folderNavigationBar
                         .padding(.horizontal)
                         .padding(.top, 8)
-                }
 
-                // Active filters indicator
-                if hasDateFilter || sortOption != .newestFirst {
-                    activeFiltersBar
-                        .padding(.horizontal)
-                        .padding(.top, 8)
-                }
+                    // Upload progress bar
+                    if isUploading {
+                        uploadProgressBar
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                    }
 
-                // Show folders or photos based on current view
-                if currentFolderView == .events || currentFolderView == .specialEvents {
-                    folderListView
-                } else {
-                    photoGridView
+                    // Active filters indicator
+                    if hasDateFilter || sortOption != .newestFirst {
+                        activeFiltersBar
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                    }
+
+                    // Show folders or photos based on current view
+                    if currentFolderView == .events || currentFolderView == .specialEvents {
+                        folderListView
+                            .simultaneousGesture(
+                                TapGesture()
+                                    .onEnded { _ in
+                                        if showingExpandedHeader {
+                                            withAnimation(.spring(response: 0.3)) {
+                                                showingExpandedHeader = false
+                                            }
+                                        }
+                                    }
+                            )
+                    } else {
+                        photoGridView
+                            .simultaneousGesture(
+                                TapGesture()
+                                    .onEnded { _ in
+                                        if showingExpandedHeader {
+                                            withAnimation(.spring(response: 0.3)) {
+                                                showingExpandedHeader = false
+                                            }
+                                        }
+                                    }
+                            )
+                    }
                 }
             }
-        }
-        .refreshable {
-            // Show the expanded header when user pulls down
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                showingExpandedHeader = true
-            }
-        }
-        .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            geometry.contentOffset.y
-        } action: { oldValue, newValue in
-            // Auto-hide header when scrolling down (positive scroll offset means scrolled down)
-            if showingExpandedHeader && newValue > 50 {
-                withAnimation(.spring(response: 0.3)) {
-                    showingExpandedHeader = false
+            .refreshable {
+                // Show the expanded header when user pulls down
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    showingExpandedHeader = true
                 }
             }
-        }
-        .safeAreaInset(edge: .top) {
-            Color.clear.frame(height: 0)
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.y
+            } action: { oldValue, newValue in
+                // Auto-hide header when scrolling down - scroll to top with animation
+                if showingExpandedHeader && newValue > 1 {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        showingExpandedHeader = false
+                        scrollProxy.scrollTo("photos-top-anchor", anchor: .top)
+                    }
+                }
+            }
+            .safeAreaInset(edge: .top) {
+                Color.clear.frame(height: 0)
+            }
         }
         .simultaneousGesture(
             MagnificationGesture()
@@ -415,12 +443,12 @@ struct PhotoGalleryView: View {
                 VStack(spacing: 16) {
                     // Quick actions row
                     HStack(spacing: 12) {
-                        // Add Photos
+                        // Add button
                         PhotosPicker(selection: $selectedItems, matching: .images) {
                             HStack(spacing: 8) {
                                 Image(systemName: "plus.circle.fill")
                                     .font(.body)
-                                Text("Add Photos")
+                                Text("Add")
                                     .font(.subheadline.weight(.semibold))
                             }
                             .foregroundColor(.white)
@@ -956,11 +984,12 @@ struct PhotoGalleryView: View {
         ZStack {
             NavigationView {
                 ZStack {
-                    // Background gradient
+                    // Background gradient - light periwinkle
                     LinearGradient(
                         colors: [
-                            Color(red: 0.95, green: 0.9, blue: 1.0),
-                            Color.white
+                            Color(red: 0.88, green: 0.88, blue: 1.0),
+                            Color(red: 0.92, green: 0.92, blue: 1.0),
+                            Color(red: 0.96, green: 0.96, blue: 1.0)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -1076,6 +1105,12 @@ struct PhotoGalleryView: View {
                         showError = true
                     }
 
+                    // Send push notification for uploaded photos (gallery photos, not event photos)
+                    let successfulUploads = newItems.count - uploadErrors.count
+                    if successfulUploads > 0 {
+                        NotificationManager.shared.notifyPhotosAdded(count: successfulUploads, location: "gallery", eventId: nil)
+                    }
+
                     isUploading = false
                     uploadProgress = 0.0
                     uploadedCount = 0
@@ -1134,7 +1169,8 @@ struct PhotoGalleryView: View {
                                 }
                             }
                         }
-                    }
+                    },
+                    uploadedByNames: photosInDisplayOrder.map { $0.uploadedBy }
                 )
             }
             }
@@ -1615,7 +1651,7 @@ class PhotoGalleryViewModel: ObservableObject {
         _ = try await firebaseManager.uploadPhoto(
             imageData: imageData,
             caption: "",
-            uploadedBy: "You",
+            uploadedBy: UserIdentityManager.shared.currentUserName,
             capturedAt: capturedAt,
             eventId: eventId,
             folderId: folderId

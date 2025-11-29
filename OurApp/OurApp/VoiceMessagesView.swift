@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import UIKit
+import MediaPlayer
 
 // MARK: - Sort Options
 enum VoiceMemoSortOption: String, CaseIterable {
@@ -26,6 +27,7 @@ enum VoiceMemoFolderViewType: Hashable {
     case categorySelection // Main view showing Ahmad/Luisa categories
     case allMemos(String) // All memos for a user (Ahmad or Luisa)
     case favorites(String) // Favorites for a user
+    case allFavorites // All favorites from both users
     case folder(String, String) // Custom folder (folderId, forUser)
 }
 
@@ -33,6 +35,51 @@ enum VoiceMemoFolderViewType: Hashable {
 struct VoiceMemoPlaybackIndex: Identifiable {
     let id = UUID()
     let value: Int
+}
+
+// MARK: - Mini Player Waveform
+struct MiniPlayerWaveform: View {
+    let isPlaying: Bool
+    @State private var animationPhase: CGFloat = 0
+
+    private let barCount = 5
+    private let baseHeights: [CGFloat] = [12, 16, 20, 14, 10]
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(0..<barCount, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color(red: 0.8, green: 0.7, blue: 1.0))
+                    .frame(width: 3, height: barHeight(for: index))
+            }
+        }
+        .onAppear {
+            if isPlaying {
+                startAnimation()
+            }
+        }
+        .onChange(of: isPlaying) { _, newValue in
+            if newValue {
+                startAnimation()
+            }
+        }
+    }
+
+    private func barHeight(for index: Int) -> CGFloat {
+        if isPlaying {
+            let phase = animationPhase + CGFloat(index) * 0.4
+            let oscillation = sin(phase) * 6
+            return max(6, baseHeights[index] + oscillation)
+        } else {
+            return 8
+        }
+    }
+
+    private func startAnimation() {
+        withAnimation(.linear(duration: 0.5).repeatForever(autoreverses: false)) {
+            animationPhase = .pi * 2
+        }
+    }
 }
 
 struct VoiceMessagesView: View {
@@ -52,6 +99,7 @@ struct VoiceMessagesView: View {
     @State private var newFolderName = ""
     @State private var currentUserCategory: String = "Ahmad" // Track which user we're recording for
     @State private var showingMoveToFolder = false
+    @State private var isFoldersExpanded: Bool = false // Track if folders section is expanded
     @State private var selectedPlaybackIndex: VoiceMemoPlaybackIndex?
 
     // Search state
@@ -62,6 +110,11 @@ struct VoiceMessagesView: View {
     @State private var shareMessage: VoiceMessage?
     @State private var shareItems: [Any] = []
     @State private var showingShareSheet = false
+
+    // Tags state
+    @State private var showingTagSheet = false
+    @State private var selectedTagFilter: String? = nil
+    @State private var newTagText = ""
 
     // Magnification gesture state
     @GestureState private var magnificationScale: CGFloat = 1.0
@@ -79,7 +132,7 @@ struct VoiceMessagesView: View {
     // Get current user from folder view
     private var currentUser: String? {
         switch currentFolderView {
-        case .categorySelection:
+        case .categorySelection, .allFavorites:
             return nil
         case .allMemos(let user), .favorites(let user):
             return user
@@ -97,6 +150,8 @@ struct VoiceMessagesView: View {
             return "From \(user)"
         case .favorites(let user):
             return "\(user)'s Favorites"
+        case .allFavorites:
+            return "All Favorites"
         case .folder(let folderId, _):
             if let folder = viewModel.folders.first(where: { $0.id == folderId }) {
                 return folder.name
@@ -121,6 +176,8 @@ struct VoiceMessagesView: View {
             messages = viewModel.voiceMessages.filter { $0.fromUser == user }
         case .favorites(let user):
             messages = viewModel.voiceMessages.filter { $0.fromUser == user && $0.isFavorite == true }
+        case .allFavorites:
+            messages = viewModel.voiceMessages.filter { $0.isFavorite == true }
         case .folder(let folderId, let user):
             messages = viewModel.voiceMessages.filter { $0.fromUser == user && $0.folderId == folderId }
         }
@@ -130,8 +187,14 @@ struct VoiceMessagesView: View {
             let searchLower = searchText.lowercased()
             messages = messages.filter { message in
                 message.title.lowercased().contains(searchLower) ||
-                message.fromUser.lowercased().contains(searchLower)
+                message.fromUser.lowercased().contains(searchLower) ||
+                (message.tags?.contains { $0.lowercased().contains(searchLower) } ?? false)
             }
+        }
+
+        // Apply tag filter
+        if let tagFilter = selectedTagFilter {
+            messages = messages.filter { $0.tags?.contains(tagFilter) ?? false }
         }
 
         // Apply date filter
@@ -189,11 +252,12 @@ struct VoiceMessagesView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                // Background gradient
+                // Background gradient - light periwinkle
                 LinearGradient(
                     colors: [
-                        Color(red: 0.95, green: 0.9, blue: 1.0),
-                        Color.white
+                        Color(red: 0.88, green: 0.88, blue: 1.0),
+                        Color(red: 0.92, green: 0.92, blue: 1.0),
+                        Color(red: 0.96, green: 0.96, blue: 1.0)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
@@ -203,7 +267,8 @@ struct VoiceMessagesView: View {
                 VStack(spacing: 0) {
                     if currentFolderView == .categorySelection {
                         categorySelectionView
-                    } else if filteredMessages.isEmpty && !viewModel.voiceMessages.isEmpty {
+                    } else if filteredMessages.isEmpty && !viewModel.voiceMessages.isEmpty && !hasSearchFilter {
+                        // Only show empty folder view if NOT searching
                         emptyFolderView
                     } else if viewModel.voiceMessages.isEmpty {
                         emptyStateView
@@ -216,6 +281,7 @@ struct VoiceMessagesView: View {
                         miniPlayerView
                     }
                 }
+
             }
             .toolbar {
                 if selectionMode {
@@ -239,6 +305,13 @@ struct VoiceMessagesView: View {
                             Button(action: toggleFavoritesForSelected) {
                                 Image(systemName: "heart.fill")
                                     .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
+                            }
+                            .disabled(selectedMessageIds.isEmpty)
+
+                            // Tag button
+                            Button(action: { showingTagSheet = true }) {
+                                Image(systemName: "tag.fill")
+                                    .foregroundColor(Color(red: 0.4, green: 0.7, blue: 0.9))
                             }
                             .disabled(selectedMessageIds.isEmpty)
 
@@ -324,6 +397,25 @@ struct VoiceMessagesView: View {
                     ShareSheet(items: shareItems)
                 }
             }
+            .sheet(isPresented: $showingTagSheet) {
+                VoiceMemoTagSheet(
+                    existingTags: viewModel.allTags,
+                    onAddTag: { tag in
+                        Task {
+                            for id in selectedMessageIds {
+                                try? await viewModel.addTag(tag, to: id)
+                            }
+                            await MainActor.run {
+                                showingTagSheet = false
+                                selectionMode = false
+                                selectedMessageIds.removeAll()
+                            }
+                        }
+                    },
+                    onCancel: { showingTagSheet = false }
+                )
+                .presentationDetents([.medium])
+            }
             .onChange(of: shareMessage) { oldValue, newValue in
                 if let message = newValue {
                     prepareShareItems(for: message)
@@ -403,11 +495,13 @@ struct VoiceMessagesView: View {
                     currentUserCategory = "Luisa"
                 }
 
-                // All Favorites
+                // Quick Access Section - All Favorites only
                 let totalFavorites = viewModel.voiceMessages.filter { $0.isFavorite == true }.count
+
                 if totalFavorites > 0 {
                     Divider()
                         .padding(.horizontal)
+                        .padding(.top, 8)
 
                     Text("Quick Access")
                         .font(.headline)
@@ -415,29 +509,36 @@ struct VoiceMessagesView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal)
 
-                    // All Favorites card (shows both)
-                    HStack(spacing: 12) {
-                        Image(systemName: "heart.fill")
-                            .font(.title2)
-                            .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
+                    // All Favorites card
+                    Button(action: { navigateToFolder(.allFavorites) }) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "heart.fill")
+                                .font(.title2)
+                                .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("All Favorites")
-                                .font(.headline)
-                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-                            Text("\(totalFavorites) memo\(totalFavorites == 1 ? "" : "s")")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("All Favorites")
+                                    .font(.headline)
+                                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                                Text("\(totalFavorites) memo\(totalFavorites == 1 ? "" : "s")")
+                                    .font(.caption)
+                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                            }
+
+                            Spacer()
+
+                            Image(systemName: "chevron.right")
                                 .font(.caption)
-                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
                         }
-
-                        Spacer()
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color.white)
+                                .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
+                        )
                     }
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.white)
-                            .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
-                    )
+                    .buttonStyle(PlainButtonStyle())
                     .padding(.horizontal)
                 }
             }
@@ -489,71 +590,201 @@ struct VoiceMessagesView: View {
 
     // MARK: - Empty Folder View
     private var emptyFolderView: some View {
+        VStack(spacing: 0) {
+            // Navigation bar with back button
+            HStack(spacing: 12) {
+                Button(action: {
+                    let previousView = folderNavStack.popLast() ?? .categorySelection
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        currentFolderView = previousView
+                    }
+                }) {
+                    Image(systemName: "chevron.left")
+                        .font(.title3)
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+
+                Text(folderTitle)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                Spacer()
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.white.opacity(0.9))
+                    .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+            )
+            .padding(.horizontal)
+            .padding(.top, 8)
+
+            Spacer()
+
+            VStack(spacing: 20) {
+                Image(systemName: "folder")
+                    .font(.system(size: 60))
+                    .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
+
+                Text("No memos here")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                Text("Add memos to this folder or record a new one")
+                    .font(.subheadline)
+                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+                    .multilineTextAlignment(.center)
+
+                Button(action: { showingRecorder = true }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "mic.fill")
+                        Text("Record")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.7, green: 0.45, blue: 0.95),
+                                Color(red: 0.55, green: 0.35, blue: 0.85)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .cornerRadius(20)
+                }
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .gesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    let horizontalAmount = value.translation.width
+                    let verticalAmount = abs(value.translation.height)
+
+                    // Swipe right to go back
+                    if horizontalAmount > 50 && abs(horizontalAmount) > verticalAmount * 2 {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            let previousView = folderNavStack.popLast() ?? .categorySelection
+                            currentFolderView = previousView
+                        }
+                    }
+                }
+        )
+    }
+
+    // MARK: - Empty Search Results View
+    private var emptySearchResultsView: some View {
         VStack(spacing: 20) {
-            Image(systemName: "folder")
-                .font(.system(size: 60))
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 50))
                 .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
 
-            Text("No memos here")
+            Text("No results for \"\(searchText)\"")
                 .font(.title3)
                 .fontWeight(.semibold)
                 .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
 
-            Text("Add memos to this folder or record a new one")
+            Text("Try a different search term")
                 .font(.subheadline)
                 .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
-                .multilineTextAlignment(.center)
+
+            Button(action: {
+                withAnimation {
+                    searchText = ""
+                    isSearchActive = false
+                }
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "xmark.circle.fill")
+                    Text("Clear Search")
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundColor(.white)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(Color(red: 0.6, green: 0.4, blue: 0.85))
+                .cornerRadius(20)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
     }
 
     // MARK: - Content View
     private var contentView: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                // Expandable header
-                expandableHeader
-                    .padding(.horizontal)
-                    .padding(.top, 4)
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Top anchor for scroll-to-top
+                    Color.clear
+                        .frame(height: 0)
+                        .id("top-anchor")
 
-                // Search bar
-                searchBar
-                    .padding(.horizontal)
-                    .padding(.top, 8)
+                    // Expandable header
+                    expandableHeader
+                        .padding(.horizontal)
+                        .padding(.top, 4)
 
-                // Navigation bar
-                navigationBar
-                    .padding(.horizontal)
-                    .padding(.top, 8)
-
-                // Active filters indicator
-                if hasDateFilter || sortOption != .newestFirst || hasSearchFilter {
-                    activeFiltersBar
+                    // Navigation bar
+                    navigationBar
                         .padding(.horizontal)
                         .padding(.top, 8)
-                }
 
-                // Folders section (when in allMemos view and not searching)
-                if case .allMemos(let user) = currentFolderView, !hasSearchFilter {
-                    foldersSection(forUser: user)
-                        .padding(.top, 12)
-                }
+                    // Active filters indicator
+                    if hasDateFilter || sortOption != .newestFirst || hasSearchFilter {
+                        activeFiltersBar
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                    }
 
-                // Voice memo grid
-                voiceMemoGridView
+                    // Folders section (when in allMemos view and not searching)
+                    if case .allMemos(let user) = currentFolderView, !hasSearchFilter {
+                        foldersSection(forUser: user)
+                            .padding(.top, 12)
+                    }
+
+                    // Empty search results
+                    if hasSearchFilter && filteredMessages.isEmpty {
+                        emptySearchResultsView
+                    } else {
+                        // Voice memo grid
+                        voiceMemoGridView
+                            .simultaneousGesture(
+                                TapGesture()
+                                    .onEnded { _ in
+                                        if showingExpandedHeader {
+                                            withAnimation(.spring(response: 0.3)) {
+                                                showingExpandedHeader = false
+                                            }
+                                        }
+                                    }
+                            )
+                    }
+                }
             }
-        }
-        .refreshable {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                showingExpandedHeader = true
+            .refreshable {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    showingExpandedHeader = true
+                }
             }
-        }
-        .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            geometry.contentOffset.y
-        } action: { oldValue, newValue in
-            if showingExpandedHeader && newValue > 50 {
-                withAnimation(.spring(response: 0.3)) {
-                    showingExpandedHeader = false
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.y
+            } action: { oldValue, newValue in
+                // Auto-hide header when scrolling down - scroll to top with animation
+                if showingExpandedHeader && newValue > 1 {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        showingExpandedHeader = false
+                        scrollProxy.scrollTo("top-anchor", anchor: .top)
+                    }
                 }
             }
         }
@@ -568,6 +799,33 @@ struct VoiceMessagesView: View {
                             columnCount += 1
                         } else if value > 1.2 && columnCount > 1 {
                             columnCount -= 1
+                        }
+                    }
+                }
+        )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    let horizontalAmount = value.translation.width
+                    let verticalAmount = abs(value.translation.height)
+
+                    // Only trigger if it's more horizontal than vertical
+                    if abs(horizontalAmount) > 50 && abs(horizontalAmount) > verticalAmount * 2 {
+                        if horizontalAmount > 0 {
+                            // Swipe right - navigate back
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                let previousView = folderNavStack.popLast() ?? .categorySelection
+                                currentFolderView = previousView
+                            }
+                        } else if horizontalAmount < 0 {
+                            // Swipe left - switch to other user (only from allMemos view)
+                            if case .allMemos(let currentUserName) = currentFolderView {
+                                let otherUser = currentUserName == "Ahmad" ? "Luisa" : "Ahmad"
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    currentFolderView = .allMemos(otherUser)
+                                    currentUserCategory = otherUser
+                                }
+                            }
                         }
                     }
                 }
@@ -614,136 +872,194 @@ struct VoiceMessagesView: View {
 
     // MARK: - Folders Section
     private func foldersSection(forUser user: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Favorites
-            let favoritesCount = viewModel.voiceMessages.filter { $0.fromUser == user && $0.isFavorite == true }.count
-            if favoritesCount > 0 {
-                Button(action: { navigateToFolder(.favorites(user)) }) {
-                    HStack(spacing: 12) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color(red: 0.9, green: 0.4, blue: 0.5).opacity(0.15))
-                                .frame(width: 44, height: 44)
-                            Image(systemName: "heart.fill")
-                                .font(.title3)
-                                .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
-                        }
+        let userFolders = viewModel.folders.filter { $0.forUser == user }
+        let favoritesCount = viewModel.voiceMessages.filter { $0.fromUser == user && $0.isFavorite == true }.count
+        let totalFolderItems = userFolders.count + (favoritesCount > 0 ? 1 : 0)
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Favorites")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-                            Text("\(favoritesCount) memo\(favoritesCount == 1 ? "" : "s")")
-                                .font(.caption)
-                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                        }
-
-                        Spacer()
-
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
-                    }
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(Color.white)
-                            .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-
-            // Custom folders
-            let userFolders = viewModel.folders.filter { $0.forUser == user }
-            ForEach(userFolders, id: \.id) { folder in
-                let folderCount = viewModel.voiceMessages.filter { $0.folderId == folder.id }.count
-                Button(action: {
-                    if let folderId = folder.id {
-                        navigateToFolder(.folder(folderId, user))
-                    }
-                }) {
-                    HStack(spacing: 12) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.15))
-                                .frame(width: 44, height: 44)
-                            Image(systemName: "folder.fill")
-                                .font(.title3)
-                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                        }
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(folder.name)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-                            Text("\(folderCount) memo\(folderCount == 1 ? "" : "s")")
-                                .font(.caption)
-                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                        }
-
-                        Spacer()
-
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
-                    }
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(Color.white)
-                            .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .contextMenu {
-                    Button(role: .destructive, action: {
-                        Task {
-                            try? await viewModel.deleteFolder(folder)
-                        }
-                    }) {
-                        Label("Delete Folder", systemImage: "trash")
-                    }
-                }
-            }
-        }
-        .padding(.horizontal)
-    }
-
-    // MARK: - Expandable Header
-    private var expandableHeader: some View {
-        VStack(spacing: 0) {
-            // Pull indicator (always visible)
+        return VStack(spacing: 0) {
+            // Expandable folder toggle button
             Button(action: {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                    showingExpandedHeader.toggle()
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    isFoldersExpanded.toggle()
                 }
             }) {
-                VStack(spacing: 6) {
-                    // Pull handle
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color(red: 0.7, green: 0.6, blue: 0.85))
-                        .frame(width: 40, height: 4)
-
-                    HStack(spacing: 4) {
-                        Image(systemName: showingExpandedHeader ? "chevron.up" : "chevron.down")
-                            .font(.caption2)
-                        Text(showingExpandedHeader ? "Hide Settings" : "Settings & Actions")
-                            .font(.caption)
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.15))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: "folder.fill")
+                            .font(.title3)
+                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                     }
-                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Folders")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                        if totalFolderItems > 0 {
+                            Text("\(totalFolderItems) folder\(totalFolderItems == 1 ? "" : "s")")
+                                .font(.caption)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        } else {
+                            Text("No folders yet")
+                                .font(.caption)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        }
+                    }
+
+                    Spacer()
+
+                    Image(systemName: isFoldersExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
                 }
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity)
+                .padding(12)
                 .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(red: 0.98, green: 0.96, blue: 1.0))
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(Color.white)
+                        .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
                 )
             }
             .buttonStyle(PlainButtonStyle())
+            .padding(.horizontal)
 
+            // Expanded folder list
+            if isFoldersExpanded {
+                VStack(spacing: 8) {
+                    // Favorites (if any)
+                    if favoritesCount > 0 {
+                        Button(action: { navigateToFolder(.favorites(user)) }) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "heart.fill")
+                                    .font(.subheadline)
+                                    .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
+
+                                Text("Favorites")
+                                    .font(.subheadline)
+                                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                                Spacer()
+
+                                Text("\(favoritesCount)")
+                                    .font(.caption)
+                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color(red: 0.9, green: 0.4, blue: 0.5).opacity(0.15))
+                                    )
+
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2)
+                                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+
+                    // Custom folders
+                    ForEach(userFolders, id: \.id) { folder in
+                        let folderCount = viewModel.voiceMessages.filter { $0.folderId == folder.id }.count
+                        Button(action: {
+                            if let folderId = folder.id {
+                                navigateToFolder(.folder(folderId, user))
+                            }
+                        }) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "folder")
+                                    .font(.subheadline)
+                                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                                Text(folder.name)
+                                    .font(.subheadline)
+                                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                                Spacer()
+
+                                if folderCount > 0 {
+                                    Text("\(folderCount)")
+                                        .font(.caption)
+                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 2)
+                                        .background(
+                                            Capsule()
+                                                .fill(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.15))
+                                        )
+                                }
+
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2)
+                                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .contextMenu {
+                            Button(role: .destructive, action: {
+                                Task {
+                                    try? await viewModel.deleteFolder(folder)
+                                }
+                            }) {
+                                Label("Delete Folder", systemImage: "trash")
+                            }
+                        }
+                    }
+
+                    // Create new folder button
+                    Button(action: {
+                        newFolderName = ""
+                        showingCreateFolder = true
+                    }) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.subheadline)
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                            Text("Create New Folder")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [5]))
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                .padding(.horizontal, 32)
+                .padding(.top, 8)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    // MARK: - Expandable Header (hidden when collapsed)
+    private var expandableHeader: some View {
+        VStack(spacing: 0) {
+            // Expanded content only - no indicators when collapsed
             if showingExpandedHeader {
                 VStack(spacing: 16) {
+                    // Search bar
+                    searchBar
+
                     // Quick actions row
                     HStack(spacing: 12) {
                         // Record
@@ -959,31 +1275,82 @@ struct VoiceMessagesView: View {
 
     // MARK: - Navigation Bar
     private var navigationBar: some View {
-        HStack(spacing: 12) {
-            // Back button
-            if currentFolderView != .categorySelection {
-                Button(action: {
-                    let previousView = folderNavStack.popLast() ?? .categorySelection
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        currentFolderView = previousView
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                // Back button
+                if currentFolderView != .categorySelection {
+                    Button(action: {
+                        let previousView = folderNavStack.popLast() ?? .categorySelection
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            currentFolderView = previousView
+                        }
+                    }) {
+                        Image(systemName: "chevron.left")
+                            .font(.title3)
+                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                     }
-                }) {
-                    Image(systemName: "chevron.left")
-                        .font(.title3)
-                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                 }
+
+                Text(folderTitle)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                Spacer()
+
+                Text("\(filteredMessages.count) memo\(filteredMessages.count == 1 ? "" : "s")")
+                    .font(.subheadline)
+                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
             }
 
-            Text(folderTitle)
-                .font(.title2)
-                .fontWeight(.bold)
-                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+            // Swipe indicator for switching between Ahmad/Luisa
+            if case .allMemos(let user) = currentFolderView {
+                HStack(spacing: 16) {
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            currentFolderView = .allMemos("Ahmad")
+                            currentUserCategory = "Ahmad"
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            if user == "Ahmad" {
+                                Image(systemName: "chevron.left")
+                                    .font(.caption2)
+                            }
+                            Text("Ahmad")
+                                .font(.caption.weight(user == "Ahmad" ? .bold : .regular))
+                        }
+                        .foregroundColor(user == "Ahmad" ? Color(red: 0.4, green: 0.6, blue: 0.9) : Color(red: 0.5, green: 0.4, blue: 0.7))
+                    }
 
-            Spacer()
+                    // Swipe indicator
+                    HStack(spacing: 4) {
+                        Image(systemName: "hand.draw.fill")
+                            .font(.caption2)
+                        Text("swipe")
+                            .font(.caption2)
+                    }
+                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8).opacity(0.6))
 
-            Text("\(filteredMessages.count) memo\(filteredMessages.count == 1 ? "" : "s")")
-                .font(.subheadline)
-                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            currentFolderView = .allMemos("Luisa")
+                            currentUserCategory = "Luisa"
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            Text("Luisa")
+                                .font(.caption.weight(user == "Luisa" ? .bold : .regular))
+                            if user == "Luisa" {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2)
+                            }
+                        }
+                        .foregroundColor(user == "Luisa" ? Color(red: 0.9, green: 0.5, blue: 0.6) : Color(red: 0.5, green: 0.4, blue: 0.7))
+                    }
+                }
+                .padding(.top, 4)
+            }
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 16)
@@ -1103,7 +1470,7 @@ struct VoiceMessagesView: View {
 
                             VoiceMemoGridCell(
                                 message: message,
-                                isPlaying: viewModel.currentlyPlayingId == message.id,
+                                isPlaying: viewModel.currentlyPlayingId == message.id && viewModel.isPlaying,
                                 selectionMode: selectionMode,
                                 isSelected: selectedMessageIds.contains(message.id ?? ""),
                                 columnCount: columnCount,
@@ -1140,6 +1507,13 @@ struct VoiceMessagesView: View {
                                 },
                                 onShare: {
                                     shareMessage = message
+                                },
+                                onPlayToggle: {
+                                    if viewModel.currentlyPlayingId == message.id {
+                                        viewModel.togglePlayPause()
+                                    } else {
+                                        viewModel.playMessage(message)
+                                    }
                                 }
                             )
                         }
@@ -1175,15 +1549,8 @@ struct VoiceMessagesView: View {
             if let message = viewModel.currentlyPlayingMessage {
                 HStack(spacing: 12) {
                     // Waveform indicator
-                    HStack(spacing: 2) {
-                        ForEach(0..<5, id: \.self) { i in
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(Color(red: 0.8, green: 0.7, blue: 1.0))
-                                .frame(width: 3, height: viewModel.isPlaying ? CGFloat.random(in: 8...20) : 8)
-                                .animation(.easeInOut(duration: 0.3).repeatForever(), value: viewModel.isPlaying)
-                        }
-                    }
-                    .frame(width: 30)
+                    MiniPlayerWaveform(isPlaying: viewModel.isPlaying)
+                        .frame(width: 30)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(message.title)
@@ -1366,6 +1733,7 @@ struct VoiceMemoGridCell: View {
     let onToggleFavorite: () -> Void
     let onDelete: () -> Void
     let onShare: () -> Void
+    let onPlayToggle: () -> Void
 
     @State private var showingDeleteAlert = false
     @State private var swipeOffset: CGFloat = 0
@@ -1500,38 +1868,49 @@ struct VoiceMemoGridCell: View {
                     }
                     .padding()
                 } else {
-                    // Vertical layout for grid
-                    Spacer()
-                    waveformView
-                    Spacer()
-                    playButton
-                    Spacer()
+                    // Vertical layout for grid - all content contained within card
+                    VStack(spacing: columnCount == 2 ? 6 : 4) {
+                        Spacer(minLength: 4)
 
-                    VStack(spacing: 2) {
-                        Text(message.title)
-                            .font(columnCount == 2 ? .subheadline : .caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
-                            .lineLimit(1)
+                        waveformView
 
-                        Text(formatDuration(message.duration))
-                            .font(.caption2)
-                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        playButton
 
-                        Text(timeAgo(from: message.createdAt))
-                            .font(.caption2)
-                            .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
+                        VStack(spacing: 2) {
+                            Text(message.title)
+                                .font(columnCount == 2 ? .subheadline : .caption2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
+                                .lineLimit(columnCount == 2 ? 2 : 1)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: .infinity)
+
+                            Text(formatDuration(message.duration))
+                                .font(.caption2)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+
+                            if columnCount == 2 {
+                                Text(timeAgo(from: message.createdAt))
+                                    .font(.caption2)
+                                    .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
+                            }
+                        }
+                        .padding(.horizontal, 8)
+
+                        Spacer(minLength: 4)
                     }
-                    .padding(.bottom, 8)
+                    .padding(.vertical, 8)
                 }
             }
             .frame(maxWidth: .infinity)
             .frame(height: cellHeight)
+            .clipped()
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(Color.white)
                     .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
             )
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .overlay(
                 selectionMode ?
                     RoundedRectangle(cornerRadius: cornerRadius)
@@ -1620,20 +1999,25 @@ struct VoiceMemoGridCell: View {
     }
 
     private var playButton: some View {
-        ZStack {
-            Circle()
-                .fill(
-                    isPlaying ?
-                        Color(red: 0.9, green: 0.4, blue: 0.5) :
-                        Color(red: 0.8, green: 0.7, blue: 1.0)
-                )
-                .frame(width: columnCount == 1 ? 50 : 44, height: columnCount == 1 ? 50 : 44)
+        Button(action: {
+            onPlayToggle()
+        }) {
+            ZStack {
+                Circle()
+                    .fill(
+                        isPlaying ?
+                            Color(red: 0.9, green: 0.4, blue: 0.5) :
+                            Color(red: 0.8, green: 0.7, blue: 1.0)
+                    )
+                    .frame(width: columnCount == 1 ? 50 : 44, height: columnCount == 1 ? 50 : 44)
 
-            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                .font(.system(size: columnCount == 1 ? 20 : 18))
-                .foregroundColor(.white)
-                .offset(x: isPlaying ? 0 : 2)
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: columnCount == 1 ? 20 : 18))
+                    .foregroundColor(.white)
+                    .offset(x: isPlaying ? 0 : 2)
+            }
         }
+        .buttonStyle(PlainButtonStyle())
     }
 
     private var waveformView: some View {
@@ -1695,6 +2079,7 @@ struct FullScreenVoiceMemoPlayer: View {
     @State private var showingShareSheet = false
     @State private var shareItems: [Any] = []
     @State private var isPreparingShare = false
+    @State private var dismissOffset: CGFloat = 0
 
     init(memos: [VoiceMessage], initialIndex: Int, viewModel: VoiceMessagesViewModel, onDismiss: @escaping () -> Void) {
         self.memos = memos
@@ -1767,24 +2152,13 @@ struct FullScreenVoiceMemoPlayer: View {
                 Spacer()
 
                 if let memo = currentMemo {
-                    // Large waveform visualization
-                    HStack(spacing: 4) {
-                        ForEach(0..<30, id: \.self) { index in
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [
-                                            Color(red: 0.8, green: 0.7, blue: 1.0),
-                                            Color(red: 0.6, green: 0.4, blue: 0.85)
-                                        ],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    )
-                                )
-                                .frame(width: 6, height: waveformHeight(for: index))
-                                .opacity(Double(index) / 30.0 <= playbackProgress ? 1.0 : 0.4)
-                        }
-                    }
+                    // Large waveform visualization with actual data
+                    WaveformView(
+                        waveformData: viewModel.currentWaveform,
+                        progress: playbackProgress,
+                        pauseMarkers: memo.pauseMarkers ?? [],
+                        duration: memo.duration
+                    )
                     .frame(height: 120)
                     .padding(.horizontal, 20)
 
@@ -1951,22 +2325,53 @@ struct FullScreenVoiceMemoPlayer: View {
                 .padding(.bottom, 30)
             }
         }
+        .offset(y: dismissOffset)
+        .opacity(Double(1.0 - (dismissOffset / 400.0)))
         .gesture(
             DragGesture()
                 .updating($dragOffset) { value, state, _ in
                     state = value.translation.width
                 }
+                .onChanged { value in
+                    // Track vertical movement for dismiss
+                    if value.translation.height > 0 {
+                        dismissOffset = value.translation.height
+                    }
+                }
                 .onEnded { value in
-                    let threshold: CGFloat = 50
-                    if value.translation.width > threshold && currentIndex > 0 {
+                    let horizontalThreshold: CGFloat = 50
+                    let verticalThreshold: CGFloat = 100
+
+                    // Check for vertical swipe down to dismiss
+                    if value.translation.height > verticalThreshold && abs(value.translation.height) > abs(value.translation.width) {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            dismissOffset = 500
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            onDismiss()
+                        }
+                    }
+                    // Check for horizontal swipe to change memo
+                    else if value.translation.width > horizontalThreshold && currentIndex > 0 {
                         withAnimation {
                             currentIndex -= 1
                             playMemo()
                         }
-                    } else if value.translation.width < -threshold && currentIndex < memos.count - 1 {
+                        withAnimation(.spring()) {
+                            dismissOffset = 0
+                        }
+                    } else if value.translation.width < -horizontalThreshold && currentIndex < memos.count - 1 {
                         withAnimation {
                             currentIndex += 1
                             playMemo()
+                        }
+                        withAnimation(.spring()) {
+                            dismissOffset = 0
+                        }
+                    } else {
+                        // Reset if gesture didn't meet any threshold
+                        withAnimation(.spring()) {
+                            dismissOffset = 0
                         }
                     }
                 }
@@ -1988,7 +2393,11 @@ struct FullScreenVoiceMemoPlayer: View {
 
     private func playMemo() {
         if let memo = currentMemo {
-            viewModel.playMessage(memo)
+            // Only start playback if this memo isn't already playing
+            // (playMessage toggles if same memo, which would pause it)
+            if viewModel.currentlyPlayingId != memo.id {
+                viewModel.playMessage(memo)
+            }
         }
     }
 
@@ -2048,259 +2457,8 @@ struct VoiceRecorderView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                // Background gradient
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.95, green: 0.9, blue: 1.0),
-                        Color.white
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
-
-                VStack(spacing: 24) {
-                    // Recording for indicator
-                    HStack {
-                        Text("Recording as")
-                            .font(.subheadline)
-                            .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
-                        Text(fromUser)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                    }
-                    .padding(.top)
-
-                    TextField("Message title (e.g., 'Good morning!')", text: $title)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .padding(.horizontal)
-                        .disabled(recorder.isRecording)
-
-                    // Quality selector (only when not recording)
-                    if !recorder.isRecording && !recorder.hasRecording {
-                        Button(action: { showingQualityPicker = true }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: recorder.quality.icon)
-                                    .font(.subheadline)
-                                Text(recorder.quality.rawValue)
-                                    .font(.subheadline.weight(.medium))
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.caption)
-                            }
-                            .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
-                            )
-                        }
-                    }
-
-                    // Live Waveform visualization
-                    VStack(spacing: 8) {
-                        HStack(spacing: 3) {
-                            ForEach(Array(recorder.audioLevels.enumerated()), id: \.offset) { index, level in
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(
-                                        recorder.isRecording && !recorder.isPaused
-                                            ? LinearGradient(
-                                                colors: [
-                                                    Color(red: 0.9, green: 0.4, blue: 0.5),
-                                                    Color(red: 0.8, green: 0.7, blue: 1.0)
-                                                ],
-                                                startPoint: .bottom,
-                                                endPoint: .top
-                                            )
-                                            : LinearGradient(
-                                                colors: [Color(red: 0.8, green: 0.7, blue: 1.0)],
-                                                startPoint: .bottom,
-                                                endPoint: .top
-                                            )
-                                    )
-                                    .frame(width: 6, height: max(8, level * 80))
-                                    .animation(.easeOut(duration: 0.08), value: level)
-                            }
-                        }
-                        .frame(height: 90)
-                        .padding(.horizontal)
-
-                        // Recording status indicator
-                        if recorder.isRecording {
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(recorder.isPaused ? Color.orange : Color.red)
-                                    .frame(width: 10, height: 10)
-                                    .opacity(recorder.isPaused ? 1 : (recorder.recordingTime.truncatingRemainder(dividingBy: 1) < 0.5 ? 1 : 0.3))
-                                    .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: recorder.recordingTime)
-
-                                Text(recorder.isPaused ? "Paused" : "Recording")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundColor(recorder.isPaused ? .orange : .red)
-                            }
-                        }
-                    }
-
-                    // Timer display
-                    Text(formatTime(recorder.recordingTime))
-                        .font(.system(size: 56, weight: .light, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-
-                    // Recording controls
-                    HStack(spacing: 30) {
-                        // Pause/Resume button (only during recording)
-                        if recorder.isRecording {
-                            Button(action: {
-                                if recorder.isPaused {
-                                    recorder.resumeRecording()
-                                } else {
-                                    recorder.pauseRecording()
-                                }
-                            }) {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
-                                        .frame(width: 56, height: 56)
-
-                                    Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
-                                        .font(.system(size: 22))
-                                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                                }
-                            }
-                        }
-
-                        // Main record/stop button
-                        Button(action: {
-                            if recorder.isRecording {
-                                recorder.stopRecording()
-                            } else {
-                                recorder.startRecording()
-                            }
-                        }) {
-                            ZStack {
-                                Circle()
-                                    .fill(
-                                        recorder.isRecording
-                                            ? Color.red
-                                            : LinearGradient(
-                                                colors: [
-                                                    Color(red: 0.7, green: 0.45, blue: 0.95),
-                                                    Color(red: 0.55, green: 0.35, blue: 0.85)
-                                                ],
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
-                                    )
-                                    .frame(width: 80, height: 80)
-                                    .shadow(color: recorder.isRecording ? Color.red.opacity(0.4) : Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.4), radius: 10)
-
-                                if recorder.isRecording {
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color.white)
-                                        .frame(width: 28, height: 28)
-                                } else {
-                                    Image(systemName: "mic.fill")
-                                        .font(.system(size: 35))
-                                        .foregroundColor(.white)
-                                }
-                            }
-                        }
-
-                        // Cancel recording button (only during recording)
-                        if recorder.isRecording {
-                            Button(action: {
-                                recorder.stopRecording()
-                                recorder.deleteRecording()
-                            }) {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
-                                        .frame(width: 56, height: 56)
-
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 20, weight: .semibold))
-                                        .foregroundColor(Color.red.opacity(0.8))
-                                }
-                            }
-                        }
-                    }
-
-                    // Post-recording actions
-                    if recorder.hasRecording && !recorder.isRecording {
-                        VStack(spacing: 16) {
-                            // Playback preview indicator
-                            HStack(spacing: 8) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.green)
-                                Text("Recording complete")
-                                    .font(.subheadline)
-                                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
-                                Text("(\(formatTime(recorder.recordingDuration)))")
-                                    .font(.caption)
-                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                            }
-                            .padding(.vertical, 8)
-                            .padding(.horizontal, 16)
-                            .background(
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(Color.green.opacity(0.1))
-                            )
-
-                            HStack(spacing: 16) {
-                                Button(action: {
-                                    recorder.deleteRecording()
-                                }) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "trash")
-                                        Text("Discard")
-                                    }
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundColor(.red)
-                                    .padding(.horizontal, 20)
-                                    .padding(.vertical, 12)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(Color.red.opacity(0.5), lineWidth: 1.5)
-                                    )
-                                }
-
-                                Button(action: {
-                                    Task {
-                                        if let data = recorder.audioData {
-                                            await onSave(data, recorder.recordingDuration, title.isEmpty ? "Voice Note" : title)
-                                            dismiss()
-                                        }
-                                    }
-                                }) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "checkmark")
-                                        Text("Save")
-                                    }
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 24)
-                                    .padding(.vertical, 12)
-                                    .background(
-                                        LinearGradient(
-                                            colors: [
-                                                Color(red: 0.7, green: 0.45, blue: 0.95),
-                                                Color(red: 0.55, green: 0.35, blue: 0.85)
-                                            ],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
-                                    .cornerRadius(12)
-                                }
-                            }
-                        }
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                    }
-
-                    Spacer()
-                }
-                .padding()
+                backgroundGradient
+                mainContent
             }
             .navigationTitle("Record Message")
             .navigationBarTitleDisplayMode(.inline)
@@ -2327,6 +2485,323 @@ struct VoiceRecorderView: View {
         }
     }
 
+    // MARK: - Background
+    private var backgroundGradient: some View {
+        LinearGradient(
+            colors: [
+                Color(red: 0.95, green: 0.9, blue: 1.0),
+                Color.white
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
+    }
+
+    // MARK: - Main Content
+    private var mainContent: some View {
+        VStack(spacing: 24) {
+            headerSection
+            titleField
+            qualitySelector
+            waveformVisualization
+            timerDisplay
+            recordingControls
+            postRecordingActions
+            Spacer()
+        }
+        .padding()
+    }
+
+    // MARK: - Header Section
+    private var headerSection: some View {
+        HStack {
+            Text("Recording as")
+                .font(.subheadline)
+                .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+            Text(fromUser)
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+        }
+        .padding(.top)
+    }
+
+    // MARK: - Title Field
+    private var titleField: some View {
+        TextField("Message title (e.g., 'Good morning!')", text: $title)
+            .textFieldStyle(RoundedBorderTextFieldStyle())
+            .padding(.horizontal)
+            .disabled(recorder.isRecording)
+    }
+
+    // MARK: - Quality Selector
+    @ViewBuilder
+    private var qualitySelector: some View {
+        if !recorder.isRecording && !recorder.hasRecording {
+            Button(action: { showingQualityPicker = true }) {
+                HStack(spacing: 8) {
+                    Image(systemName: recorder.quality.icon)
+                        .font(.subheadline)
+                    Text(recorder.quality.rawValue)
+                        .font(.subheadline.weight(.medium))
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption)
+                }
+                .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                )
+            }
+        }
+    }
+
+    // MARK: - Waveform Visualization
+    private var waveformVisualization: some View {
+        VStack(spacing: 8) {
+            waveformBars
+            recordingStatusIndicator
+        }
+    }
+
+    private var waveformBars: some View {
+        HStack(spacing: 3) {
+            ForEach(Array(recorder.audioLevels.enumerated()), id: \.offset) { index, level in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(waveformGradient)
+                    .frame(width: 6, height: max(8, level * 80))
+                    .animation(.easeOut(duration: 0.08), value: level)
+            }
+        }
+        .frame(height: 90)
+        .padding(.horizontal)
+    }
+
+    private var waveformGradient: LinearGradient {
+        recorder.isRecording && !recorder.isPaused
+            ? LinearGradient(
+                colors: [
+                    Color(red: 0.9, green: 0.4, blue: 0.5),
+                    Color(red: 0.8, green: 0.7, blue: 1.0)
+                ],
+                startPoint: .bottom,
+                endPoint: .top
+            )
+            : LinearGradient(
+                colors: [Color(red: 0.8, green: 0.7, blue: 1.0)],
+                startPoint: .bottom,
+                endPoint: .top
+            )
+    }
+
+    @ViewBuilder
+    private var recordingStatusIndicator: some View {
+        if recorder.isRecording {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(recorder.isPaused ? Color.orange : Color.red)
+                    .frame(width: 10, height: 10)
+                    .opacity(recorder.isPaused ? 1 : (recorder.recordingTime.truncatingRemainder(dividingBy: 1) < 0.5 ? 1 : 0.3))
+                    .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: recorder.recordingTime)
+
+                Text(recorder.isPaused ? "Paused" : "Recording")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(recorder.isPaused ? .orange : .red)
+            }
+        }
+    }
+
+    // MARK: - Timer Display
+    private var timerDisplay: some View {
+        Text(formatTime(recorder.recordingTime))
+            .font(.system(size: 56, weight: .light, design: .rounded))
+            .monospacedDigit()
+            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+    }
+
+    // MARK: - Recording Controls
+    private var recordingControls: some View {
+        HStack(spacing: 30) {
+            pauseResumeButton
+            mainRecordButton
+            cancelRecordingButton
+        }
+    }
+
+    @ViewBuilder
+    private var pauseResumeButton: some View {
+        if recorder.isRecording {
+            Button(action: {
+                if recorder.isPaused {
+                    recorder.resumeRecording()
+                } else {
+                    recorder.pauseRecording()
+                }
+            }) {
+                ZStack {
+                    Circle()
+                        .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                        .frame(width: 56, height: 56)
+
+                    Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
+                        .font(.system(size: 22))
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+            }
+        }
+    }
+
+    private var mainRecordButton: some View {
+        Button(action: {
+            if recorder.isRecording {
+                recorder.stopRecording()
+            } else {
+                recorder.startRecording()
+            }
+        }) {
+            ZStack {
+                Circle()
+                    .fill(mainRecordButtonFill)
+                    .frame(width: 80, height: 80)
+                    .shadow(color: recorder.isRecording ? Color.red.opacity(0.4) : Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.4), radius: 10)
+
+                if recorder.isRecording {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.white)
+                        .frame(width: 28, height: 28)
+                } else {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 35))
+                        .foregroundColor(.white)
+                }
+            }
+        }
+    }
+
+    private var mainRecordButtonFill: some ShapeStyle {
+        recorder.isRecording
+            ? AnyShapeStyle(Color.red)
+            : AnyShapeStyle(LinearGradient(
+                colors: [
+                    Color(red: 0.7, green: 0.45, blue: 0.95),
+                    Color(red: 0.55, green: 0.35, blue: 0.85)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ))
+    }
+
+    @ViewBuilder
+    private var cancelRecordingButton: some View {
+        if recorder.isRecording {
+            Button(action: {
+                recorder.stopRecording()
+                recorder.deleteRecording()
+            }) {
+                ZStack {
+                    Circle()
+                        .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                        .frame(width: 56, height: 56)
+
+                    Image(systemName: "xmark")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(Color.red.opacity(0.8))
+                }
+            }
+        }
+    }
+
+    // MARK: - Post Recording Actions
+    @ViewBuilder
+    private var postRecordingActions: some View {
+        if recorder.hasRecording && !recorder.isRecording {
+            VStack(spacing: 16) {
+                recordingCompleteIndicator
+                saveDiscardButtons
+            }
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    private var recordingCompleteIndicator: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
+            Text("Recording complete")
+                .font(.subheadline)
+                .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+            Text("(\(formatTime(recorder.recordingDuration)))")
+                .font(.caption)
+                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.green.opacity(0.1))
+        )
+    }
+
+    private var saveDiscardButtons: some View {
+        HStack(spacing: 16) {
+            discardButton
+            saveButton
+        }
+    }
+
+    private var discardButton: some View {
+        Button(action: {
+            recorder.deleteRecording()
+        }) {
+            HStack(spacing: 6) {
+                Image(systemName: "trash")
+                Text("Discard")
+            }
+            .font(.subheadline.weight(.medium))
+            .foregroundColor(.red)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.red.opacity(0.5), lineWidth: 1.5)
+            )
+        }
+    }
+
+    private var saveButton: some View {
+        Button(action: {
+            Task {
+                if let data = recorder.audioData {
+                    await onSave(data, recorder.recordingDuration, title.isEmpty ? "Voice Note" : title)
+                    dismiss()
+                }
+            }
+        }) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark")
+                Text("Save")
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 12)
+            .background(
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.7, green: 0.45, blue: 0.95),
+                        Color(red: 0.55, green: 0.35, blue: 0.85)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .cornerRadius(12)
+        }
+    }
+
+    // MARK: - Helpers
     func formatTime(_ time: TimeInterval) -> String {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
@@ -2675,34 +3150,444 @@ struct VoiceMemoMoveToFolderSheet: View {
     }
 }
 
-// MARK: - Share Sheet
-struct ShareSheet: UIViewControllerRepresentable {
-    let items: [Any]
+// MARK: - Tag Sheet
+struct VoiceMemoTagSheet: View {
+    let existingTags: [String]
+    let onAddTag: (String) -> Void
+    let onCancel: () -> Void
+    @Environment(\.dismiss) var dismiss
+    @State private var newTagText = ""
 
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        return controller
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 20) {
+                    // Create new tag
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Create New Tag")
+                            .font(.headline)
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                        HStack {
+                            Image(systemName: "tag")
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                            TextField("Enter tag name", text: $newTagText)
+                            if !newTagText.isEmpty {
+                                Button(action: {
+                                    onAddTag(newTagText.trimmingCharacters(in: .whitespacesAndNewlines))
+                                }) {
+                                    Image(systemName: "plus.circle.fill")
+                                        .foregroundColor(Color(red: 0.4, green: 0.7, blue: 0.9))
+                                }
+                            }
+                        }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.white)
+                                .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
+                        )
+                    }
+
+                    if !existingTags.isEmpty {
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Existing Tags")
+                                .font(.headline)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], spacing: 8) {
+                                ForEach(existingTags, id: \.self) { tag in
+                                    Button(action: { onAddTag(tag) }) {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: "tag.fill")
+                                                .font(.caption)
+                                            Text(tag)
+                                                .font(.subheadline.weight(.medium))
+                                                .lineLimit(1)
+                                        }
+                                        .foregroundColor(Color(red: 0.4, green: 0.7, blue: 0.9))
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 8)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 20)
+                                                .fill(Color(red: 0.4, green: 0.7, blue: 0.9).opacity(0.15))
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding()
+            }
+            .background(Color(red: 0.96, green: 0.94, blue: 0.98).ignoresSafeArea())
+            .navigationTitle("Add Tag")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { onCancel() }
+                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Waveform View with Progress
+struct WaveformView: View {
+    let waveformData: [Float]
+    let progress: Double
+    let pauseMarkers: [TimeInterval]
+    let duration: TimeInterval
+
+    private var displayData: [Float] {
+        if waveformData.isEmpty {
+            // Generate placeholder if no data
+            return (0..<50).map { _ in Float.random(in: 0.2...0.8) }
+        }
+        return waveformData
     }
 
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+    var body: some View {
+        GeometryReader { geometry in
+            let barCount = displayData.count
+            let barWidth: CGFloat = max(3, (geometry.size.width - CGFloat(barCount - 1) * 3) / CGFloat(barCount))
+            let spacing: CGFloat = 3
+
+            ZStack {
+                // Waveform bars
+                HStack(spacing: spacing) {
+                    ForEach(0..<barCount, id: \.self) { index in
+                        let barProgress = Double(index) / Double(barCount)
+                        let isPlayed = barProgress <= progress
+
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(
+                                isPlayed ?
+                                    LinearGradient(
+                                        colors: [
+                                            Color(red: 0.9, green: 0.5, blue: 0.6),
+                                            Color(red: 0.8, green: 0.7, blue: 1.0)
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    ) :
+                                    LinearGradient(
+                                        colors: [
+                                            Color(red: 0.8, green: 0.7, blue: 1.0).opacity(0.4),
+                                            Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.4)
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                            )
+                            .frame(width: barWidth, height: CGFloat(displayData[index]) * geometry.size.height)
+                    }
+                }
+                .frame(maxHeight: .infinity, alignment: .center)
+
+                // Pause markers
+                ForEach(pauseMarkers.indices, id: \.self) { index in
+                    let markerPosition = pauseMarkers[index] / duration
+                    if markerPosition >= 0 && markerPosition <= 1 {
+                        Rectangle()
+                            .fill(Color.orange.opacity(0.8))
+                            .frame(width: 2, height: geometry.size.height * 0.6)
+                            .position(x: geometry.size.width * CGFloat(markerPosition), y: geometry.size.height / 2)
+                    }
+                }
+
+                // Playback position indicator
+                Rectangle()
+                    .fill(Color.white)
+                    .frame(width: 2, height: geometry.size.height)
+                    .position(x: geometry.size.width * CGFloat(progress), y: geometry.size.height / 2)
+                    .shadow(color: .white.opacity(0.5), radius: 4)
+            }
+        }
+    }
 }
 
 // MARK: - View Model
-class VoiceMessagesViewModel: ObservableObject {
+class VoiceMessagesViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var voiceMessages: [VoiceMessage] = []
     @Published var folders: [VoiceMemoFolder] = []
     @Published var currentlyPlayingId: String?
     @Published var currentlyPlayingMessage: VoiceMessage?
     @Published var isPlaying: Bool = false
     @Published var playbackProgress: Double = 0
+    @Published var currentWaveform: [Float] = []
+    @Published var allTags: [String] = [] // All unique tags across memos
 
     private var audioPlayer: AVAudioPlayer?
     private var progressTimer: Timer?
     private let firebaseManager = FirebaseManager.shared
 
-    init() {
+    // Playback position memory - stores last position for each memo
+    private let playbackPositionsKey = "voiceMemoPlaybackPositions"
+
+    override init() {
+        super.init()
+        configureAudioSession()
         loadVoiceMessages()
         loadFolders()
+        loadAllTags()
+        setupInterruptionObserver()
+        setupRemoteCommandCenter()
+        setupAppLifecycleObservers()
+    }
+
+    // MARK: - AVAudioPlayerDelegate
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.progressTimer?.invalidate()
+            self.progressTimer = nil
+            self.isPlaying = false
+            self.playbackProgress = 1.0
+
+            // Clear position since playback completed
+            if let currentId = self.currentlyPlayingId {
+                self.clearPlaybackPosition(for: currentId)
+            }
+
+            // Update Control Center
+            self.updateNowPlayingPlaybackState()
+
+            // Optionally stop and clear (or keep showing the completed memo)
+            // Uncomment below to fully clear after completion:
+            // self.stopPlayback(savePosition: false)
+        }
+    }
+
+    private func configureAudioSession() {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            // Use .playback category for background audio support
+            try session.setCategory(.playback, mode: .spokenAudio, options: [.allowBluetooth, .allowAirPlay])
+            try session.setActive(true)
+            print("Audio session configured for background playback")
+        } catch {
+            print("Failed to configure audio session: \(error)")
+        }
+    }
+
+    private func activateAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            print("Failed to activate audio session: \(error)")
+        }
+    }
+
+    private func setupAppLifecycleObservers() {
+        // Handle app going to background
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            // Stop the timer but keep audio playing
+            self.progressTimer?.invalidate()
+            // Make sure Now Playing info is up to date
+            if self.isPlaying {
+                self.updateNowPlayingInfo()
+            }
+        }
+
+        // Handle app coming to foreground
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            // Sync progress with actual player position
+            if let player = self.audioPlayer, self.currentlyPlayingMessage != nil {
+                self.playbackProgress = player.currentTime / player.duration
+                if self.isPlaying {
+                    self.startProgressTimer()
+                }
+                self.updateNowPlayingPlaybackState()
+            }
+        }
+
+        // Handle app becoming active (after control center dismisses, etc.)
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            // Sync UI state with actual player state
+            if let player = self.audioPlayer {
+                self.isPlaying = player.isPlaying
+                self.playbackProgress = player.currentTime / player.duration
+                if player.isPlaying && self.progressTimer == nil {
+                    self.startProgressTimer()
+                }
+            }
+        }
+    }
+
+    private func setupInterruptionObserver() {
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            guard let userInfo = notification.userInfo,
+                  let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+                return
+            }
+
+            switch type {
+            case .began:
+                // Pause playback when interrupted (e.g., phone call)
+                self?.audioPlayer?.pause()
+                self?.isPlaying = false
+                self?.progressTimer?.invalidate()
+                self?.updateNowPlayingPlaybackState()
+            case .ended:
+                // Resume if the interruption ended and we should resume
+                if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
+                    let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+                    if options.contains(.shouldResume) {
+                        // Reactivate audio session
+                        try? AVAudioSession.sharedInstance().setActive(true)
+                        self?.audioPlayer?.play()
+                        self?.isPlaying = true
+                        self?.startProgressTimer()
+                        self?.updateNowPlayingPlaybackState()
+                    }
+                }
+            @unknown default:
+                break
+            }
+        }
+    }
+
+    private func setupRemoteCommandCenter() {
+        let commandCenter = MPRemoteCommandCenter.shared()
+
+        // Play command
+        commandCenter.playCommand.isEnabled = true
+        commandCenter.playCommand.addTarget { [weak self] _ in
+            guard let self = self else { return .commandFailed }
+            if self.audioPlayer != nil {
+                self.audioPlayer?.play()
+                self.isPlaying = true
+                self.startProgressTimer()
+                self.updateNowPlayingPlaybackState()
+                return .success
+            }
+            return .commandFailed
+        }
+
+        // Pause command
+        commandCenter.pauseCommand.isEnabled = true
+        commandCenter.pauseCommand.addTarget { [weak self] _ in
+            guard let self = self else { return .commandFailed }
+            self.audioPlayer?.pause()
+            self.isPlaying = false
+            self.progressTimer?.invalidate()
+            if let currentId = self.currentlyPlayingId, let player = self.audioPlayer {
+                self.savePlaybackPosition(for: currentId, position: player.currentTime)
+            }
+            self.updateNowPlayingPlaybackState()
+            return .success
+        }
+
+        // Toggle play/pause
+        commandCenter.togglePlayPauseCommand.isEnabled = true
+        commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
+            guard let self = self else { return .commandFailed }
+            self.togglePlayPause()
+            return .success
+        }
+
+        // Skip forward
+        commandCenter.skipForwardCommand.isEnabled = true
+        commandCenter.skipForwardCommand.preferredIntervals = [15]
+        commandCenter.skipForwardCommand.addTarget { [weak self] event in
+            guard let self = self,
+                  let skipEvent = event as? MPSkipIntervalCommandEvent else { return .commandFailed }
+            self.skipForward(seconds: skipEvent.interval)
+            self.updateNowPlayingPlaybackState()
+            return .success
+        }
+
+        // Skip backward
+        commandCenter.skipBackwardCommand.isEnabled = true
+        commandCenter.skipBackwardCommand.preferredIntervals = [15]
+        commandCenter.skipBackwardCommand.addTarget { [weak self] event in
+            guard let self = self,
+                  let skipEvent = event as? MPSkipIntervalCommandEvent else { return .commandFailed }
+            self.skipBackward(seconds: skipEvent.interval)
+            self.updateNowPlayingPlaybackState()
+            return .success
+        }
+
+        // Seek command (scrubbing)
+        commandCenter.changePlaybackPositionCommand.isEnabled = true
+        commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let self = self,
+                  let positionEvent = event as? MPChangePlaybackPositionCommandEvent,
+                  let player = self.audioPlayer else { return .commandFailed }
+            player.currentTime = positionEvent.positionTime
+            self.playbackProgress = positionEvent.positionTime / player.duration
+            self.updateNowPlayingPlaybackState()
+            return .success
+        }
+    }
+
+    private func updateNowPlayingInfo() {
+        guard let message = currentlyPlayingMessage,
+              let player = audioPlayer else {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            return
+        }
+
+        var nowPlayingInfo: [String: Any] = [
+            MPMediaItemPropertyTitle: message.title,
+            MPMediaItemPropertyArtist: "From \(message.fromUser)",
+            MPMediaItemPropertyPlaybackDuration: player.duration,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: player.currentTime,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
+            MPMediaItemPropertyMediaType: MPMediaType.anyAudio.rawValue
+        ]
+
+        // Add app icon as artwork
+        if let appIcon = UIImage(named: "AppIcon") ?? UIImage(systemName: "waveform.circle.fill") {
+            let artwork = MPMediaItemArtwork(boundsSize: appIcon.size) { _ in appIcon }
+            nowPlayingInfo[MPMediaItemPropertyArtwork] = artwork
+        }
+
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+    }
+
+    private func updateNowPlayingPlaybackState() {
+        guard var nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo,
+              let player = audioPlayer else { return }
+
+        nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime
+        nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(player.rate) : 0.0
+
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+    }
+
+    private func clearNowPlayingInfo() {
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+    }
+
+    func loadAllTags() {
+        // Collect all unique tags from memos
+        let tags = voiceMessages.compactMap { $0.tags }.flatMap { $0 }
+        allTags = Array(Set(tags)).sorted()
     }
 
     func loadVoiceMessages() {
@@ -2710,9 +3595,46 @@ class VoiceMessagesViewModel: ObservableObject {
             for try await messages in firebaseManager.getVoiceMessages() {
                 await MainActor.run {
                     self.voiceMessages = messages
+                    self.loadAllTags()
                 }
             }
         }
+    }
+
+    // MARK: - Playback Position Memory
+    func savePlaybackPosition(for memoId: String, position: TimeInterval) {
+        var positions = getPlaybackPositions()
+        positions[memoId] = position
+        if let data = try? JSONEncoder().encode(positions) {
+            UserDefaults.standard.set(data, forKey: playbackPositionsKey)
+        }
+    }
+
+    func getPlaybackPosition(for memoId: String) -> TimeInterval? {
+        let positions = getPlaybackPositions()
+        return positions[memoId]
+    }
+
+    func clearPlaybackPosition(for memoId: String) {
+        var positions = getPlaybackPositions()
+        positions.removeValue(forKey: memoId)
+        if let data = try? JSONEncoder().encode(positions) {
+            UserDefaults.standard.set(data, forKey: playbackPositionsKey)
+        }
+    }
+
+    private func getPlaybackPositions() -> [String: TimeInterval] {
+        guard let data = UserDefaults.standard.data(forKey: playbackPositionsKey),
+              let positions = try? JSONDecoder().decode([String: TimeInterval].self, from: data) else {
+            return [:]
+        }
+        return positions
+    }
+
+    func hasUnfinishedPlayback(for memoId: String, duration: TimeInterval) -> Bool {
+        guard let position = getPlaybackPosition(for: memoId) else { return false }
+        // Consider it unfinished if more than 5 seconds in and not at the end
+        return position > 5 && position < (duration - 5)
     }
 
     func loadFolders() {
@@ -2727,19 +3649,35 @@ class VoiceMessagesViewModel: ObservableObject {
 
     func uploadVoiceMessage(audioData: Data, title: String, duration: TimeInterval, fromUser: String) async {
         do {
-            _ = try await firebaseManager.uploadVoiceMessage(
+            let memoId = try await firebaseManager.uploadVoiceMessage(
                 audioData: audioData,
                 title: title,
                 duration: duration,
                 fromUser: fromUser
             )
+
+            // Create a VoiceMessage for notification
+            let memo = VoiceMessage(
+                id: memoId,
+                title: title,
+                duration: duration,
+                createdAt: Date(),
+                audioURL: "",
+                fromUser: fromUser
+            )
+
+            // Send push notification
+            NotificationManager.shared.notifyVoiceMemoCreated(memo: memo)
         } catch {
             print("Error uploading voice message: \(error)")
         }
     }
 
-    func playMessage(_ message: VoiceMessage) {
+    func playMessage(_ message: VoiceMessage, fromPosition: TimeInterval? = nil) {
         guard let url = URL(string: message.audioURL) else { return }
+
+        // Activate audio session for background playback
+        activateAudioSession()
 
         // If same message, toggle play/pause
         if currentlyPlayingId == message.id {
@@ -2747,11 +3685,23 @@ class VoiceMessagesViewModel: ObservableObject {
             return
         }
 
+        // Save position of currently playing message before switching
+        if let currentId = currentlyPlayingId, let player = audioPlayer {
+            savePlaybackPosition(for: currentId, position: player.currentTime)
+        }
+
         // Stop current playback
-        stopPlayback()
+        stopPlayback(savePosition: false)
 
         currentlyPlayingId = message.id
         currentlyPlayingMessage = message
+
+        // Use stored waveform or generate placeholder
+        if let waveform = message.waveformData, !waveform.isEmpty {
+            currentWaveform = waveform
+        } else {
+            currentWaveform = generatePlaceholderWaveform(count: 50)
+        }
 
         Task {
             do {
@@ -2760,9 +3710,29 @@ class VoiceMessagesViewModel: ObservableObject {
                 await MainActor.run {
                     do {
                         audioPlayer = try AVAudioPlayer(data: data)
+                        audioPlayer?.delegate = self
+                        audioPlayer?.enableRate = true
+                        audioPlayer?.prepareToPlay()
+
+                        // Resume from saved position or specified position
+                        if let position = fromPosition {
+                            audioPlayer?.currentTime = position
+                        } else if let memoId = message.id,
+                                  let savedPosition = getPlaybackPosition(for: memoId),
+                                  savedPosition > 0 && savedPosition < message.duration - 1 {
+                            audioPlayer?.currentTime = savedPosition
+                            playbackProgress = savedPosition / message.duration
+                        }
+
                         audioPlayer?.play()
                         isPlaying = true
                         startProgressTimer()
+
+                        // Update Control Center / Lock Screen info
+                        updateNowPlayingInfo()
+
+                        // Extract actual waveform from audio data
+                        extractWaveform(from: data)
                     } catch {
                         print("Error playing audio: \(error)")
                     }
@@ -2777,14 +3747,77 @@ class VoiceMessagesViewModel: ObservableObject {
         if isPlaying {
             audioPlayer?.pause()
             progressTimer?.invalidate()
+            // Save position when pausing
+            if let currentId = currentlyPlayingId, let player = audioPlayer {
+                savePlaybackPosition(for: currentId, position: player.currentTime)
+            }
         } else {
             audioPlayer?.play()
             startProgressTimer()
         }
         isPlaying.toggle()
+        updateNowPlayingPlaybackState()
     }
 
-    func stopPlayback() {
+    private func generatePlaceholderWaveform(count: Int) -> [Float] {
+        (0..<count).map { _ in Float.random(in: 0.2...0.8) }
+    }
+
+    private func extractWaveform(from data: Data) {
+        // Extract waveform visualization data from audio
+        // This creates a simplified amplitude representation
+        let sampleCount = 50
+        var waveform: [Float] = []
+
+        guard let audioFile = try? AVAudioFile(forReading: createTempURL(with: data)) else {
+            return
+        }
+
+        let frameCount = UInt32(audioFile.length)
+        let samplesPerBar = Int(frameCount) / sampleCount
+
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: audioFile.processingFormat, frameCapacity: frameCount) else {
+            return
+        }
+
+        try? audioFile.read(into: buffer)
+
+        guard let floatData = buffer.floatChannelData?[0] else { return }
+
+        for i in 0..<sampleCount {
+            let startSample = i * samplesPerBar
+            let endSample = min(startSample + samplesPerBar, Int(frameCount))
+
+            var sum: Float = 0
+            for j in startSample..<endSample {
+                sum += abs(floatData[j])
+            }
+            let avg = sum / Float(endSample - startSample)
+            waveform.append(min(1.0, avg * 3)) // Normalize and scale
+        }
+
+        DispatchQueue.main.async {
+            self.currentWaveform = waveform
+        }
+    }
+
+    private func createTempURL(with data: Data) -> URL {
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("temp_audio.m4a")
+        try? data.write(to: tempURL)
+        return tempURL
+    }
+
+    func stopPlayback(savePosition: Bool = true) {
+        // Save position before stopping
+        if savePosition, let currentId = currentlyPlayingId, let player = audioPlayer {
+            if player.currentTime < player.duration - 1 {
+                savePlaybackPosition(for: currentId, position: player.currentTime)
+            } else {
+                // Finished playing, clear position
+                clearPlaybackPosition(for: currentId)
+            }
+        }
+
         audioPlayer?.stop()
         audioPlayer = nil
         progressTimer?.invalidate()
@@ -2792,6 +3825,10 @@ class VoiceMessagesViewModel: ObservableObject {
         currentlyPlayingMessage = nil
         isPlaying = false
         playbackProgress = 0
+        currentWaveform = []
+
+        // Clear Control Center / Lock Screen info
+        clearNowPlayingInfo()
     }
 
     func seekTo(progress: Double) {
@@ -2814,12 +3851,33 @@ class VoiceMessagesViewModel: ObservableObject {
         audioPlayer?.enableRate = true
     }
 
+    private var positionSaveCounter = 0
+
     private func startProgressTimer() {
         progressTimer?.invalidate()
+        positionSaveCounter = 0
         progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             guard let self = self, let player = self.audioPlayer else { return }
+
+            // Check if player is still actually playing to avoid race conditions with delegate
+            guard player.isPlaying else {
+                // Player stopped (likely via delegate callback) - don't update
+                return
+            }
+
             Task { @MainActor in
+                // Double-check player state on main thread
+                guard self.audioPlayer?.isPlaying == true else { return }
+
                 self.playbackProgress = player.currentTime / player.duration
+
+                // Save position every 5 seconds (50 timer ticks)
+                self.positionSaveCounter += 1
+                if self.positionSaveCounter >= 50, let currentId = self.currentlyPlayingId {
+                    self.savePlaybackPosition(for: currentId, position: player.currentTime)
+                    self.positionSaveCounter = 0
+                }
+
                 if player.currentTime >= player.duration {
                     self.stopPlayback()
                 }
@@ -2839,6 +3897,32 @@ class VoiceMessagesViewModel: ObservableObject {
 
     func batchUpdateFolders(_ ids: [String], folderId: String?) async throws {
         try await firebaseManager.batchUpdateVoiceMemoFolders(ids, folderId: folderId)
+    }
+
+    func batchDelete(_ ids: [String]) async throws {
+        for id in ids {
+            if let message = voiceMessages.first(where: { $0.id == id }) {
+                try await firebaseManager.deleteVoiceMessage(message)
+            }
+        }
+    }
+
+    // MARK: - Tags Management
+    func addTag(_ tag: String, to messageId: String) async throws {
+        try await firebaseManager.addTagToVoiceMemo(messageId, tag: tag)
+        await MainActor.run { loadAllTags() }
+    }
+
+    func removeTag(_ tag: String, from messageId: String) async throws {
+        try await firebaseManager.removeTagFromVoiceMemo(messageId, tag: tag)
+        await MainActor.run { loadAllTags() }
+    }
+
+    func batchAddTag(_ tag: String, to ids: [String]) async throws {
+        for id in ids {
+            try await firebaseManager.addTagToVoiceMemo(id, tag: tag)
+        }
+        await MainActor.run { loadAllTags() }
     }
 
     func createFolder(name: String, forUser: String) async throws -> String {
@@ -2939,9 +4023,17 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     @Published var audioLevels: [CGFloat] = Array(repeating: 0.1, count: 30)
     @Published var currentLevel: CGFloat = 0
     @Published var quality: RecordingQuality = .high
+    @Published var pauseMarkers: [TimeInterval] = [] // Track when pauses occurred
+    @Published var waveformData: [Float] = [] // Store waveform for visualization
+
+    // Trim properties
+    @Published var trimStart: TimeInterval = 0
+    @Published var trimEnd: TimeInterval = 0
+    @Published var isTrimming = false
 
     var audioRecorder: AVAudioRecorder?
     var audioData: Data?
+    var trimmedAudioData: Data?
     private var timer: Timer?
     private var levelTimer: Timer?
     private var levelHistory: [CGFloat] = []
@@ -2974,6 +4066,8 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
             recordingTime = 0
             levelHistory = []
             audioLevels = Array(repeating: 0.1, count: 30)
+            pauseMarkers = []
+            waveformData = []
 
             startTimers()
         } catch {
@@ -2985,6 +4079,8 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
         guard isRecording && !isPaused else { return }
         audioRecorder?.pause()
         isPaused = true
+        // Track when pause occurred
+        pauseMarkers.append(recordingTime)
         timer?.invalidate()
         levelTimer?.invalidate()
     }
@@ -3046,9 +4142,118 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
         isPaused = false
         hasRecording = true
         recordingDuration = recordingTime
+        trimStart = 0
+        trimEnd = recordingDuration
 
         if let url = audioRecorder?.url {
             audioData = try? Data(contentsOf: url)
+            // Generate waveform data from recording
+            generateWaveformData(from: url)
+        }
+    }
+
+    private func generateWaveformData(from url: URL) {
+        guard let audioFile = try? AVAudioFile(forReading: url) else { return }
+
+        let sampleCount = 100
+        let frameCount = UInt32(audioFile.length)
+        let samplesPerBar = Int(frameCount) / sampleCount
+
+        guard samplesPerBar > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: audioFile.processingFormat, frameCapacity: frameCount) else {
+            return
+        }
+
+        try? audioFile.read(into: buffer)
+
+        guard let floatData = buffer.floatChannelData?[0] else { return }
+
+        var waveform: [Float] = []
+        for i in 0..<sampleCount {
+            let startSample = i * samplesPerBar
+            let endSample = min(startSample + samplesPerBar, Int(frameCount))
+
+            var sum: Float = 0
+            for j in startSample..<endSample {
+                sum += abs(floatData[j])
+            }
+            let avg = sum / Float(endSample - startSample)
+            waveform.append(min(1.0, avg * 3))
+        }
+
+        DispatchQueue.main.async {
+            self.waveformData = waveform
+        }
+    }
+
+    // MARK: - Trim Functions
+    func setTrimRange(start: TimeInterval, end: TimeInterval) {
+        trimStart = max(0, start)
+        trimEnd = min(recordingDuration, end)
+    }
+
+    func applyTrim() async -> Bool {
+        guard let url = audioRecorder?.url,
+              trimStart < trimEnd,
+              trimStart >= 0,
+              trimEnd <= recordingDuration else {
+            return false
+        }
+
+        isTrimming = true
+
+        do {
+            let asset = AVURLAsset(url: url)
+            // Load asset to ensure it's ready
+            _ = try await asset.load(.duration)
+
+            let startTime = CMTime(seconds: trimStart, preferredTimescale: 1000)
+            let endTime = CMTime(seconds: trimEnd, preferredTimescale: 1000)
+            let timeRange = CMTimeRange(start: startTime, end: endTime)
+
+            guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
+                await MainActor.run { isTrimming = false }
+                return false
+            }
+
+            let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("trimmed_\(UUID().uuidString).m4a")
+            try? FileManager.default.removeItem(at: outputURL)
+
+            exportSession.outputURL = outputURL
+            exportSession.outputFileType = .m4a
+            exportSession.timeRange = timeRange
+
+            // Use exportAsynchronously for compatibility
+            let success = await withCheckedContinuation { continuation in
+                exportSession.exportAsynchronously {
+                    continuation.resume(returning: exportSession.status == .completed)
+                }
+            }
+
+            if success {
+                let trimmedData = try Data(contentsOf: outputURL)
+                await MainActor.run {
+                    self.audioData = trimmedData
+                    self.recordingDuration = trimEnd - trimStart
+                    self.trimStart = 0
+                    self.trimEnd = self.recordingDuration
+                    self.isTrimming = false
+                    // Regenerate waveform for trimmed audio
+                    self.generateWaveformData(from: outputURL)
+                    // Adjust pause markers for trimmed audio
+                    self.pauseMarkers = self.pauseMarkers
+                        .filter { $0 >= trimStart && $0 <= trimEnd }
+                        .map { $0 - trimStart }
+                }
+                return true
+            } else {
+                await MainActor.run { isTrimming = false }
+                return false
+            }
+        } catch {
+            print("Error trimming audio: \(error)")
+            await MainActor.run { isTrimming = false }
+            return false
         }
     }
 
@@ -3062,6 +4267,10 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
         audioData = nil
         audioLevels = Array(repeating: 0.1, count: 30)
         levelHistory = []
+        pauseMarkers = []
+        waveformData = []
+        trimStart = 0
+        trimEnd = 0
     }
 }
 

@@ -1,7 +1,81 @@
 import SwiftUI
+import Security
+
+// MARK: - User Identity Manager
+enum AppUser: String, CaseIterable {
+    case ahmad = "Ahmad"
+    case luisa = "Luisa"
+}
+
+class UserIdentityManager: ObservableObject {
+    static let shared = UserIdentityManager()
+
+    private let keychainKey = "com.ourapp.userIdentity"
+
+    @Published var currentUser: AppUser = .ahmad {
+        didSet {
+            saveToKeychain(currentUser.rawValue)
+        }
+    }
+
+    var currentUserName: String {
+        currentUser.rawValue
+    }
+
+    private init() {
+        // Load saved user from keychain (must be done after currentUser is initialized)
+        if let savedUser = loadFromKeychain(),
+           let user = AppUser(rawValue: savedUser) {
+            self.currentUser = user
+        }
+    }
+
+    // MARK: - Keychain Operations
+
+    private func saveToKeychain(_ value: String) {
+        guard let data = value.data(using: .utf8) else { return }
+
+        // Delete any existing item first
+        let deleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: keychainKey
+        ]
+        SecItemDelete(deleteQuery as CFDictionary)
+
+        // Add the new item
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: keychainKey,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+        ]
+        SecItemAdd(addQuery as CFDictionary, nil)
+    }
+
+    private func loadFromKeychain() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: keychainKey,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let string = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        return string
+    }
+}
 
 struct SettingsView: View {
     @StateObject private var googleCalendarManager = GoogleCalendarManager.shared
+    @StateObject private var userIdentity = UserIdentityManager.shared
     @State private var showingSyncAlert = false
     @State private var syncAlertMessage = ""
     @State private var isCleaningUp = false
@@ -11,6 +85,20 @@ struct SettingsView: View {
     var body: some View {
         NavigationView {
             List {
+                // User Identity Section
+                Section {
+                    Picker("I am", selection: $userIdentity.currentUser) {
+                        ForEach(AppUser.allCases, id: \.self) { user in
+                            Text(user.rawValue).tag(user)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("User Identity")
+                } footer: {
+                    Text("Select who is using this device. This will be shown when you upload photos, create events, or record voice memos.")
+                }
+
                 // Google Calendar Integration Section
                 Section {
                     HStack {
