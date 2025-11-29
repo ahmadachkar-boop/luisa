@@ -161,6 +161,8 @@ struct WishListItem: Identifiable, Codable {
     var isCompleted: Bool
     var completedDate: Date?
     var category: String // e.g., "Place to Visit", "Activity", "Restaurant", "Experience"
+    var plannedDate: Date? // When the wish is planned for
+    var calendarEventId: String? // Reference to calendar event if planned
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -171,6 +173,8 @@ struct WishListItem: Identifiable, Codable {
         case isCompleted
         case completedDate
         case category
+        case plannedDate
+        case calendarEventId
     }
 }
 
