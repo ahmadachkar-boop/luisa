@@ -100,12 +100,6 @@ struct WishListView: View {
                             .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
 
                         Spacer()
-
-                        Button(action: { showingSettings = true }) {
-                            Image(systemName: "gearshape.fill")
-                                .font(.title3)
-                                .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
-                        }
                     }
                     .padding(.horizontal)
                     .padding(.top, 8)
@@ -212,6 +206,25 @@ struct WishListView: View {
                         }
 
                         Spacer()
+
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3)) {
+                                showingExpandedHeader = false
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                showingSettings = true
+                            }
+                        }) {
+                            Image(systemName: "gearshape.fill")
+                                .font(.title2)
+                                .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                                .padding(10)
+                                .background(
+                                    Circle()
+                                        .fill(Color.white)
+                                        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
+                                )
+                        }
                     }
                 }
                 .padding(16)
