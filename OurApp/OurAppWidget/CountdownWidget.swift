@@ -224,7 +224,7 @@ struct CountdownWidgetSmallView: View {
                             }
                         }
                     }
-                    .padding(10)
+                    .padding(5)
                 }
             }
         }
