@@ -313,6 +313,18 @@ struct VoiceMessagesView: View {
                         }
                     }
                 }
+
+                // Tap-to-dismiss overlay when header is expanded
+                if showingExpandedHeader {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.3)) {
+                                showingExpandedHeader = false
+                            }
+                        }
+                        .ignoresSafeArea()
+                }
             }
             .toolbar {
                 if selectionMode {

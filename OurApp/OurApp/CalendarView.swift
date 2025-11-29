@@ -556,7 +556,7 @@ struct CalendarView: View {
                         showingAddEvent = true
                     }
                 )
-                .id("grid-\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)-\(selectedDay?.timeIntervalSince1970 ?? 0)")
+                .id("grid-\(currentMonth.timeIntervalSince1970)-\(eventsLoadedGeneration)")
                 .padding(.horizontal)
                 .padding(.bottom, 16)
                 .transition(.asymmetric(
@@ -564,17 +564,6 @@ struct CalendarView: View {
                     removal: .move(edge: monthNavigationDirection > 0 ? .leading : .trailing).combined(with: .opacity)
                 ))
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: currentMonth)
-                .animation(nil, value: selectedDay) // Prevent re-animation when day selection changes
-                .simultaneousGesture(
-                    TapGesture()
-                        .onEnded { _ in
-                            if showingExpandedHeader {
-                                withAnimation(.spring(response: 0.3)) {
-                                    showingExpandedHeader = false
-                                }
-                            }
-                        }
-                )
                 .gesture(
                     DragGesture(minimumDistance: 30)
                         .onEnded { value in
@@ -684,6 +673,18 @@ struct CalendarView: View {
             ZStack {
                 backgroundGradient
                 calendarScrollContent
+
+                // Tap-to-dismiss overlay when header is expanded
+                if showingExpandedHeader {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.3)) {
+                                showingExpandedHeader = false
+                            }
+                        }
+                        .ignoresSafeArea()
+                }
             }
             .sheet(isPresented: $showingAddEvent) {
                 AddEventView(initialDate: quickAddDate ?? selectedDate) { event in
@@ -2787,6 +2788,7 @@ struct CalendarGridView: View {
                                 onQuickAdd?(date)
                             }
                         )
+                        .id("cell-\(date.timeIntervalSince1970)-\(isSelectedValue)") // Force individual cell updates
                     } else {
                         Color.clear
                             .frame(height: 40)
