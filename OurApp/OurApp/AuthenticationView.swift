@@ -135,12 +135,14 @@ struct AuthenticationView: View {
                             HStack(spacing: 12) {
                                 Text("+1")
                                     .font(.title2)
-                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                    .foregroundColor(.white.opacity(0.8))
                                     .padding(.leading, 16)
 
                                 TextField("(000) 000-0000", text: $phoneNumber)
                                     .font(.title2)
+                                    .foregroundColor(.white)
                                     .keyboardType(.phonePad)
+                                    .tint(.white)
                                     .onChange(of: phoneNumber) { _, newValue in
                                         phoneNumber = formatPhoneNumber(newValue)
                                     }
@@ -148,8 +150,8 @@ struct AuthenticationView: View {
                             .padding(.vertical, 16)
                             .background(
                                 RoundedRectangle(cornerRadius: 16)
-                                    .fill(Color.white)
-                                    .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
+                                    .fill(Color(red: 0.5, green: 0.35, blue: 0.75))
+                                    .shadow(color: Color.black.opacity(0.15), radius: 8, x: 0, y: 4)
                             )
                         }
 
@@ -190,13 +192,15 @@ struct AuthenticationView: View {
 
                             TextField("000000", text: $verificationCode)
                                 .font(.system(size: 32, weight: .medium, design: .monospaced))
+                                .foregroundColor(.white)
                                 .keyboardType(.numberPad)
                                 .multilineTextAlignment(.center)
+                                .tint(.white)
                                 .padding(.vertical, 16)
                                 .background(
                                     RoundedRectangle(cornerRadius: 16)
-                                        .fill(Color.white)
-                                        .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
+                                        .fill(Color(red: 0.5, green: 0.35, blue: 0.75))
+                                        .shadow(color: Color.black.opacity(0.15), radius: 8, x: 0, y: 4)
                                 )
                                 .onChange(of: verificationCode) { _, newValue in
                                     verificationCode = String(newValue.filter { $0.isNumber }.prefix(6))
