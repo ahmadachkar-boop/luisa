@@ -88,7 +88,7 @@ struct WishListView: View {
                     // Header
                     HStack {
                         Text("Wish List")
-                            .font(.largeTitle)
+                            .font(.title2)
                             .fontWeight(.bold)
                             .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
 
