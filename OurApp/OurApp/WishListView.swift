@@ -86,13 +86,19 @@ struct WishListView: View {
                         .padding(.top, 4)
 
                     // Header
-                    HStack {
-                        Text("Wish List")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                    VStack(spacing: 8) {
+                        HStack(spacing: 12) {
+                            Text("Wish List")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
 
-                        Spacer()
+                            Spacer()
+
+                            Text("\(viewModel.categories.count) categor\(viewModel.categories.count == 1 ? "y" : "ies")")
+                                .font(.subheadline)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        }
                     }
                     .padding(.horizontal)
                     .padding(.top, 8)
