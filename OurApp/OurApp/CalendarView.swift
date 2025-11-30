@@ -2732,6 +2732,8 @@ class CalendarViewModel: ObservableObject {
                     self.events = events
                     // Sync to widget
                     WidgetDataManager.shared.syncEvents(events)
+                    // Schedule local notifications for all future events
+                    NotificationManager.shared.scheduleRemindersForAllEvents(events)
                 }
             }
         }

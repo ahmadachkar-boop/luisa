@@ -348,6 +348,20 @@ class NotificationManager: NSObject, ObservableObject {
             "\(eventId)-2hours"
         ])
     }
+
+    /// Schedule reminders for all future events (called when events are loaded from Firebase)
+    func scheduleRemindersForAllEvents(_ events: [CalendarEvent]) {
+        let now = Date()
+
+        // Only schedule for future events
+        let futureEvents = events.filter { $0.date > now }
+
+        print("🔔 [NOTIFICATIONS] Scheduling reminders for \(futureEvents.count) upcoming events")
+
+        for event in futureEvents {
+            scheduleEventReminders(for: event)
+        }
+    }
 }
 
 // MARK: - UNUserNotificationCenterDelegate
