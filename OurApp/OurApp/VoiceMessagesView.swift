@@ -271,17 +271,9 @@ struct VoiceMessagesView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                // Background gradient - light periwinkle
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.88, green: 0.88, blue: 1.0),
-                        Color(red: 0.92, green: 0.92, blue: 1.0),
-                        Color(red: 0.96, green: 0.96, blue: 1.0)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
+                // Background gradient
+                AppTheme.backgroundGradient
+                    .ignoresSafeArea()
 
                 VStack(spacing: 0) {
                     if currentFolderView == .categorySelection {
@@ -351,6 +343,8 @@ struct VoiceMessagesView: View {
                     }
                 }
             }
+            .navigationTitle("Voice Memos")
+            .navigationBarTitleDisplayMode(.large)
             .sheet(isPresented: $showingRecorder) {
                 VoiceRecorderView(fromUser: currentUserCategory) { audioData, duration, title in
                     await viewModel.uploadVoiceMessage(

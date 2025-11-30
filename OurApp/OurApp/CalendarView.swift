@@ -344,17 +344,8 @@ struct CalendarView: View {
     }
 
     private var backgroundGradient: some View {
-        // Light periwinkle gradient
-        LinearGradient(
-            colors: [
-                Color(red: 0.88, green: 0.88, blue: 1.0),
-                Color(red: 0.92, green: 0.92, blue: 1.0),
-                Color(red: 0.96, green: 0.96, blue: 1.0)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-        .ignoresSafeArea()
+        AppTheme.backgroundGradient
+            .ignoresSafeArea()
     }
 
     @ViewBuilder
@@ -813,7 +804,7 @@ struct CalendarView: View {
                 TimerManager.shared.invalidate(id: bannerTimerId)
             }
         }
-        .navigationTitle("Our Plans 💜")
+        .navigationTitle("Calendar")
         .navigationBarTitleDisplayMode(.large)
         .onAppear {
             updateEventsCache()

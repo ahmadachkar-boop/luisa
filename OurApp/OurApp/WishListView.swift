@@ -30,16 +30,8 @@ struct WishListView: View {
         NavigationView {
             ZStack {
                 // Background gradient
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.88, green: 0.88, blue: 1.0),
-                        Color(red: 0.92, green: 0.92, blue: 1.0),
-                        Color(red: 0.96, green: 0.96, blue: 1.0)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
+                AppTheme.backgroundGradient
+                    .ignoresSafeArea()
 
                 switch currentView {
                 case .categorySelection:
@@ -56,6 +48,8 @@ struct WishListView: View {
             .sheet(isPresented: $showingSettings) {
                 WishListSettingsView(viewModel: viewModel)
             }
+            .navigationTitle("Wishlist")
+            .navigationBarTitleDisplayMode(.large)
         }
         .onAppear {
             viewModel.initializeDefaultCategoriesIfNeeded()

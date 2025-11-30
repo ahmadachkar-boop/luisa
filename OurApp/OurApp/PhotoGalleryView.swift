@@ -1008,17 +1008,9 @@ struct PhotoGalleryView: View {
         ZStack {
             NavigationView {
                 ZStack {
-                    // Background gradient - light periwinkle
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.88, green: 0.88, blue: 1.0),
-                            Color(red: 0.92, green: 0.92, blue: 1.0),
-                            Color(red: 0.96, green: 0.96, blue: 1.0)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    .ignoresSafeArea()
+                    // Background gradient
+                    AppTheme.backgroundGradient
+                        .ignoresSafeArea()
 
                     if showingFoldersOverview {
                         foldersOverviewView
@@ -1090,6 +1082,8 @@ struct PhotoGalleryView: View {
                         }
                     }
                 }
+                .navigationTitle("Photos")
+                .navigationBarTitleDisplayMode(.large)
                 .onChange(of: selectedItems) { oldItems, newItems in
                 Task {
                     guard !newItems.isEmpty else { return }
