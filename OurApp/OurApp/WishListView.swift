@@ -48,8 +48,6 @@ struct WishListView: View {
             .sheet(isPresented: $showingSettings) {
                 WishListSettingsView(viewModel: viewModel)
             }
-            .navigationTitle("Wishlist")
-            .navigationBarTitleDisplayMode(.large)
         }
         .onAppear {
             viewModel.initializeDefaultCategoriesIfNeeded()

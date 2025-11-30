@@ -1082,8 +1082,6 @@ struct PhotoGalleryView: View {
                         }
                     }
                 }
-                .navigationTitle("Photos")
-                .navigationBarTitleDisplayMode(.large)
                 .onChange(of: selectedItems) { oldItems, newItems in
                 Task {
                     guard !newItems.isEmpty else { return }

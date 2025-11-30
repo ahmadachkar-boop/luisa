@@ -804,8 +804,6 @@ struct CalendarView: View {
                 TimerManager.shared.invalidate(id: bannerTimerId)
             }
         }
-        .navigationTitle("Calendar")
-        .navigationBarTitleDisplayMode(.large)
         .onAppear {
             updateEventsCache()
         }

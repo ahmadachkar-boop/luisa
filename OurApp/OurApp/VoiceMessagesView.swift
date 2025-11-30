@@ -343,8 +343,6 @@ struct VoiceMessagesView: View {
                     }
                 }
             }
-            .navigationTitle("Voice Memos")
-            .navigationBarTitleDisplayMode(.large)
             .sheet(isPresented: $showingRecorder) {
                 VoiceRecorderView(fromUser: currentUserCategory) { audioData, duration, title in
                     await viewModel.uploadVoiceMessage(
