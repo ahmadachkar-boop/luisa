@@ -88,6 +88,8 @@ struct VoiceMessagesView: View {
     @State private var showingRecorder = false
     @State private var showingExpandedHeader = false
     @State private var isResettingScroll = false
+    @State private var showingExpandedHeaderMain = false
+    @State private var isResettingScrollMain = false
     @State private var selectionMode = false
     @State private var selectedMessageIds: Set<String> = []
     @State private var columnCount: Int = 2
@@ -481,20 +483,31 @@ struct VoiceMessagesView: View {
 
     // MARK: - Category Selection View
     private var categorySelectionView: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                // Header
-                HStack {
-                    Text("Voice Memos")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-                    Spacer()
-                }
-                .padding(.horizontal)
-                .padding(.top, 8)
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(spacing: 16) {
+                    // Top anchor
+                    Color.clear
+                        .frame(height: 0)
+                        .id("voicememos-top-anchor")
 
-                // From Ahmad Category
+                    // Expandable header
+                    expandableHeaderMain
+                        .padding(.horizontal)
+                        .padding(.top, 4)
+
+                    // Header
+                    HStack {
+                        Text("Voice Memos")
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+
+                    // From Ahmad Category
                 CategoryCard(
                     title: "From Ahmad",
                     icon: "person.circle.fill",
@@ -566,6 +579,104 @@ struct VoiceMessagesView: View {
                 }
             }
             .padding(.vertical)
+        }
+        .refreshable {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                showingExpandedHeaderMain = true
+            }
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y
+        } action: { oldValue, newValue in
+            if showingExpandedHeaderMain && newValue > 1 && !isResettingScrollMain {
+                isResettingScrollMain = true
+                withAnimation(.easeOut(duration: 0.25)) {
+                    showingExpandedHeaderMain = false
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        scrollProxy.scrollTo("voicememos-top-anchor", anchor: .top)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        isResettingScrollMain = false
+                    }
+                }
+            }
+        }
+        }
+    }
+
+    // MARK: - Expandable Header Main (Category Selection)
+    private var expandableHeaderMain: some View {
+        VStack(spacing: 0) {
+            if showingExpandedHeaderMain {
+                VStack(spacing: 16) {
+                    // Stats overview
+                    HStack(spacing: 20) {
+                        StatBox(
+                            value: "\(viewModel.voiceMessages.count)",
+                            label: "Total",
+                            color: Color(red: 0.6, green: 0.4, blue: 0.85)
+                        )
+
+                        StatBox(
+                            value: "\(viewModel.voiceMessages.filter { $0.fromUser == "Ahmad" }.count)",
+                            label: "From Ahmad",
+                            color: Color(red: 0.4, green: 0.6, blue: 0.9)
+                        )
+
+                        StatBox(
+                            value: "\(viewModel.voiceMessages.filter { $0.fromUser == "Luisa" }.count)",
+                            label: "From Luisa",
+                            color: Color(red: 0.9, green: 0.5, blue: 0.6)
+                        )
+                    }
+
+                    Divider()
+
+                    // Quick actions
+                    HStack(spacing: 12) {
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3)) {
+                                showingExpandedHeaderMain = false
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                showingRecorder = true
+                            }
+                        }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "mic.circle.fill")
+                                    .font(.body)
+                                Text("Record Memo")
+                                    .font(.subheadline.weight(.medium))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 0.7, green: 0.45, blue: 0.95),
+                                        Color(red: 0.55, green: 0.35, blue: 0.85)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .cornerRadius(12)
+                        }
+
+                        Spacer()
+                    }
+                }
+                .padding(16)
+                .background(
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(Color(red: 0.98, green: 0.96, blue: 1.0))
+                        .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 4)
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
     }
 
