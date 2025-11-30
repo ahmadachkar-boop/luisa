@@ -87,6 +87,7 @@ struct VoiceMessagesView: View {
     @StateObject private var viewModel = VoiceMessagesViewModel()
     @State private var showingRecorder = false
     @State private var showingExpandedHeader = false
+    @State private var isResettingScroll = false
     @State private var selectionMode = false
     @State private var selectedMessageIds: Set<String> = []
     @State private var columnCount: Int = 2
@@ -810,10 +811,20 @@ struct VoiceMessagesView: View {
                 geometry.contentOffset.y
             } action: { oldValue, newValue in
                 // Auto-hide header when scrolling down - scroll to top with animation
-                if showingExpandedHeader && newValue > 1 {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                // Use isResettingScroll to prevent scroll momentum from moving the view
+                if showingExpandedHeader && newValue > 1 && !isResettingScroll {
+                    isResettingScroll = true
+                    withAnimation(.spring(response: 0.3, dampingFraction: 1.0)) {
                         showingExpandedHeader = false
-                        scrollProxy.scrollTo("top-anchor", anchor: .top)
+                    }
+                    // Delay scroll to top to let momentum settle
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 1.0)) {
+                            scrollProxy.scrollTo("top-anchor", anchor: .top)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            isResettingScroll = false
+                        }
                     }
                 }
             }

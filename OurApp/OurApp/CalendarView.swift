@@ -175,6 +175,7 @@ struct CalendarView: View {
     @State private var showingFilterSheet = false
     @State private var showingSearch = false
     @State private var showingExpandedHeader = false
+    @State private var isResettingScroll = false
     @State private var expandedCardId: String? = nil
     @State private var eventsLoadedGeneration = 0 // Increments when events first load
     @State private var quickAddDate: Date? = nil // For quick add from calendar tap
@@ -686,10 +687,20 @@ struct CalendarView: View {
                 geometry.contentOffset.y
             } action: { oldValue, newValue in
                 // Auto-hide header when scrolling down - scroll to top with animation
-                if showingExpandedHeader && newValue > 1 {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                // Use isResettingScroll to prevent scroll momentum from moving the view
+                if showingExpandedHeader && newValue > 1 && !isResettingScroll {
+                    isResettingScroll = true
+                    withAnimation(.spring(response: 0.3, dampingFraction: 1.0)) {
                         showingExpandedHeader = false
-                        scrollProxy.scrollTo("calendar-top-anchor", anchor: .top)
+                    }
+                    // Delay scroll to top to let momentum settle
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 1.0)) {
+                            scrollProxy.scrollTo("calendar-top-anchor", anchor: .top)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            isResettingScroll = false
+                        }
                     }
                 }
             }
@@ -3403,6 +3414,7 @@ struct MonthPhotosGridView: View {
     let photoURLs: [String]
     let onPhotoTap: ([String], Int) -> Void
     @Environment(\.dismiss) var dismiss
+    @State private var selectedPhotoIndex: Int? = nil
 
     private let columns = [
         GridItem(.flexible(), spacing: 8),
@@ -3444,10 +3456,8 @@ struct MonthPhotosGridView: View {
                         LazyVGrid(columns: columns, spacing: 8) {
                             ForEach(Array(photoURLs.enumerated()), id: \.offset) { index, photoURL in
                                 Button(action: {
-                                    dismiss()
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                        onPhotoTap(photoURLs, index)
-                                    }
+                                    // Show photo viewer inside this sheet instead of dismissing
+                                    selectedPhotoIndex = index
                                 }) {
                                     CachedAsyncImage(url: URL(string: photoURL), thumbnailSize: 220) { image in
                                         image
@@ -3487,7 +3497,26 @@ struct MonthPhotosGridView: View {
                 }
             }
         }
+        .fullScreenCover(item: Binding(
+            get: { selectedPhotoIndex.map { RecapPhotoViewerData(index: $0) } },
+            set: { selectedPhotoIndex = $0?.index }
+        )) { data in
+            FullScreenPhotoViewer(
+                photoURLs: photoURLs,
+                initialIndex: data.index,
+                onDismiss: { selectedPhotoIndex = nil },
+                onDelete: { _ in
+                    // Recap photos are read-only, no delete
+                }
+            )
+        }
     }
+}
+
+// Helper struct for fullScreenCover binding
+private struct RecapPhotoViewerData: Identifiable {
+    let id = UUID()
+    let index: Int
 }
 
 // MARK: - Filter Header View

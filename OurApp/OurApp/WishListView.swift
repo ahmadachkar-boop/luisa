@@ -24,6 +24,7 @@ struct WishListView: View {
     @State private var viewNavStack: [WishViewType] = []
     @State private var showingSettings = false
     @State private var showingExpandedHeader = false
+    @State private var isResettingScroll = false
 
     var body: some View {
         NavigationView {
@@ -135,10 +136,20 @@ struct WishListView: View {
             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                 geometry.contentOffset.y
             } action: { oldValue, newValue in
-                if showingExpandedHeader && newValue > 1 {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                // Use isResettingScroll to prevent scroll momentum from moving the view
+                if showingExpandedHeader && newValue > 1 && !isResettingScroll {
+                    isResettingScroll = true
+                    withAnimation(.spring(response: 0.3, dampingFraction: 1.0)) {
                         showingExpandedHeader = false
-                        scrollProxy.scrollTo("wishlist-top-anchor", anchor: .top)
+                    }
+                    // Delay scroll to top to let momentum settle
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 1.0)) {
+                            scrollProxy.scrollTo("wishlist-top-anchor", anchor: .top)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            isResettingScroll = false
+                        }
                     }
                 }
             }
@@ -366,6 +377,7 @@ struct WishCategoryDetailView: View {
 
     @State private var showingAddItem = false
     @State private var showingExpandedHeader = false
+    @State private var isResettingScroll = false
     @State private var searchText = ""
     @State private var isCompletedExpanded = false
     @State private var itemToPlan: WishListItem? = nil
@@ -500,10 +512,20 @@ struct WishCategoryDetailView: View {
             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                 geometry.contentOffset.y
             } action: { oldValue, newValue in
-                if showingExpandedHeader && newValue > 1 {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                // Use isResettingScroll to prevent scroll momentum from moving the view
+                if showingExpandedHeader && newValue > 1 && !isResettingScroll {
+                    isResettingScroll = true
+                    withAnimation(.spring(response: 0.3, dampingFraction: 1.0)) {
                         showingExpandedHeader = false
-                        scrollProxy.scrollTo("category-top-anchor", anchor: .top)
+                    }
+                    // Delay scroll to top to let momentum settle
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 1.0)) {
+                            scrollProxy.scrollTo("category-top-anchor", anchor: .top)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            isResettingScroll = false
+                        }
                     }
                 }
             }

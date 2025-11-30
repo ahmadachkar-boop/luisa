@@ -53,6 +53,7 @@ struct PhotoGalleryView: View {
     @State private var saveErrorMessage = ""
     @State private var savedPhotoCount = 0
     @State private var showingExpandedHeader = false
+    @State private var isResettingScroll = false
     @State private var currentFolderView: FolderViewType = .allPhotos
     @State private var folderNavStack: [FolderViewType] = []
     @State private var showingCreateFolder = false
@@ -288,10 +289,20 @@ struct PhotoGalleryView: View {
                 geometry.contentOffset.y
             } action: { oldValue, newValue in
                 // Auto-hide header when scrolling down - scroll to top with animation
-                if showingExpandedHeader && newValue > 1 {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                // Use isResettingScroll to prevent scroll momentum from moving the view
+                if showingExpandedHeader && newValue > 1 && !isResettingScroll {
+                    isResettingScroll = true
+                    withAnimation(.spring(response: 0.3, dampingFraction: 1.0)) {
                         showingExpandedHeader = false
-                        scrollProxy.scrollTo("photos-top-anchor", anchor: .top)
+                    }
+                    // Delay scroll to top to let momentum settle
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 1.0)) {
+                            scrollProxy.scrollTo("photos-top-anchor", anchor: .top)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            isResettingScroll = false
+                        }
                     }
                 }
             }
