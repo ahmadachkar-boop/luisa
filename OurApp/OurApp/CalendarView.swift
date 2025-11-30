@@ -457,7 +457,7 @@ struct CalendarView: View {
                             Text("Search")
                                 .font(.subheadline.weight(.medium))
                         }
-                        .foregroundColor(Color(red: 0.35, green: 0.25, blue: 0.55))
+                        .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(
@@ -484,7 +484,7 @@ struct CalendarView: View {
                             Text("Filters")
                                 .font(.subheadline.weight(.medium))
                         }
-                        .foregroundColor(Color(red: 0.35, green: 0.25, blue: 0.55))
+                        .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(
@@ -508,7 +508,7 @@ struct CalendarView: View {
                             Text("Refresh")
                                 .font(.subheadline.weight(.medium))
                         }
-                        .foregroundColor(Color(red: 0.35, green: 0.25, blue: 0.55))
+                        .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(

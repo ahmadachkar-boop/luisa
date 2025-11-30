@@ -883,7 +883,8 @@ struct VoiceMessagesView: View {
 
                 TextField("Search memos...", text: $searchText)
                     .font(.subheadline)
-                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                    .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.4))
+                    .tint(Color(red: 0.4, green: 0.3, blue: 0.6))
                     .onSubmit {
                         isSearchActive = !searchText.isEmpty
                     }
@@ -1149,7 +1150,7 @@ struct VoiceMessagesView: View {
                                 Text("Select")
                                     .font(.subheadline.weight(.medium))
                             }
-                            .foregroundColor(Color(red: 0.35, green: 0.25, blue: 0.55))
+                            .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
                             .background(
@@ -1174,7 +1175,7 @@ struct VoiceMessagesView: View {
                                     Text("Folder")
                                         .font(.subheadline.weight(.medium))
                                 }
-                                .foregroundColor(Color(red: 0.35, green: 0.25, blue: 0.55))
+                                .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 14)
                                 .background(
@@ -1217,7 +1218,7 @@ struct VoiceMessagesView: View {
                                     Image(systemName: "chevron.up.chevron.down")
                                         .font(.caption)
                                 }
-                                .foregroundColor(Color(red: 0.35, green: 0.28, blue: 0.6))
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.8))
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
                                 .background(

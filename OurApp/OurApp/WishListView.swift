@@ -228,7 +228,7 @@ struct WishListView: View {
                         }) {
                             Image(systemName: "gearshape.fill")
                                 .font(.title2)
-                                .foregroundColor(Color(red: 0.35, green: 0.25, blue: 0.55))
+                                .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
                                 .padding(10)
                                 .background(
                                     Circle()
@@ -586,7 +586,8 @@ struct WishCategoryDetailView: View {
 
                         TextField("Search in \(categoryName)...", text: $searchText)
                             .font(.body)
-                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                            .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.4))
+                            .tint(Color(red: 0.4, green: 0.3, blue: 0.6))
 
                         if !searchText.isEmpty {
                             Button(action: { searchText = "" }) {
