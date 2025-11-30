@@ -584,7 +584,7 @@ struct WishCategoryDetailView: View {
                         Image(systemName: "magnifyingglass")
                             .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
 
-                        TextField("Search in \(categoryName)...", text: $searchText)
+                        TextField("", text: $searchText, prompt: Text("Search in \(categoryName)...").foregroundColor(Color(red: 0.45, green: 0.35, blue: 0.6)))
                             .font(.body)
                             .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.4))
                             .tint(Color(red: 0.4, green: 0.3, blue: 0.6))

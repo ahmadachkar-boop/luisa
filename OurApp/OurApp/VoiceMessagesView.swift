@@ -881,7 +881,7 @@ struct VoiceMessagesView: View {
                     .font(.body)
                     .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
 
-                TextField("Search memos...", text: $searchText)
+                TextField("", text: $searchText, prompt: Text("Search memos...").foregroundColor(Color(red: 0.45, green: 0.35, blue: 0.6)))
                     .font(.subheadline)
                     .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.4))
                     .tint(Color(red: 0.4, green: 0.3, blue: 0.6))
