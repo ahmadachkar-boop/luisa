@@ -292,12 +292,12 @@ struct PhotoGalleryView: View {
                 // Use isResettingScroll to prevent scroll momentum from moving the view
                 if showingExpandedHeader && newValue > 1 && !isResettingScroll {
                     isResettingScroll = true
-                    withAnimation(.spring(response: 0.3, dampingFraction: 1.0)) {
+                    withAnimation(.easeOut(duration: 0.25)) {
                         showingExpandedHeader = false
                     }
                     // Delay scroll to top to let momentum settle
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        withAnimation(.spring(response: 0.25, dampingFraction: 1.0)) {
+                        withAnimation(.easeOut(duration: 0.2)) {
                             scrollProxy.scrollTo("photos-top-anchor", anchor: .top)
                         }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
