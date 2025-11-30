@@ -2,6 +2,7 @@ import SwiftUI
 import AVFoundation
 import UIKit
 import MediaPlayer
+import CommonCrypto
 
 // MARK: - Sort Options
 enum VoiceMemoSortOption: String, CaseIterable {
@@ -86,6 +87,9 @@ struct VoiceMessagesView: View {
     @StateObject private var viewModel = VoiceMessagesViewModel()
     @State private var showingRecorder = false
     @State private var showingExpandedHeader = false
+    @State private var isResettingScroll = false
+    @State private var showingExpandedHeaderMain = false
+    @State private var isResettingScrollMain = false
     @State private var selectionMode = false
     @State private var selectedMessageIds: Set<String> = []
     @State private var columnCount: Int = 2
@@ -115,6 +119,9 @@ struct VoiceMessagesView: View {
     @State private var showingTagSheet = false
     @State private var selectedTagFilter: String? = nil
     @State private var newTagText = ""
+
+    // Cached messages by month to avoid expensive recomputation
+    @State private var cachedMessagesByMonth: [(key: String, messages: [VoiceMessage])] = []
 
     // Magnification gesture state
     @GestureState private var magnificationScale: CGFloat = 1.0
@@ -223,8 +230,17 @@ struct VoiceMessagesView: View {
         return messages
     }
 
-    // Group messages by month
+    // Group messages by month - uses cached value
     private var messagesByMonth: [(key: String, messages: [VoiceMessage])] {
+        if !cachedMessagesByMonth.isEmpty {
+            return cachedMessagesByMonth
+        }
+        // Fallback for initial load
+        return computeMessagesByMonth()
+    }
+
+    // Compute messages grouped by month (expensive operation)
+    private func computeMessagesByMonth() -> [(key: String, messages: [VoiceMessage])] {
         let grouped = Dictionary(grouping: filteredMessages) { message -> String in
             let formatter = DateFormatter()
             formatter.dateFormat = "MMMM yyyy"
@@ -249,20 +265,17 @@ struct VoiceMessagesView: View {
         return sortedMonths.map { (key: $0.key, messages: $0.value) }
     }
 
+    // Update cached messages when dependencies change
+    private func updateMessagesCache() {
+        cachedMessagesByMonth = computeMessagesByMonth()
+    }
+
     var body: some View {
         NavigationView {
             ZStack {
-                // Background gradient - light periwinkle
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.88, green: 0.88, blue: 1.0),
-                        Color(red: 0.92, green: 0.92, blue: 1.0),
-                        Color(red: 0.96, green: 0.96, blue: 1.0)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
+                // Background gradient
+                AppTheme.backgroundGradient
+                    .ignoresSafeArea()
 
                 VStack(spacing: 0) {
                     if currentFolderView == .categorySelection {
@@ -421,6 +434,18 @@ struct VoiceMessagesView: View {
                     prepareShareItems(for: message)
                 }
             }
+            .onAppear {
+                updateMessagesCache()
+            }
+            .onChange(of: viewModel.voiceMessages.count) { _, _ in
+                updateMessagesCache()
+            }
+            .onChange(of: sortOption) { _, _ in
+                updateMessagesCache()
+            }
+            .onChange(of: currentFolderView) { _, _ in
+                updateMessagesCache()
+            }
         }
     }
 
@@ -458,20 +483,37 @@ struct VoiceMessagesView: View {
 
     // MARK: - Category Selection View
     private var categorySelectionView: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                // Header
-                HStack {
-                    Text("Voice Memos")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-                    Spacer()
-                }
-                .padding(.horizontal)
-                .padding(.top, 8)
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(spacing: 16) {
+                    // Top section with anchor, expandable header, and title
+                    VStack(spacing: 0) {
+                        // Top anchor
+                        Color.clear
+                            .frame(height: 0)
+                            .id("voicememos-top-anchor")
 
-                // From Ahmad Category
+                        // Expandable header (only takes space when visible)
+                        if showingExpandedHeaderMain {
+                            expandableHeaderMain
+                                .padding(.horizontal)
+                                .padding(.top, 8)
+                                .padding(.bottom, 8)
+                        }
+
+                        // Header
+                        HStack {
+                            Text("Voice Memos")
+                                .font(.largeTitle)
+                                .fontWeight(.bold)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                            Spacer()
+                        }
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                    }
+
+                    // From Ahmad Category
                 CategoryCard(
                     title: "From Ahmad",
                     icon: "person.circle.fill",
@@ -544,6 +586,100 @@ struct VoiceMessagesView: View {
             }
             .padding(.vertical)
         }
+        .refreshable {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                showingExpandedHeaderMain = true
+            }
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y
+        } action: { oldValue, newValue in
+            if showingExpandedHeaderMain && newValue > 1 && !isResettingScrollMain {
+                isResettingScrollMain = true
+                withAnimation(.easeOut(duration: 0.25)) {
+                    showingExpandedHeaderMain = false
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        scrollProxy.scrollTo("voicememos-top-anchor", anchor: .top)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        isResettingScrollMain = false
+                    }
+                }
+            }
+        }
+        }
+    }
+
+    // MARK: - Expandable Header Main (Category Selection)
+    private var expandableHeaderMain: some View {
+        VStack(spacing: 16) {
+            // Stats overview
+            HStack(spacing: 20) {
+                StatBox(
+                    value: "\(viewModel.voiceMessages.count)",
+                    label: "Total",
+                    color: Color(red: 0.6, green: 0.4, blue: 0.85)
+                )
+
+                StatBox(
+                    value: "\(viewModel.voiceMessages.filter { $0.fromUser == "Ahmad" }.count)",
+                    label: "From Ahmad",
+                    color: Color(red: 0.4, green: 0.6, blue: 0.9)
+                )
+
+                StatBox(
+                    value: "\(viewModel.voiceMessages.filter { $0.fromUser == "Luisa" }.count)",
+                    label: "From Luisa",
+                    color: Color(red: 0.9, green: 0.5, blue: 0.6)
+                )
+            }
+
+            Divider()
+
+            // Quick actions
+            HStack(spacing: 12) {
+                Button(action: {
+                    withAnimation(.spring(response: 0.3)) {
+                        showingExpandedHeaderMain = false
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        showingRecorder = true
+                    }
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "mic.circle.fill")
+                            .font(.body)
+                        Text("Record Memo")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.7, green: 0.45, blue: 0.95),
+                                Color(red: 0.55, green: 0.35, blue: 0.85)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .cornerRadius(12)
+                }
+
+                Spacer()
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(red: 0.98, green: 0.96, blue: 1.0))
+                .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 4)
+        )
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     // MARK: - Empty State View
@@ -780,10 +916,20 @@ struct VoiceMessagesView: View {
                 geometry.contentOffset.y
             } action: { oldValue, newValue in
                 // Auto-hide header when scrolling down - scroll to top with animation
-                if showingExpandedHeader && newValue > 1 {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                // Use isResettingScroll to prevent scroll momentum from moving the view
+                if showingExpandedHeader && newValue > 1 && !isResettingScroll {
+                    isResettingScroll = true
+                    withAnimation(.easeOut(duration: 0.25)) {
                         showingExpandedHeader = false
-                        scrollProxy.scrollTo("top-anchor", anchor: .top)
+                    }
+                    // Delay scroll to top to let momentum settle
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            scrollProxy.scrollTo("top-anchor", anchor: .top)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            isResettingScroll = false
+                        }
                     }
                 }
             }
@@ -840,9 +986,10 @@ struct VoiceMessagesView: View {
                     .font(.body)
                     .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
 
-                TextField("Search memos...", text: $searchText)
+                TextField("", text: $searchText, prompt: Text("Search memos...").foregroundColor(Color(red: 0.45, green: 0.35, blue: 0.6)))
                     .font(.subheadline)
-                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                    .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.4))
+                    .tint(Color(red: 0.4, green: 0.3, blue: 0.6))
                     .onSubmit {
                         isSearchActive = !searchText.isEmpty
                     }
@@ -2014,7 +2161,7 @@ struct VoiceMemoGridCell: View {
                 Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: columnCount == 1 ? 20 : 18))
                     .foregroundColor(.white)
-                    .offset(x: isPlaying ? 0 : 2)
+                    .offset(x: isPlaying ? 0 : 1)
             }
         }
         .buttonStyle(PlainButtonStyle())
@@ -2259,7 +2406,7 @@ struct FullScreenVoiceMemoPlayer: View {
                                 Image(systemName: viewModel.currentlyPlayingId == memo.id && viewModel.isPlaying ? "pause.fill" : "play.fill")
                                     .font(.system(size: 32))
                                     .foregroundColor(Color(red: 0.2, green: 0.15, blue: 0.35))
-                                    .offset(x: viewModel.currentlyPlayingId == memo.id && viewModel.isPlaying ? 0 : 3)
+                                    .offset(x: viewModel.currentlyPlayingId == memo.id && viewModel.isPlaying ? 0 : 2)
                             }
                         }
 
@@ -3317,10 +3464,20 @@ class AudioCache {
     private let diskCacheURL: URL
     private let maxDiskBytes: Int64 = 200 * 1024 * 1024 // 200 MB for audio cache
     private let cacheQueue = DispatchQueue(label: "com.ourapp.audiocache", attributes: .concurrent)
+    private let cacheVersionKey = "AudioCacheVersion"
+    private let currentCacheVersion = 2 // Increment when cache key algorithm changes
 
     private init() {
         let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         diskCacheURL = cacheDir.appendingPathComponent("AudioCache", isDirectory: true)
+
+        // Check if cache version changed (algorithm fix) - clear old corrupted cache
+        let storedVersion = UserDefaults.standard.integer(forKey: cacheVersionKey)
+        if storedVersion != currentCacheVersion {
+            print("🧹 [AUDIO CACHE] Cache version changed, clearing old cache")
+            try? FileManager.default.removeItem(at: diskCacheURL)
+            UserDefaults.standard.set(currentCacheVersion, forKey: cacheVersionKey)
+        }
 
         // Create directory if needed
         try? FileManager.default.createDirectory(at: diskCacheURL, withIntermediateDirectories: true)
@@ -3332,11 +3489,18 @@ class AudioCache {
     }
 
     private func cacheKey(for urlString: String) -> String {
-        // Create a safe filename from URL
-        return urlString.data(using: .utf8)?.base64EncodedString()
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "+", with: "-")
-            .prefix(100).description ?? urlString.hashValue.description
+        // Create a unique hash of the URL to avoid collisions
+        // Firebase Storage URLs share long common prefixes, so we need a proper hash
+        guard let data = urlString.data(using: .utf8) else {
+            return String(urlString.hashValue)
+        }
+
+        var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        data.withUnsafeBytes { buffer in
+            _ = CC_SHA256(buffer.baseAddress, CC_LONG(buffer.count), &hash)
+        }
+
+        return hash.map { String(format: "%02x", $0) }.joined()
     }
 
     func get(forURL urlString: String) -> Data? {
@@ -3462,10 +3626,10 @@ class VoiceMessagesViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
     private func configureAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            // Use .playback category for background audio support
-            try session.setCategory(.playback, mode: .spokenAudio, options: [.allowBluetooth, .allowAirPlay])
+            // Use .playback category for background audio support with main speaker
+            try session.setCategory(.playback, mode: .default, options: [.allowBluetooth, .allowAirPlay, .defaultToSpeaker])
             try session.setActive(true)
-            print("Audio session configured for background playback")
+            print("Audio session configured for speaker playback")
         } catch {
             print("Failed to configure audio session: \(error)")
         }
@@ -3800,6 +3964,9 @@ class VoiceMessagesViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
             currentWaveform = generatePlaceholderWaveform(count: 50)
         }
 
+        // Capture the message ID to check for race conditions
+        let targetMessageId = message.id
+
         Task {
             do {
                 // Check cache first
@@ -3819,6 +3986,12 @@ class VoiceMessagesViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
                 }
 
                 await MainActor.run {
+                    // Check if user switched to a different memo during download
+                    guard self.currentlyPlayingId == targetMessageId else {
+                        print("⚠️ [AUDIO] Memo changed during download, aborting playback of: \(message.title)")
+                        return
+                    }
+
                     do {
                         audioPlayer = try AVAudioPlayer(data: data)
                         audioPlayer?.delegate = self

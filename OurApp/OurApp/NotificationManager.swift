@@ -49,21 +49,23 @@ class NotificationManager: NSObject, ObservableObject {
 
     func saveFCMToken(_ token: String) {
         self.fcmToken = token
-        let currentUser = UserIdentityManager.shared.currentUserName
 
-        // Save token to Firestore for this user
-        let tokenData: [String: Any] = [
-            "token": token,
-            "user": currentUser,
-            "updatedAt": FieldValue.serverTimestamp(),
-            "platform": "iOS"
-        ]
+        Task {
+            let currentUser = await getCurrentUser()
 
-        db.collection("deviceTokens").document(currentUser).setData(tokenData) { error in
-            if let error = error {
-                print("🔴 [NOTIFICATIONS] Failed to save token: \(error.localizedDescription)")
-            } else {
+            // Save token to Firestore for this user
+            let tokenData: [String: Any] = [
+                "token": token,
+                "user": currentUser,
+                "updatedAt": FieldValue.serverTimestamp(),
+                "platform": "iOS"
+            ]
+
+            do {
+                try await db.collection("deviceTokens").document(currentUser).setData(tokenData)
                 print("🟢 [NOTIFICATIONS] Token saved for \(currentUser)")
+            } catch {
+                print("🔴 [NOTIFICATIONS] Failed to save token: \(error.localizedDescription)")
             }
         }
     }
@@ -71,46 +73,60 @@ class NotificationManager: NSObject, ObservableObject {
     // MARK: - Send Notifications (via Firestore trigger)
     // These methods create notification documents that Cloud Functions will process
 
-    func notifyEventCreated(event: CalendarEvent) {
-        let currentUser = UserIdentityManager.shared.currentUserName
-
-        // Send to both users
-        for recipient in ["Ahmad", "Luisa"] {
-            let notification: [String: Any] = [
-                "type": "event_created",
-                "title": "New Event",
-                "body": "\(currentUser) created a new event: \(event.title)",
-                "recipient": recipient,
-                "sender": currentUser,
-                "eventId": event.id ?? "",
-                "createdAt": FieldValue.serverTimestamp(),
-                "processed": false
-            ]
-
-            db.collection("notifications").addDocument(data: notification)
+    /// Helper to get the current user, waiting for identity to load if needed
+    private func getCurrentUser() async -> String {
+        // Wait for identity manager to finish loading if needed
+        let identityManager = UserIdentityManager.shared
+        while identityManager.isLoading {
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
         }
-        print("🔔 [NOTIFICATIONS] Queued event created notification for both users")
+        return identityManager.currentUserName
+    }
+
+    func notifyEventCreated(event: CalendarEvent) {
+        Task {
+            let currentUser = await getCurrentUser()
+
+            // Send to both users
+            for recipient in ["Ahmad", "Luisa"] {
+                let notification: [String: Any] = [
+                    "type": "event_created",
+                    "title": "New Event",
+                    "body": "\(currentUser) created a new event: \(event.title)",
+                    "recipient": recipient,
+                    "sender": currentUser,
+                    "eventId": event.id ?? "",
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "processed": false
+                ]
+
+                _ = try? await db.collection("notifications").addDocument(data: notification)
+            }
+            print("🔔 [NOTIFICATIONS] Queued event created notification for both users")
+        }
     }
 
     func notifyEventEdited(event: CalendarEvent) {
-        let currentUser = UserIdentityManager.shared.currentUserName
+        Task {
+            let currentUser = await getCurrentUser()
 
-        // Send to both users
-        for recipient in ["Ahmad", "Luisa"] {
-            let notification: [String: Any] = [
-                "type": "event_edited",
-                "title": "Event Updated",
-                "body": "\(currentUser) updated the event: \(event.title)",
-                "recipient": recipient,
-                "sender": currentUser,
-                "eventId": event.id ?? "",
-                "createdAt": FieldValue.serverTimestamp(),
-                "processed": false
-            ]
+            // Send to both users
+            for recipient in ["Ahmad", "Luisa"] {
+                let notification: [String: Any] = [
+                    "type": "event_edited",
+                    "title": "Event Updated",
+                    "body": "\(currentUser) updated the event: \(event.title)",
+                    "recipient": recipient,
+                    "sender": currentUser,
+                    "eventId": event.id ?? "",
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "processed": false
+                ]
 
-            db.collection("notifications").addDocument(data: notification)
+                _ = try? await db.collection("notifications").addDocument(data: notification)
+            }
+            print("🔔 [NOTIFICATIONS] Queued event edited notification for both users")
         }
-        print("🔔 [NOTIFICATIONS] Queued event edited notification for both users")
     }
 
     func notifyEventReminder(event: CalendarEvent, hoursUntil: Int) {
@@ -136,128 +152,138 @@ class NotificationManager: NSObject, ObservableObject {
     }
 
     func notifyPhotosAdded(count: Int, location: String, eventId: String? = nil) {
-        let currentUser = UserIdentityManager.shared.currentUserName
+        Task {
+            let currentUser = await getCurrentUser()
 
-        let photoText = count == 1 ? "photo was" : "photos were"
-        let body: String
+            let photoText = count == 1 ? "photo was" : "photos were"
+            let body: String
 
-        if let eventId = eventId, !eventId.isEmpty {
-            body = "\(count) \(photoText) added to \(location) by \(currentUser)"
-        } else {
-            body = "\(count) \(photoText) added to the gallery by \(currentUser)"
+            if let eventId = eventId, !eventId.isEmpty {
+                body = "\(count) \(photoText) added to \(location) by \(currentUser)"
+            } else {
+                body = "\(count) \(photoText) added to the gallery by \(currentUser)"
+            }
+
+            // Send to both users
+            for recipient in ["Ahmad", "Luisa"] {
+                let notification: [String: Any] = [
+                    "type": "photos_added",
+                    "title": "New Photos",
+                    "body": body,
+                    "recipient": recipient,
+                    "sender": currentUser,
+                    "photoCount": count,
+                    "eventId": eventId ?? "",
+                    "isEventPhoto": eventId != nil && !eventId!.isEmpty,
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "processed": false
+                ]
+
+                _ = try? await db.collection("notifications").addDocument(data: notification)
+            }
+            print("🔔 [NOTIFICATIONS] Queued photos added notification for both users")
         }
-
-        // Send to both users
-        for recipient in ["Ahmad", "Luisa"] {
-            let notification: [String: Any] = [
-                "type": "photos_added",
-                "title": "New Photos",
-                "body": body,
-                "recipient": recipient,
-                "sender": currentUser,
-                "photoCount": count,
-                "eventId": eventId ?? "",
-                "isEventPhoto": eventId != nil && !eventId!.isEmpty,
-                "createdAt": FieldValue.serverTimestamp(),
-                "processed": false
-            ]
-
-            db.collection("notifications").addDocument(data: notification)
-        }
-        print("🔔 [NOTIFICATIONS] Queued photos added notification for both users")
     }
 
     func notifyVoiceMemoCreated(memo: VoiceMessage) {
-        let currentUser = UserIdentityManager.shared.currentUserName
+        Task {
+            let currentUser = await getCurrentUser()
 
-        // Send to both users
-        for recipient in ["Ahmad", "Luisa"] {
-            let notification: [String: Any] = [
-                "type": "voice_memo_created",
-                "title": "New Voice Memo",
-                "body": "\(currentUser) recorded a new voice memo: \(memo.title)",
-                "recipient": recipient,
-                "sender": currentUser,
-                "memoId": memo.id ?? "",
-                "createdAt": FieldValue.serverTimestamp(),
-                "processed": false
-            ]
+            // Send to both users
+            for recipient in ["Ahmad", "Luisa"] {
+                let notification: [String: Any] = [
+                    "type": "voice_memo_created",
+                    "title": "New Voice Memo",
+                    "body": "\(currentUser) recorded a new voice memo: \(memo.title)",
+                    "recipient": recipient,
+                    "sender": currentUser,
+                    "memoId": memo.id ?? "",
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "processed": false
+                ]
 
-            db.collection("notifications").addDocument(data: notification)
+                _ = try? await db.collection("notifications").addDocument(data: notification)
+            }
+            print("🔔 [NOTIFICATIONS] Queued voice memo notification for both users")
         }
-        print("🔔 [NOTIFICATIONS] Queued voice memo notification for both users")
     }
 
     // MARK: - Wishlist Notifications
 
     func notifyWishAdded(item: WishListItem, category: String) {
-        let currentUser = UserIdentityManager.shared.currentUserName
+        Task {
+            let currentUser = await getCurrentUser()
 
-        // Send to both users
-        for recipient in ["Ahmad", "Luisa"] {
-            let notification: [String: Any] = [
-                "type": "wish_added",
-                "title": "New Wish Added",
-                "body": "\(currentUser) added '\(item.title)' to \(category)",
-                "recipient": recipient,
-                "sender": currentUser,
-                "wishId": item.id ?? "",
-                "category": category,
-                "createdAt": FieldValue.serverTimestamp(),
-                "processed": false
-            ]
+            // Send to both users
+            for recipient in ["Ahmad", "Luisa"] {
+                let notification: [String: Any] = [
+                    "type": "wish_added",
+                    "title": "New Wish Added",
+                    "body": "\(currentUser) added '\(item.title)' to \(category)",
+                    "recipient": recipient,
+                    "sender": currentUser,
+                    "wishId": item.id ?? "",
+                    "category": category,
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "processed": false
+                ]
 
-            db.collection("notifications").addDocument(data: notification)
+                _ = try? await db.collection("notifications").addDocument(data: notification)
+            }
+            print("🔔 [NOTIFICATIONS] Queued wish added notification for both users")
         }
-        print("🔔 [NOTIFICATIONS] Queued wish added notification for both users")
     }
 
     func notifyWishPlanned(item: WishListItem, plannedDate: Date) {
-        let currentUser = UserIdentityManager.shared.currentUserName
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateStyle = .medium
-        dateFormatter.timeStyle = .short
-        let dateString = dateFormatter.string(from: plannedDate)
+        Task {
+            let currentUser = await getCurrentUser()
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateStyle = .medium
+            dateFormatter.timeStyle = .short
+            let dateString = dateFormatter.string(from: plannedDate)
 
-        // Send to both users
-        for recipient in ["Ahmad", "Luisa"] {
-            let notification: [String: Any] = [
-                "type": "wish_planned",
-                "title": "Wish Planned",
-                "body": "\(currentUser) scheduled '\(item.title)' for \(dateString)",
-                "recipient": recipient,
-                "sender": currentUser,
-                "wishId": item.id ?? "",
-                "plannedDate": plannedDate,
-                "createdAt": FieldValue.serverTimestamp(),
-                "processed": false
-            ]
+            // Send to both users
+            for recipient in ["Ahmad", "Luisa"] {
+                let notification: [String: Any] = [
+                    "type": "wish_planned",
+                    "title": "Wish Planned",
+                    "body": "\(currentUser) scheduled '\(item.title)' for \(dateString)",
+                    "recipient": recipient,
+                    "sender": currentUser,
+                    "wishId": item.id ?? "",
+                    "plannedDate": plannedDate,
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "processed": false
+                ]
 
-            db.collection("notifications").addDocument(data: notification)
+                _ = try? await db.collection("notifications").addDocument(data: notification)
+            }
+            print("🔔 [NOTIFICATIONS] Queued wish planned notification for both users")
         }
-        print("🔔 [NOTIFICATIONS] Queued wish planned notification for both users")
     }
 
     func notifyWishCompleted(item: WishListItem) {
-        let currentUser = UserIdentityManager.shared.currentUserName
+        Task {
+            let currentUser = await getCurrentUser()
 
-        // Send to both users
-        for recipient in ["Ahmad", "Luisa"] {
-            let notification: [String: Any] = [
-                "type": "wish_completed",
-                "title": "Wish Completed! 🎉",
-                "body": "\(currentUser) completed '\(item.title)'",
-                "recipient": recipient,
-                "sender": currentUser,
-                "wishId": item.id ?? "",
-                "category": item.category,
-                "createdAt": FieldValue.serverTimestamp(),
-                "processed": false
-            ]
+            // Send to both users
+            for recipient in ["Ahmad", "Luisa"] {
+                let notification: [String: Any] = [
+                    "type": "wish_completed",
+                    "title": "Wish Completed! 🎉",
+                    "body": "\(currentUser) completed '\(item.title)'",
+                    "recipient": recipient,
+                    "sender": currentUser,
+                    "wishId": item.id ?? "",
+                    "category": item.category,
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "processed": false
+                ]
 
-            db.collection("notifications").addDocument(data: notification)
+                _ = try? await db.collection("notifications").addDocument(data: notification)
+            }
+            print("🔔 [NOTIFICATIONS] Queued wish completed notification for both users")
         }
-        print("🔔 [NOTIFICATIONS] Queued wish completed notification for both users")
     }
 
     // MARK: - Schedule Local Reminders for Events
@@ -321,6 +347,20 @@ class NotificationManager: NSObject, ObservableObject {
             "\(eventId)-1day",
             "\(eventId)-2hours"
         ])
+    }
+
+    /// Schedule reminders for all future events (called when events are loaded from Firebase)
+    func scheduleRemindersForAllEvents(_ events: [CalendarEvent]) {
+        let now = Date()
+
+        // Only schedule for future events
+        let futureEvents = events.filter { $0.date > now }
+
+        print("🔔 [NOTIFICATIONS] Scheduling reminders for \(futureEvents.count) upcoming events")
+
+        for event in futureEvents {
+            scheduleEventReminders(for: event)
+        }
     }
 }
 

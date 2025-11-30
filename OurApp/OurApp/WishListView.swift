@@ -24,21 +24,14 @@ struct WishListView: View {
     @State private var viewNavStack: [WishViewType] = []
     @State private var showingSettings = false
     @State private var showingExpandedHeader = false
+    @State private var isResettingScroll = false
 
     var body: some View {
         NavigationView {
             ZStack {
                 // Background gradient
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.88, green: 0.88, blue: 1.0),
-                        Color(red: 0.92, green: 0.92, blue: 1.0),
-                        Color(red: 0.96, green: 0.96, blue: 1.0)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
+                AppTheme.backgroundGradient
+                    .ignoresSafeArea()
 
                 switch currentView {
                 case .categorySelection:
@@ -82,33 +75,32 @@ struct WishListView: View {
         ScrollViewReader { scrollProxy in
             ScrollView {
                 VStack(spacing: 16) {
-                    // Top anchor
-                    Color.clear
-                        .frame(height: 0)
-                        .id("wishlist-top-anchor")
+                    // Top section with anchor, expandable header, and title
+                    VStack(spacing: 0) {
+                        // Top anchor
+                        Color.clear
+                            .frame(height: 0)
+                            .id("wishlist-top-anchor")
 
-                    // Expandable header
-                    expandableHeader
-                        .padding(.horizontal)
-                        .padding(.top, 4)
-
-                    // Header
-                    HStack {
-                        Text("Wish List")
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-
-                        Spacer()
-
-                        Button(action: { showingSettings = true }) {
-                            Image(systemName: "gearshape.fill")
-                                .font(.title3)
-                                .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                        // Expandable header (only takes space when visible)
+                        if showingExpandedHeader {
+                            expandableHeader
+                                .padding(.horizontal)
+                                .padding(.top, 8)
+                                .padding(.bottom, 8)
                         }
+
+                        // Header
+                        HStack {
+                            Text("Wish List")
+                                .font(.largeTitle)
+                                .fontWeight(.bold)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                            Spacer()
+                        }
+                        .padding(.horizontal)
+                        .padding(.top, 8)
                     }
-                    .padding(.horizontal)
-                    .padding(.top, 8)
 
                     // Category Cards
                     ForEach(viewModel.categories) { category in
@@ -141,10 +133,20 @@ struct WishListView: View {
             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                 geometry.contentOffset.y
             } action: { oldValue, newValue in
-                if showingExpandedHeader && newValue > 1 {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                // Use isResettingScroll to prevent scroll momentum from moving the view
+                if showingExpandedHeader && newValue > 1 && !isResettingScroll {
+                    isResettingScroll = true
+                    withAnimation(.easeOut(duration: 0.25)) {
                         showingExpandedHeader = false
-                        scrollProxy.scrollTo("wishlist-top-anchor", anchor: .top)
+                    }
+                    // Delay scroll to top to let momentum settle
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            scrollProxy.scrollTo("wishlist-top-anchor", anchor: .top)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            isResettingScroll = false
+                        }
                     }
                 }
             }
@@ -153,76 +155,91 @@ struct WishListView: View {
 
     // MARK: - Expandable Header
     private var expandableHeader: some View {
-        VStack(spacing: 0) {
-            if showingExpandedHeader {
-                VStack(spacing: 16) {
-                    // Stats overview
-                    HStack(spacing: 20) {
-                        StatBox(
-                            value: "\(viewModel.items.filter { !$0.isCompleted }.count)",
-                            label: "Pending",
-                            color: Color(red: 0.6, green: 0.4, blue: 0.85)
-                        )
-
-                        StatBox(
-                            value: "\(viewModel.items.filter { $0.plannedDate != nil && !$0.isCompleted }.count)",
-                            label: "Planned",
-                            color: Color(red: 0.4, green: 0.6, blue: 0.9)
-                        )
-
-                        StatBox(
-                            value: "\(viewModel.items.filter { $0.isCompleted }.count)",
-                            label: "Done",
-                            color: Color.green
-                        )
-                    }
-
-                    Divider()
-
-                    // Quick actions
-                    HStack(spacing: 12) {
-                        Button(action: {
-                            withAnimation(.spring(response: 0.3)) {
-                                showingExpandedHeader = false
-                            }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                                showingSettings = true
-                            }
-                        }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.body)
-                                Text("Add Category")
-                                    .font(.subheadline.weight(.medium))
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(
-                                LinearGradient(
-                                    colors: [
-                                        Color(red: 0.7, green: 0.45, blue: 0.95),
-                                        Color(red: 0.55, green: 0.35, blue: 0.85)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .cornerRadius(12)
-                        }
-
-                        Spacer()
-                    }
-                }
-                .padding(16)
-                .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Color(red: 0.98, green: 0.96, blue: 1.0))
-                        .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 4)
+        VStack(spacing: 16) {
+            // Stats overview
+            HStack(spacing: 20) {
+                StatBox(
+                    value: "\(viewModel.items.filter { !$0.isCompleted }.count)",
+                    label: "Pending",
+                    color: Color(red: 0.6, green: 0.4, blue: 0.85)
                 )
-                .transition(.opacity.combined(with: .move(edge: .top)))
+
+                StatBox(
+                    value: "\(viewModel.items.filter { $0.plannedDate != nil && !$0.isCompleted }.count)",
+                    label: "Planned",
+                    color: Color(red: 0.4, green: 0.6, blue: 0.9)
+                )
+
+                StatBox(
+                    value: "\(viewModel.items.filter { $0.isCompleted }.count)",
+                    label: "Done",
+                    color: Color.green
+                )
+            }
+
+            Divider()
+
+            // Quick actions
+            HStack(spacing: 12) {
+                Button(action: {
+                    withAnimation(.spring(response: 0.3)) {
+                        showingExpandedHeader = false
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        showingSettings = true
+                    }
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.body)
+                        Text("Add Category")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.7, green: 0.45, blue: 0.95),
+                                Color(red: 0.55, green: 0.35, blue: 0.85)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .cornerRadius(12)
+                }
+
+                Spacer()
+
+                Button(action: {
+                    withAnimation(.spring(response: 0.3)) {
+                        showingExpandedHeader = false
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        showingSettings = true
+                    }
+                }) {
+                    Image(systemName: "gearshape.fill")
+                        .font(.title2)
+                        .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                        .padding(10)
+                        .background(
+                            Circle()
+                                .fill(Color.white)
+                                .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
+                        )
+                }
             }
         }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(red: 0.98, green: 0.96, blue: 1.0))
+                .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 4)
+        )
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     // MARK: - Empty State
@@ -353,6 +370,7 @@ struct WishCategoryDetailView: View {
 
     @State private var showingAddItem = false
     @State private var showingExpandedHeader = false
+    @State private var isResettingScroll = false
     @State private var searchText = ""
     @State private var isCompletedExpanded = false
     @State private var itemToPlan: WishListItem? = nil
@@ -487,10 +505,20 @@ struct WishCategoryDetailView: View {
             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                 geometry.contentOffset.y
             } action: { oldValue, newValue in
-                if showingExpandedHeader && newValue > 1 {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                // Use isResettingScroll to prevent scroll momentum from moving the view
+                if showingExpandedHeader && newValue > 1 && !isResettingScroll {
+                    isResettingScroll = true
+                    withAnimation(.easeOut(duration: 0.25)) {
                         showingExpandedHeader = false
-                        scrollProxy.scrollTo("category-top-anchor", anchor: .top)
+                    }
+                    // Delay scroll to top to let momentum settle
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            scrollProxy.scrollTo("category-top-anchor", anchor: .top)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            isResettingScroll = false
+                        }
                     }
                 }
             }
@@ -549,9 +577,10 @@ struct WishCategoryDetailView: View {
                         Image(systemName: "magnifyingglass")
                             .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
 
-                        TextField("Search in \(categoryName)...", text: $searchText)
+                        TextField("", text: $searchText, prompt: Text("Search in \(categoryName)...").foregroundColor(Color(red: 0.45, green: 0.35, blue: 0.6)))
                             .font(.body)
-                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                            .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.4))
+                            .tint(Color(red: 0.4, green: 0.3, blue: 0.6))
 
                         if !searchText.isEmpty {
                             Button(action: { searchText = "" }) {

@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import FirebaseAuth
 
 /*
  SETUP REQUIRED:
@@ -107,10 +108,14 @@ class GoogleCalendarManager: ObservableObject {
                             print("✅ [GOOGLE CALENDAR] Found existing OurApp calendar ID")
                         }
 
-                        // Start periodic sync if auto-sync is enabled
+                        // Start periodic sync if auto-sync is enabled AND Firebase auth is complete
                         if self.autoSyncEnabled {
-                            print("🔄 [GOOGLE SYNC] Auto-sync enabled, starting periodic sync")
-                            self.startPeriodicSync()
+                            if Auth.auth().currentUser != nil {
+                                print("🔄 [GOOGLE SYNC] Auto-sync enabled, starting periodic sync")
+                                self.startPeriodicSync()
+                            } else {
+                                print("⚠️ [GOOGLE SYNC] Auto-sync enabled but waiting for phone auth")
+                            }
                         }
                     } else {
                         print("⚠️ [GOOGLE SIGN-IN] Restored user but missing calendar scope")
@@ -129,8 +134,10 @@ class GoogleCalendarManager: ObservableObject {
             throw GoogleCalendarError.noViewController
         }
 
-        // Google Cloud OAuth Client ID
-        let clientID = "147528790359-oj9snngdl2msc8p6qtpkte5u21ausvh0.apps.googleusercontent.com"
+        // Read Google Cloud OAuth Client ID from Info.plist
+        guard let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String else {
+            throw GoogleCalendarError.missingConfiguration("GIDClientID not found in Info.plist")
+        }
 
         let signInConfig = GIDConfiguration(clientID: clientID)
         GIDSignIn.sharedInstance.configuration = signInConfig
@@ -244,6 +251,17 @@ class GoogleCalendarManager: ObservableObject {
         stopPeriodicSync()
     }
 
+    /// Called when Firebase phone auth is completed to start sync if ready
+    func onPhoneAuthCompleted() {
+        guard isSignedIn, autoSyncEnabled else {
+            print("⚠️ [GOOGLE SYNC] Phone auth completed but Google not signed in or auto-sync disabled")
+            return
+        }
+
+        print("🔄 [GOOGLE SYNC] Phone auth completed, starting sync...")
+        startPeriodicSync()
+    }
+
     // MARK: - Calendar Management
 
     private func findOrCreateOurAppCalendar(user: GIDGoogleUser) async throws {
@@ -321,6 +339,12 @@ class GoogleCalendarManager: ObservableObject {
             throw GoogleCalendarError.notSignedIn
         }
 
+        // Check if user is authenticated with Firebase (phone auth)
+        guard Auth.auth().currentUser != nil else {
+            print("⚠️ [GOOGLE SYNC] Cannot sync - Firebase phone auth not completed")
+            throw GoogleCalendarError.apiError("Please complete phone authentication first")
+        }
+
         // Refresh access token if needed
         try await refreshTokenIfNeeded(user: user)
 
@@ -379,11 +403,17 @@ class GoogleCalendarManager: ObservableObject {
             }
         }
 
-        // Update existing synced events
+        // Update existing synced events that have been modified since last sync
         for event in localEvents where event.googleCalendarId != nil {
+            // Check if event was modified after last sync using updatedAt timestamp
             if let lastSynced = event.lastSyncedAt,
-               event.date > lastSynced {
+               let updatedAt = event.updatedAt,
+               updatedAt > lastSynced {
                 try await updateEventInGoogle(event, calendarId: calendarId, googleEventId: event.googleCalendarId!, user: user)
+                // Update lastSyncedAt after successful sync
+                var syncedEvent = event
+                syncedEvent.lastSyncedAt = Date()
+                try? await firebaseManager.updateEvent(syncedEvent)
             }
         }
 
@@ -635,10 +665,13 @@ class GoogleCalendarManager: ObservableObject {
 
         try await refreshTokenIfNeeded(user: user)
 
-        // Fetch all events from Google Calendar (past 2 years to present + 1 year future)
+        // Fetch events in smaller chunks to reduce memory usage
+        // Check 6 months past + 6 months future (reduced from 3 years)
         let calendar = Calendar.current
-        let startDate = calendar.date(byAdding: .year, value: -2, to: Date()) ?? Date()
-        let endDate = calendar.date(byAdding: .year, value: 1, to: Date()) ?? Date()
+        let startDate = calendar.date(byAdding: .month, value: -6, to: Date()) ?? Date()
+        let endDate = calendar.date(byAdding: .month, value: 6, to: Date()) ?? Date()
+
+        print("🔍 [GOOGLE CLEANUP] Checking events from \(startDate) to \(endDate)")
 
         let events = try await fetchGoogleCalendarEvents(
             user: user,
@@ -646,6 +679,8 @@ class GoogleCalendarManager: ObservableObject {
             startDate: startDate,
             endDate: endDate
         )
+
+        print("📊 [GOOGLE CLEANUP] Found \(events.count) events to check for duplicates")
 
         // Group events by title and start date
         var eventGroups: [String: [[String: Any]]] = [:]
@@ -713,6 +748,7 @@ enum GoogleCalendarError: LocalizedError {
     case noViewController
     case syncFailed
     case apiError(String)
+    case missingConfiguration(String)
 
     var errorDescription: String? {
         switch self {
@@ -724,6 +760,8 @@ enum GoogleCalendarError: LocalizedError {
             return "Failed to sync with Google Calendar"
         case .apiError(let message):
             return "API Error: \(message)"
+        case .missingConfiguration(let message):
+            return "Configuration Error: \(message)"
         }
     }
 }

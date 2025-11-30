@@ -282,23 +282,98 @@ class FirebaseManager: ObservableObject {
         print("🧹 [CLEANUP] Starting orphaned photos cleanup...")
         var deletedCount = 0
 
-        // Get all photos from Firestore
-        let photosSnapshot = try await db.collection("photos").getDocuments()
+        // Step 1: List all files in Storage photos folder
+        print("🔍 [CLEANUP] Listing storage files...")
+        let photosRef = storage.reference().child("photos")
+        var storageURLs = Set<String>()
 
+        do {
+            let result = try await photosRef.listAll()
+            for item in result.items {
+                if let url = try? await item.downloadURL() {
+                    storageURLs.insert(url.absoluteString)
+                }
+            }
+            print("📊 [CLEANUP] Found \(storageURLs.count) files in storage")
+        } catch {
+            print("⚠️ [CLEANUP] Could not list storage files: \(error.localizedDescription)")
+            // Fall back to individual checks if listing fails
+            return try await cleanupOrphanedPhotosIndividually()
+        }
+
+        // Step 2: Get all photos from Firestore
+        let photosSnapshot = try await db.collection("photos").getDocuments()
+        print("📊 [CLEANUP] Found \(photosSnapshot.documents.count) photo documents in Firestore")
+
+        // Step 3: Find orphaned documents (in Firestore but not in Storage)
+        var orphanedDocIds: [String] = []
         for doc in photosSnapshot.documents {
             guard let photo = try? doc.data(as: Photo.self) else { continue }
 
-            // Try to get metadata for the photo in Storage
-            do {
-                let storageRef = storage.reference(forURL: photo.imageURL)
-                _ = try await storageRef.getMetadata()
-                // Photo exists in Storage, skip it
-            } catch {
-                // Photo doesn't exist in Storage (404 or other error)
-                // Delete the orphaned Firestore document
-                print("🗑️ [CLEANUP] Deleting orphaned photo document: \(photo.imageURL)")
-                try? await db.collection("photos").document(doc.documentID).delete()
-                deletedCount += 1
+            // Check if the photo URL exists in our storage URL set
+            if !storageURLs.contains(photo.imageURL) {
+                orphanedDocIds.append(doc.documentID)
+                print("🗑️ [CLEANUP] Found orphaned photo: \(photo.imageURL.suffix(40))...")
+            }
+        }
+
+        // Step 4: Batch delete orphaned documents
+        if !orphanedDocIds.isEmpty {
+            print("🧹 [CLEANUP] Deleting \(orphanedDocIds.count) orphaned documents in batches...")
+            let batchSize = 500 // Firestore batch limit
+            for batchStart in stride(from: 0, to: orphanedDocIds.count, by: batchSize) {
+                let batchEnd = min(batchStart + batchSize, orphanedDocIds.count)
+                let batch = db.batch()
+
+                for i in batchStart..<batchEnd {
+                    let docRef = db.collection("photos").document(orphanedDocIds[i])
+                    batch.deleteDocument(docRef)
+                }
+
+                try await batch.commit()
+                deletedCount += (batchEnd - batchStart)
+                print("✅ [CLEANUP] Deleted batch \(batchStart/batchSize + 1) (\(deletedCount) total)")
+            }
+        }
+
+        print("🟢 [CLEANUP] Cleanup complete. Deleted \(deletedCount) orphaned photo documents")
+        return deletedCount
+    }
+
+    // Fallback method for individual checks (used if storage listing fails)
+    private func cleanupOrphanedPhotosIndividually() async throws -> Int {
+        print("🧹 [CLEANUP] Falling back to individual photo checks...")
+        var deletedCount = 0
+
+        let photosSnapshot = try await db.collection("photos").getDocuments()
+
+        // Process in smaller batches to avoid overwhelming the network
+        let batchSize = 10
+        for batchStart in stride(from: 0, to: photosSnapshot.documents.count, by: batchSize) {
+            let batchEnd = min(batchStart + batchSize, photosSnapshot.documents.count)
+
+            await withTaskGroup(of: (String, Bool).self) { group in
+                for i in batchStart..<batchEnd {
+                    let doc = photosSnapshot.documents[i]
+                    guard let photo = try? doc.data(as: Photo.self) else { continue }
+
+                    group.addTask {
+                        do {
+                            let storageRef = self.storage.reference(forURL: photo.imageURL)
+                            _ = try await storageRef.getMetadata()
+                            return (doc.documentID, false) // Photo exists
+                        } catch {
+                            return (doc.documentID, true) // Photo is orphaned
+                        }
+                    }
+                }
+
+                for await (docId, isOrphaned) in group {
+                    if isOrphaned {
+                        try? await db.collection("photos").document(docId).delete()
+                        deletedCount += 1
+                    }
+                }
             }
         }
 
@@ -505,18 +580,19 @@ class FirebaseManager: ObservableObject {
             print("🔴 [FIREBASE ERROR] Event has no ID!")
             return
         }
-        try db.collection("calendarEvents").document(id).setData(from: event)
+        print("🔵 [FIREBASE] Updating event \(id) with \(event.photoURLs.count) photos")
+
+        // Set updatedAt timestamp for sync tracking
+        var updatedEvent = event
+        updatedEvent.updatedAt = Date()
+
+        try db.collection("calendarEvents").document(id).setData(from: updatedEvent)
+        print("🟢 [FIREBASE SUCCESS] Event \(id) updated successfully")
     }
 
+    // Alias for backward compatibility - calls updateEvent
     func updateCalendarEvent(_ event: CalendarEvent) async throws {
-        print("🔵 [FIREBASE] updateCalendarEvent called")
-        guard let id = event.id else {
-            print("🔴 [FIREBASE ERROR] Event has no ID!")
-            return
-        }
-        print("🔵 [FIREBASE] Updating event \(id) with \(event.photoURLs.count) photos")
-        try db.collection("calendarEvents").document(id).setData(from: event)
-        print("🟢 [FIREBASE SUCCESS] Event \(id) updated successfully")
+        try await updateEvent(event)
     }
 
     func deleteCalendarEvent(_ event: CalendarEvent) async throws {

@@ -88,6 +88,12 @@ class UserIdentityManager: ObservableObject {
         }
         self.isLoading = false
     }
+
+    func setUser(_ user: AppUser) {
+        Task { @MainActor in
+            self.currentUser = user
+        }
+    }
 }
 
 struct SettingsView: View {
@@ -102,18 +108,17 @@ struct SettingsView: View {
     var body: some View {
         NavigationView {
             List {
-                // User Identity Section
+                // User Identity Section (read-only, set during authentication)
                 Section {
-                    Picker("I am", selection: $userIdentity.currentUser) {
-                        ForEach(AppUser.allCases, id: \.self) { user in
-                            Text(user.rawValue).tag(user)
-                        }
+                    HStack {
+                        Text("Logged in as")
+                        Spacer()
+                        Text(userIdentity.currentUserName)
+                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                            .fontWeight(.medium)
                     }
-                    .pickerStyle(.segmented)
                 } header: {
                     Text("User Identity")
-                } footer: {
-                    Text("Select who is using this device. This will be shown when you upload photos, create events, or record voice memos.")
                 }
 
                 // Google Calendar Integration Section

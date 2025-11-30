@@ -175,12 +175,25 @@ struct CalendarView: View {
     @State private var showingFilterSheet = false
     @State private var showingSearch = false
     @State private var showingExpandedHeader = false
+    @State private var isResettingScroll = false
     @State private var expandedCardId: String? = nil
     @State private var eventsLoadedGeneration = 0 // Increments when events first load
     @State private var quickAddDate: Date? = nil // For quick add from calendar tap
 
-    // Memoized filtered events - computed only when dependencies change
+    // Cached filtered events to avoid expensive recomputation
+    @State private var cachedFilteredEvents: [CalendarEvent] = []
+
+    // Memoized filtered events - uses cached value
     private var filteredEvents: [CalendarEvent] {
+        if !cachedFilteredEvents.isEmpty || viewModel.events.isEmpty {
+            return cachedFilteredEvents
+        }
+        // Fallback for initial load
+        return computeFilteredEvents()
+    }
+
+    // Compute filtered events (expensive operation)
+    private func computeFilteredEvents() -> [CalendarEvent] {
         let baseEvents: [CalendarEvent]
 
         if isMonthInPast(currentMonth) {
@@ -238,6 +251,11 @@ struct CalendarView: View {
         }
 
         return filtered
+    }
+
+    // Update cached events when dependencies change
+    private func updateEventsCache() {
+        cachedFilteredEvents = computeFilteredEvents()
     }
 
     // Get all unique tags from events
@@ -326,17 +344,8 @@ struct CalendarView: View {
     }
 
     private var backgroundGradient: some View {
-        // Light periwinkle gradient
-        LinearGradient(
-            colors: [
-                Color(red: 0.88, green: 0.88, blue: 1.0),
-                Color(red: 0.92, green: 0.92, blue: 1.0),
-                Color(red: 0.96, green: 0.96, blue: 1.0)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-        .ignoresSafeArea()
+        AppTheme.backgroundGradient
+            .ignoresSafeArea()
     }
 
     @ViewBuilder
@@ -669,10 +678,20 @@ struct CalendarView: View {
                 geometry.contentOffset.y
             } action: { oldValue, newValue in
                 // Auto-hide header when scrolling down - scroll to top with animation
-                if showingExpandedHeader && newValue > 1 {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                // Use isResettingScroll to prevent scroll momentum from moving the view
+                if showingExpandedHeader && newValue > 1 && !isResettingScroll {
+                    isResettingScroll = true
+                    withAnimation(.easeOut(duration: 0.25)) {
                         showingExpandedHeader = false
-                        scrollProxy.scrollTo("calendar-top-anchor", anchor: .top)
+                    }
+                    // Delay scroll to top to let momentum settle
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            scrollProxy.scrollTo("calendar-top-anchor", anchor: .top)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            isResettingScroll = false
+                        }
                     }
                 }
             }
@@ -785,8 +804,24 @@ struct CalendarView: View {
                 TimerManager.shared.invalidate(id: bannerTimerId)
             }
         }
-        .navigationTitle("Our Plans 💜")
-        .navigationBarTitleDisplayMode(.large)
+        .onAppear {
+            updateEventsCache()
+        }
+        .onChange(of: viewModel.events.count) { _, _ in
+            updateEventsCache()
+        }
+        .onChange(of: currentMonth) { _, _ in
+            updateEventsCache()
+        }
+        .onChange(of: selectedTab) { _, _ in
+            updateEventsCache()
+        }
+        .onChange(of: selectedDay) { _, _ in
+            updateEventsCache()
+        }
+        .onChange(of: selectedTags) { _, _ in
+            updateEventsCache()
+        }
     }
 
     // MARK: - Helper Functions
@@ -1686,10 +1721,12 @@ struct EventDetailView: View {
                     Button {
                         openInMaps()
                     } label: {
-                        HStack {
+                        HStack(alignment: .top) {
                             Text(event.location)
                                 .font(.body)
                                 .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
                             Spacer()
                             Image(systemName: "arrow.up.right.square")
                                 .font(.caption)
@@ -2686,6 +2723,8 @@ class CalendarViewModel: ObservableObject {
                     self.events = events
                     // Sync to widget
                     WidgetDataManager.shared.syncEvents(events)
+                    // Schedule local notifications for all future events
+                    NotificationManager.shared.scheduleRemindersForAllEvents(events)
                 }
             }
         }
@@ -3368,6 +3407,7 @@ struct MonthPhotosGridView: View {
     let photoURLs: [String]
     let onPhotoTap: ([String], Int) -> Void
     @Environment(\.dismiss) var dismiss
+    @State private var selectedPhotoIndex: Int? = nil
 
     private let columns = [
         GridItem(.flexible(), spacing: 8),
@@ -3409,10 +3449,8 @@ struct MonthPhotosGridView: View {
                         LazyVGrid(columns: columns, spacing: 8) {
                             ForEach(Array(photoURLs.enumerated()), id: \.offset) { index, photoURL in
                                 Button(action: {
-                                    dismiss()
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                        onPhotoTap(photoURLs, index)
-                                    }
+                                    // Show photo viewer inside this sheet instead of dismissing
+                                    selectedPhotoIndex = index
                                 }) {
                                     CachedAsyncImage(url: URL(string: photoURL), thumbnailSize: 220) { image in
                                         image
@@ -3452,7 +3490,26 @@ struct MonthPhotosGridView: View {
                 }
             }
         }
+        .fullScreenCover(item: Binding(
+            get: { selectedPhotoIndex.map { RecapPhotoViewerData(index: $0) } },
+            set: { selectedPhotoIndex = $0?.index }
+        )) { data in
+            FullScreenPhotoViewer(
+                photoURLs: photoURLs,
+                initialIndex: data.index,
+                onDismiss: { selectedPhotoIndex = nil },
+                onDelete: { _ in
+                    // Recap photos are read-only, no delete
+                }
+            )
+        }
     }
+}
+
+// Helper struct for fullScreenCover binding
+private struct RecapPhotoViewerData: Identifiable {
+    let index: Int
+    var id: Int { index } // Use stable ID based on index
 }
 
 // MARK: - Filter Header View

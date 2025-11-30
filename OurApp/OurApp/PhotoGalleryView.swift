@@ -53,6 +53,7 @@ struct PhotoGalleryView: View {
     @State private var saveErrorMessage = ""
     @State private var savedPhotoCount = 0
     @State private var showingExpandedHeader = false
+    @State private var isResettingScroll = false
     @State private var currentFolderView: FolderViewType = .allPhotos
     @State private var folderNavStack: [FolderViewType] = []
     @State private var showingCreateFolder = false
@@ -177,25 +178,20 @@ struct PhotoGalleryView: View {
 
     // Cached photos in display order to avoid recomputation
     @State private var cachedPhotosInDisplayOrder: [Photo] = []
-    @State private var lastPhotosCacheKey: String = ""
 
-    // Flat array of photos in display order (newest first) - computed with caching
+    // Flat array of photos in display order (newest first) - uses cached value
     private var photosInDisplayOrder: [Photo] {
-        // Create a cache key based on filter/sort state
-        let cacheKey = "\(filteredPhotos.count)-\(sortOption.rawValue)-\(filterStartDate?.timeIntervalSince1970 ?? 0)-\(filterEndDate?.timeIntervalSince1970 ?? 0)"
-
-        if cacheKey == lastPhotosCacheKey && !cachedPhotosInDisplayOrder.isEmpty {
+        // Return cached value; cache is updated via onChange modifiers
+        if !cachedPhotosInDisplayOrder.isEmpty {
             return cachedPhotosInDisplayOrder
         }
-
+        // Fallback for initial load before cache is populated
         return photosByMonth.flatMap { $0.photos }
     }
 
-    // Update cache when needed
+    // Update cache when photos, filters, or sort options change
     private func updatePhotosCache() {
-        let cacheKey = "\(filteredPhotos.count)-\(sortOption.rawValue)-\(filterStartDate?.timeIntervalSince1970 ?? 0)-\(filterEndDate?.timeIntervalSince1970 ?? 0)"
         cachedPhotosInDisplayOrder = photosByMonth.flatMap { $0.photos }
-        lastPhotosCacheKey = cacheKey
     }
 
     // Current folder title for display
@@ -293,10 +289,20 @@ struct PhotoGalleryView: View {
                 geometry.contentOffset.y
             } action: { oldValue, newValue in
                 // Auto-hide header when scrolling down - scroll to top with animation
-                if showingExpandedHeader && newValue > 1 {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                // Use isResettingScroll to prevent scroll momentum from moving the view
+                if showingExpandedHeader && newValue > 1 && !isResettingScroll {
+                    isResettingScroll = true
+                    withAnimation(.easeOut(duration: 0.25)) {
                         showingExpandedHeader = false
-                        scrollProxy.scrollTo("photos-top-anchor", anchor: .top)
+                    }
+                    // Delay scroll to top to let momentum settle
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            scrollProxy.scrollTo("photos-top-anchor", anchor: .top)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            isResettingScroll = false
+                        }
                     }
                 }
             }
@@ -1002,17 +1008,9 @@ struct PhotoGalleryView: View {
         ZStack {
             NavigationView {
                 ZStack {
-                    // Background gradient - light periwinkle
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.88, green: 0.88, blue: 1.0),
-                            Color(red: 0.92, green: 0.92, blue: 1.0),
-                            Color(red: 0.96, green: 0.96, blue: 1.0)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    .ignoresSafeArea()
+                    // Background gradient
+                    AppTheme.backgroundGradient
+                        .ignoresSafeArea()
 
                     if showingFoldersOverview {
                         foldersOverviewView
@@ -1238,12 +1236,28 @@ struct PhotoGalleryView: View {
             )
             .presentationDetents([.medium])
         }
+        .onAppear {
+            updatePhotosCache()
+        }
+        .onChange(of: viewModel.photos.count) { _, _ in
+            updatePhotosCache()
+        }
+        .onChange(of: sortOption) { _, _ in
+            updatePhotosCache()
+        }
+        .onChange(of: filterStartDate) { _, _ in
+            updatePhotosCache()
+        }
+        .onChange(of: filterEndDate) { _, _ in
+            updatePhotosCache()
+        }
+        .onChange(of: currentFolderView) { _, _ in
+            updatePhotosCache()
+        }
     }
 
     private func saveSelectedPhotos() {
         guard !selectedPhotoIndices.isEmpty else { return }
-
-        let totalCount = selectedPhotoIndices.count
 
         Task {
             var savedCount = 0
@@ -1253,57 +1267,55 @@ struct PhotoGalleryView: View {
                 guard index < photosInDisplayOrder.count else { continue }
                 let photo = photosInDisplayOrder[index]
 
-                // Load image
+                // Load image - try cache first, then async download
+                var imageToSave: UIImage?
+
                 if let cachedImage = ImageCache.shared.get(forKey: photo.imageURL) {
-                    let imageSaver = ImageSaver()
-                    imageSaver.successHandler = {
-                        savedCount += 1
-                        if savedCount == totalCount {
-                            Task { @MainActor in
-                                savedPhotoCount = totalCount
-                                showingSaveSuccess = true
-                                selectionMode = false
-                                selectedPhotoIndices.removeAll()
-                            }
+                    imageToSave = cachedImage
+                } else if let url = URL(string: photo.imageURL) {
+                    // Use async URLSession instead of blocking Data(contentsOf:)
+                    do {
+                        let (data, _) = try await URLSession.shared.data(from: url)
+                        if let image = UIImage(data: data) {
+                            ImageCache.shared.set(image, forKey: photo.imageURL)
+                            imageToSave = image
                         }
+                    } catch {
+                        print("Failed to download image for saving: \(error)")
                     }
-                    imageSaver.errorHandler = { error in
-                        if !errorOccurred {
-                            errorOccurred = true
-                            Task { @MainActor in
-                                saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
-                                showingSaveError = true
-                            }
-                        }
-                    }
-                    imageSaver.writeToPhotoAlbum(image: cachedImage)
-                } else if let url = URL(string: photo.imageURL),
-                          let data = try? Data(contentsOf: url),
-                          let image = UIImage(data: data) {
-                    ImageCache.shared.set(image, forKey: photo.imageURL)
-                    let imageSaver = ImageSaver()
-                    imageSaver.successHandler = {
-                        savedCount += 1
-                        if savedCount == totalCount {
-                            Task { @MainActor in
-                                savedPhotoCount = totalCount
-                                showingSaveSuccess = true
-                                selectionMode = false
-                                selectedPhotoIndices.removeAll()
-                            }
-                        }
-                    }
-                    imageSaver.errorHandler = { error in
-                        if !errorOccurred {
-                            errorOccurred = true
-                            Task { @MainActor in
-                                saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
-                                showingSaveError = true
-                            }
-                        }
-                    }
-                    imageSaver.writeToPhotoAlbum(image: image)
                 }
+
+                if let image = imageToSave {
+                    // Use continuation to bridge callback-based API to async/await
+                    await withCheckedContinuation { continuation in
+                        let imageSaver = ImageSaver()
+                        imageSaver.successHandler = {
+                            savedCount += 1
+                            continuation.resume()
+                        }
+                        imageSaver.errorHandler = { error in
+                            if !errorOccurred {
+                                errorOccurred = true
+                                Task { @MainActor in
+                                    saveErrorMessage = "Failed to save some photos: \(error.localizedDescription)"
+                                    showingSaveError = true
+                                }
+                            }
+                            continuation.resume()
+                        }
+                        imageSaver.writeToPhotoAlbum(image: image)
+                    }
+                }
+            }
+
+            // Show success after all photos are processed
+            await MainActor.run {
+                if savedCount > 0 && !errorOccurred {
+                    savedPhotoCount = savedCount
+                    showingSaveSuccess = true
+                }
+                selectionMode = false
+                selectedPhotoIndices.removeAll()
             }
         }
     }

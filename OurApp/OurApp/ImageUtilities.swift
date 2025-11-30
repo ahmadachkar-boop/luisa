@@ -194,50 +194,48 @@ class ImageCache {
     }
 
     // MARK: - Prefetching
-    func prefetch(urls: [String]) {
-        Task {
-            for url in urls {
-                // Skip if already cached
-                if get(forKey: url) != nil { continue }
 
-                // Download and cache
-                guard let imageURL = URL(string: url) else { continue }
-                do {
-                    let (data, _) = try await URLSession.shared.data(from: imageURL)
-                    if let image = UIImage(data: data) {
-                        await MainActor.run {
-                            self.set(image, forKey: url)
-                        }
-                    }
-                } catch {
-                    // Silently fail prefetch
-                }
-            }
-        }
+    /// Maximum concurrent prefetch downloads
+    private static let maxConcurrentPrefetch = 4
+
+    func prefetch(urls: [String]) {
+        prefetchWithPriority(urls: urls, priority: .background)
     }
 
-    // Prefetch with priority (first items get priority)
+    // Prefetch with priority and proper rate limiting
     func prefetchWithPriority(urls: [String], priority: TaskPriority = .background) {
         Task(priority: priority) {
-            for (index, url) in urls.enumerated() {
-                // Skip if already cached
-                if get(forKey: url) != nil { continue }
+            // Filter out already cached URLs
+            let urlsToFetch = urls.filter { get(forKey: $0) == nil }
 
-                // Rate limit to prevent overwhelming network
-                if index > 0 {
-                    try? await Task.sleep(nanoseconds: 50_000_000) // 50ms delay
-                }
+            // Process in batches with concurrency limit
+            let batchSize = ImageCache.maxConcurrentPrefetch
+            for batchStart in stride(from: 0, to: urlsToFetch.count, by: batchSize) {
+                let batchEnd = min(batchStart + batchSize, urlsToFetch.count)
+                let batch = Array(urlsToFetch[batchStart..<batchEnd])
 
-                guard let imageURL = URL(string: url) else { continue }
-                do {
-                    let (data, _) = try await URLSession.shared.data(from: imageURL)
-                    if let image = UIImage(data: data) {
-                        await MainActor.run {
-                            self.set(image, forKey: url)
+                // Download batch concurrently
+                await withTaskGroup(of: Void.self) { group in
+                    for url in batch {
+                        group.addTask {
+                            guard let imageURL = URL(string: url) else { return }
+                            do {
+                                let (data, _) = try await URLSession.shared.data(from: imageURL)
+                                if let image = UIImage(data: data) {
+                                    await MainActor.run {
+                                        self.set(image, forKey: url)
+                                    }
+                                }
+                            } catch {
+                                // Silently fail prefetch
+                            }
                         }
                     }
-                } catch {
-                    // Silently fail prefetch
+                }
+
+                // Small delay between batches to avoid overwhelming network
+                if batchEnd < urlsToFetch.count {
+                    try? await Task.sleep(nanoseconds: 100_000_000) // 100ms between batches
                 }
             }
         }
