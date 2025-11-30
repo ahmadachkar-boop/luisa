@@ -228,7 +228,7 @@ struct WishListView: View {
                         }) {
                             Image(systemName: "gearshape.fill")
                                 .font(.title2)
-                                .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                                .foregroundColor(Color(red: 0.35, green: 0.25, blue: 0.55))
                                 .padding(10)
                                 .background(
                                     Circle()

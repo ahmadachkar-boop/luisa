@@ -457,7 +457,7 @@ struct CalendarView: View {
                             Text("Search")
                                 .font(.subheadline.weight(.medium))
                         }
-                        .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                        .foregroundColor(Color(red: 0.35, green: 0.25, blue: 0.55))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(
@@ -484,7 +484,7 @@ struct CalendarView: View {
                             Text("Filters")
                                 .font(.subheadline.weight(.medium))
                         }
-                        .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                        .foregroundColor(Color(red: 0.35, green: 0.25, blue: 0.55))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(
@@ -508,7 +508,7 @@ struct CalendarView: View {
                             Text("Refresh")
                                 .font(.subheadline.weight(.medium))
                         }
-                        .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                        .foregroundColor(Color(red: 0.35, green: 0.25, blue: 0.55))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(
@@ -1732,10 +1732,12 @@ struct EventDetailView: View {
                     Button {
                         openInMaps()
                     } label: {
-                        HStack {
+                        HStack(alignment: .top) {
                             Text(event.location)
                                 .font(.body)
                                 .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
                             Spacer()
                             Image(systemName: "arrow.up.right.square")
                                 .font(.caption)

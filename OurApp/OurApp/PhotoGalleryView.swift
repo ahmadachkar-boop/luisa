@@ -507,7 +507,7 @@ struct PhotoGalleryView: View {
                                 Text("Select")
                                     .font(.subheadline.weight(.medium))
                             }
-                            .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                            .foregroundColor(Color(red: 0.35, green: 0.25, blue: 0.55))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
                             .background(
@@ -531,7 +531,7 @@ struct PhotoGalleryView: View {
                                 Text("Folder")
                                     .font(.subheadline.weight(.medium))
                             }
-                            .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                            .foregroundColor(Color(red: 0.35, green: 0.25, blue: 0.55))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
                             .background(
@@ -573,7 +573,7 @@ struct PhotoGalleryView: View {
                                     Image(systemName: "chevron.up.chevron.down")
                                         .font(.caption)
                                 }
-                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.8))
+                                .foregroundColor(Color(red: 0.35, green: 0.28, blue: 0.6))
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
                                 .background(
@@ -599,7 +599,7 @@ struct PhotoGalleryView: View {
                                     Text(hasDateFilter ? "Active" : "None")
                                         .font(.subheadline)
                                 }
-                                .foregroundColor(hasDateFilter ? .white : Color(red: 0.5, green: 0.4, blue: 0.8))
+                                .foregroundColor(hasDateFilter ? .white : Color(red: 0.35, green: 0.28, blue: 0.6))
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
                                 .background(
@@ -647,7 +647,7 @@ struct PhotoGalleryView: View {
                                 }) {
                                     Text("\(count)")
                                         .font(.subheadline.weight(.medium))
-                                        .foregroundColor(columnCount == count ? .white : Color(red: 0.5, green: 0.4, blue: 0.8))
+                                        .foregroundColor(columnCount == count ? .white : Color(red: 0.35, green: 0.28, blue: 0.6))
                                         .frame(width: 36, height: 36)
                                         .background(
                                             RoundedRectangle(cornerRadius: 8)
