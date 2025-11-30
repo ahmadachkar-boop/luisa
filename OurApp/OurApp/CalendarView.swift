@@ -66,6 +66,62 @@ class TimerManager: ObservableObject {
     }
 }
 
+// MARK: - Consolidated Countdown Timer (Single timer for all countdown displays)
+import Combine
+
+class CountdownTimerPublisher: ObservableObject {
+    static let shared = CountdownTimerPublisher()
+
+    // Published tick that all countdown views can observe
+    @Published private(set) var tick: Date = Date()
+
+    private var timer: Timer?
+    private var subscriberCount = 0
+    private let lock = NSLock()
+
+    private init() {}
+
+    /// Subscribe to countdown updates. Call unsubscribe when done.
+    func subscribe() {
+        lock.lock()
+        subscriberCount += 1
+        if subscriberCount == 1 {
+            startTimer()
+        }
+        lock.unlock()
+    }
+
+    /// Unsubscribe from countdown updates
+    func unsubscribe() {
+        lock.lock()
+        subscriberCount = max(0, subscriberCount - 1)
+        if subscriberCount == 0 {
+            stopTimer()
+        }
+        lock.unlock()
+    }
+
+    private func startTimer() {
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.tick = Date()
+            }
+        }
+        // Fire immediately
+        tick = Date()
+    }
+
+    private func stopTimer() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    deinit {
+        stopTimer()
+    }
+}
+
 // MARK: - Weather Service
 class WeatherService {
     static let shared = WeatherService()
@@ -948,6 +1004,8 @@ struct ModernCountdownBanner: View {
     let event: CalendarEvent
     let onTap: () -> Void
     @State private var timeRemaining: String = ""
+    // Use shared countdown timer publisher instead of individual timers
+    @ObservedObject private var countdownTimer = CountdownTimerPublisher.shared
 
     var body: some View {
         Button(action: onTap) {
@@ -1012,14 +1070,14 @@ struct ModernCountdownBanner: View {
         .buttonStyle(PlainButtonStyle())
         .onAppear {
             updateCountdown()
-            let timerId = "countdown_\(event.id ?? UUID().uuidString)"
-            TimerManager.shared.schedule(id: timerId, interval: 60, repeats: true) {
-                updateCountdown()
-            }
+            // Subscribe to consolidated timer instead of creating individual timer
+            CountdownTimerPublisher.shared.subscribe()
         }
         .onDisappear {
-            let timerId = "countdown_\(event.id ?? UUID().uuidString)"
-            TimerManager.shared.invalidate(id: timerId)
+            CountdownTimerPublisher.shared.unsubscribe()
+        }
+        .onChange(of: countdownTimer.tick) { _, _ in
+            updateCountdown()
         }
     }
 

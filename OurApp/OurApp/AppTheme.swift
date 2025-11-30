@@ -76,6 +76,65 @@ struct AppTheme {
         let x: CGFloat
         let y: CGFloat
     }
+
+    // MARK: - Layout Constants (previously magic numbers)
+    struct Layout {
+        // Photo Grid
+        static let gridColumns = 3                      // Default grid columns
+        static let gridSpacing: CGFloat = 8             // Space between grid items
+        static let gridPadding: CGFloat = 16            // Grid horizontal padding
+
+        // Image dimensions
+        static let thumbnailMaxDimension: CGFloat = 1920
+        static let maxImageBytes = 1_000_000            // 1MB max for uploads
+
+        // Photo viewer
+        static let maxDotsIndicator = 10                // Max pagination dots to show
+        static let photoViewerDismissThreshold: CGFloat = 400.0
+
+        // Common sizes
+        static let avatarSmall: CGFloat = 32
+        static let avatarMedium: CGFloat = 50
+        static let avatarLarge: CGFloat = 60
+        static let iconButtonSize: CGFloat = 44
+
+        // Cache limits
+        static let memoryCacheCount = 100
+        static let memoryCacheBytes = 100 * 1024 * 1024 // 100 MB
+        static let diskCacheBytes = 500 * 1024 * 1024   // 500 MB
+    }
+
+    // MARK: - Animation Constants
+    struct Animation {
+        static let quick: TimeInterval = 0.15
+        static let standard: TimeInterval = 0.25
+        static let slow: TimeInterval = 0.35
+        static let springResponse: TimeInterval = 0.3
+        static let springDamping: Double = 0.8
+    }
+
+    // MARK: - Timer Intervals
+    struct Timers {
+        static let countdownUpdateInterval: TimeInterval = 60.0    // 1 minute
+        static let autoSaveInterval: TimeInterval = 30.0           // 30 seconds
+        static let networkRetryDelay: TimeInterval = 2.0           // Initial retry delay
+    }
+
+    // MARK: - Pagination & Limits
+    struct Pagination {
+        static let defaultPageSize = 20
+        static let maxRetryAttempts = 5
+        static let maxOperationAge: TimeInterval = 7 * 24 * 60 * 60 // 7 days
+    }
+
+    // MARK: - Semantic Colors (Commonly repeated)
+    struct SemanticColors {
+        static let heartFill = Color(red: 0.9, green: 0.4, blue: 0.5)
+        static let starFill = Color(red: 1.0, green: 0.8, blue: 0.3)
+        static let specialEventPink = Color(red: 0.85, green: 0.35, blue: 0.75)
+        static let specialEventViolet = Color(red: 0.65, green: 0.25, blue: 0.9)
+        static let uploadProgress = Color(red: 0.6, green: 0.4, blue: 0.85)
+    }
 }
 
 // MARK: - Background Gradient

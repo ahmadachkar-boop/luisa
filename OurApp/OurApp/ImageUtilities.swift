@@ -32,14 +32,31 @@ class ImageCache {
     private let maxMemoryBytes = 100 * 1024 * 1024 // 100 MB
     private let maxDiskBytes = 500 * 1024 * 1024 // 500 MB for disk cache
 
+    // Thread-safe lock for memory cache operations
+    private let cacheLock = NSLock()
+
     // Wrapper to track access time
     private class CacheEntry {
         let image: UIImage
-        var lastAccessed: Date
+        private let accessLock = NSLock()
+        private var _lastAccessed: Date
+
+        var lastAccessed: Date {
+            get {
+                accessLock.lock()
+                defer { accessLock.unlock() }
+                return _lastAccessed
+            }
+            set {
+                accessLock.lock()
+                defer { accessLock.unlock() }
+                _lastAccessed = newValue
+            }
+        }
 
         init(image: UIImage) {
             self.image = image
-            self.lastAccessed = Date()
+            self._lastAccessed = Date()
         }
     }
 
@@ -61,8 +78,12 @@ class ImageCache {
     }
 
     func get(forKey key: String) -> UIImage? {
-        // Check memory cache first
-        if let entry = memoryCache.object(forKey: key as NSString) {
+        // Thread-safe memory cache access
+        cacheLock.lock()
+        let entry = memoryCache.object(forKey: key as NSString)
+        cacheLock.unlock()
+
+        if let entry = entry {
             entry.lastAccessed = Date()
             updateAccessOrder(key)
             return entry.image
@@ -70,9 +91,11 @@ class ImageCache {
 
         // Check disk cache
         if let image = loadFromDisk(key: key) {
-            // Promote to memory cache
+            // Promote to memory cache with thread safety
             let entry = CacheEntry(image: image)
+            cacheLock.lock()
             memoryCache.setObject(entry, forKey: key as NSString)
+            cacheLock.unlock()
             updateAccessOrder(key)
             return image
         }
@@ -82,7 +105,9 @@ class ImageCache {
 
     func set(_ image: UIImage, forKey key: String) {
         let entry = CacheEntry(image: image)
+        cacheLock.lock()
         memoryCache.setObject(entry, forKey: key as NSString)
+        cacheLock.unlock()
         updateAccessOrder(key)
 
         // Also save to disk cache asynchronously
@@ -92,7 +117,9 @@ class ImageCache {
     }
 
     func remove(forKey key: String) {
+        cacheLock.lock()
         memoryCache.removeObject(forKey: key as NSString)
+        cacheLock.unlock()
         accessQueue.async(flags: .barrier) {
             self.accessOrder.removeAll { $0 == key }
         }
@@ -103,7 +130,9 @@ class ImageCache {
     }
 
     func clear() {
+        cacheLock.lock()
         memoryCache.removeAllObjects()
+        cacheLock.unlock()
         accessQueue.async(flags: .barrier) {
             self.accessOrder.removeAll()
         }
@@ -115,7 +144,8 @@ class ImageCache {
 
     // MARK: - LRU Management
     private func updateAccessOrder(_ key: String) {
-        accessQueue.async(flags: .barrier) {
+        accessQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
             self.accessOrder.removeAll { $0 == key }
             self.accessOrder.append(key)
 
@@ -123,7 +153,9 @@ class ImageCache {
             while self.accessOrder.count > self.maxMemoryCount {
                 if let oldestKey = self.accessOrder.first {
                     self.accessOrder.removeFirst()
+                    self.cacheLock.lock()
                     self.memoryCache.removeObject(forKey: oldestKey as NSString)
+                    self.cacheLock.unlock()
                 }
             }
         }
@@ -251,6 +283,152 @@ extension String {
             _ = CC_SHA256($0.baseAddress, CC_LONG(data.count), &hash)
         }
         return hash.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+// MARK: - Photo Prefetch Manager (Gradual Loading with Smart Prefetching)
+/// Manages intelligent prefetching of photos for smooth gallery scrolling.
+/// Automatically loads visible photos first, then prefetches ahead of scroll direction.
+class PhotoPrefetchManager: ObservableObject {
+    static let shared = PhotoPrefetchManager()
+
+    // Configuration
+    private let visiblePrefetchCount = 6      // Initial visible photos to load immediately
+    private let aheadPrefetchCount = 12       // Number of photos to prefetch ahead
+    private let behindPrefetchCount = 4       // Number of photos to keep prefetched behind
+
+    // State
+    private var allPhotoURLs: [String] = []
+    private var currentVisibleRange: Range<Int> = 0..<0
+    private var prefetchTask: Task<Void, Never>?
+    private let lock = NSLock()
+    private var lastScrollDirection: ScrollDirection = .down
+
+    enum ScrollDirection {
+        case up, down
+    }
+
+    private init() {}
+
+    /// Set the full list of photo URLs for the gallery
+    func setPhotoURLs(_ urls: [String]) {
+        lock.lock()
+        allPhotoURLs = urls
+        lock.unlock()
+
+        // Prefetch initial visible photos immediately
+        prefetchInitialPhotos()
+    }
+
+    /// Called when visible range changes (e.g., on scroll)
+    func updateVisibleRange(start: Int, end: Int) {
+        let newRange = start..<end
+
+        lock.lock()
+        let previousStart = currentVisibleRange.lowerBound
+        currentVisibleRange = newRange
+        lastScrollDirection = start >= previousStart ? .down : .up
+        let urls = allPhotoURLs
+        let direction = lastScrollDirection
+        lock.unlock()
+
+        // Cancel previous prefetch and start new one
+        prefetchTask?.cancel()
+        prefetchTask = Task {
+            await prefetchAroundVisible(range: newRange, urls: urls, direction: direction)
+        }
+    }
+
+    /// Called when a specific photo becomes visible
+    func photoDidAppear(at index: Int) {
+        lock.lock()
+        let urls = allPhotoURLs
+        lock.unlock()
+
+        guard index >= 0 && index < urls.count else { return }
+
+        // Update visible range
+        let start = max(0, index - 2)
+        let end = min(urls.count, index + 3)
+        updateVisibleRange(start: start, end: end)
+    }
+
+    // MARK: - Private Methods
+
+    private func prefetchInitialPhotos() {
+        lock.lock()
+        let urls = allPhotoURLs
+        lock.unlock()
+
+        guard !urls.isEmpty else { return }
+
+        // Immediately prefetch the first batch of visible photos
+        let initialBatch = Array(urls.prefix(visiblePrefetchCount))
+        ImageCache.shared.prefetchWithPriority(urls: initialBatch, priority: .userInitiated)
+    }
+
+    private func prefetchAroundVisible(range: Range<Int>, urls: [String], direction: ScrollDirection) async {
+        guard !urls.isEmpty else { return }
+
+        // Prioritize prefetching based on scroll direction
+        var urlsToFetch: [String] = []
+
+        // First, ensure visible photos are cached
+        let visibleURLs = urls[safe: range]
+        urlsToFetch.append(contentsOf: visibleURLs)
+
+        // Then prefetch ahead in scroll direction
+        let aheadRange: Range<Int>
+        let behindRange: Range<Int>
+
+        switch direction {
+        case .down:
+            aheadRange = range.upperBound..<min(urls.count, range.upperBound + aheadPrefetchCount)
+            behindRange = max(0, range.lowerBound - behindPrefetchCount)..<range.lowerBound
+        case .up:
+            aheadRange = max(0, range.lowerBound - aheadPrefetchCount)..<range.lowerBound
+            behindRange = range.upperBound..<min(urls.count, range.upperBound + behindPrefetchCount)
+        }
+
+        // Add ahead URLs (higher priority)
+        urlsToFetch.append(contentsOf: urls[safe: aheadRange])
+        // Add behind URLs (lower priority, for back-scrolling)
+        urlsToFetch.append(contentsOf: urls[safe: behindRange])
+
+        // Remove already cached URLs
+        let uncachedURLs = urlsToFetch.filter { ImageCache.shared.get(forKey: $0) == nil }
+
+        guard !uncachedURLs.isEmpty else { return }
+
+        // Check for cancellation
+        if Task.isCancelled { return }
+
+        // Prefetch with appropriate priority
+        ImageCache.shared.prefetchWithPriority(urls: uncachedURLs, priority: .medium)
+    }
+
+    /// Force prefetch specific URLs (e.g., when tab first appears)
+    func prefetchImmediate(urls: [String]) {
+        ImageCache.shared.prefetchWithPriority(urls: urls, priority: .high)
+    }
+
+    /// Clear prefetch state (e.g., when leaving gallery)
+    func reset() {
+        prefetchTask?.cancel()
+        lock.lock()
+        allPhotoURLs = []
+        currentVisibleRange = 0..<0
+        lock.unlock()
+    }
+}
+
+// MARK: - Safe Array Subscript Extension
+extension Array {
+    subscript(safe range: Range<Int>) -> [Element] {
+        let clampedLower = Swift.max(range.lowerBound, 0)
+        let clampedUpper = Swift.min(range.upperBound, count)
+        guard clampedLower < clampedUpper else { return [] }
+        return Array(self[clampedLower..<clampedUpper])
     }
 }
 
@@ -506,6 +684,16 @@ struct FullScreenPhotoViewer: View {
         _localFavoriteStates = State(initialValue: favoriteStates ?? Array(repeating: false, count: photoURLs.count))
     }
 
+    // MARK: - Safe Array Access Helpers
+    /// Safe access to chronological position with bounds checking to avoid crashes
+    private func safeChronologicalPosition(at index: Int) -> Int {
+        guard let positions = chronologicalPositions,
+              index >= 0 && index < positions.count else {
+            return index + 1 // Default to 1-based index
+        }
+        return positions[index]
+    }
+
     var body: some View {
         ZStack {
             Color.black
@@ -524,7 +712,7 @@ struct FullScreenPhotoViewer: View {
 
                     Spacer()
 
-                    Text("\(chronologicalPositions?[currentIndex] ?? (currentIndex + 1)) / \(photoURLs.count)")
+                    Text("\(safeChronologicalPosition(at: currentIndex)) / \(photoURLs.count)")
                         .foregroundColor(.white)
                         .font(.subheadline)
                         .shadow(radius: 3)
@@ -648,7 +836,8 @@ struct FullScreenPhotoViewer: View {
                         let maxDots = 10
                         let showAllDots = photoURLs.count <= maxDots
                         // Use chronological position for dot highlighting, or fall back to current index
-                        let dotPosition = chronologicalPositions?[currentIndex] ?? (currentIndex + 1)
+                        // Safe bounds check to avoid array index out of range
+                        let dotPosition = safeChronologicalPosition(at: currentIndex)
 
                         if showAllDots {
                             // Show all dots if count is <= max
