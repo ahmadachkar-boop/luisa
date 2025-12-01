@@ -2747,7 +2747,8 @@ struct EditEventView: View {
         isUploadingBackground = true
 
         do {
-            guard let data = try await item.loadTransferable(type: Data.self) else {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let uiImage = UIImage(data: data) else {
                 await MainActor.run {
                     isUploadingBackground = false
                     backgroundErrorMessage = "Failed to load image data. Please try a different image."
@@ -2756,8 +2757,21 @@ struct EditEventView: View {
                 return
             }
 
+            // Resize and compress the image before upload (same as gallery photos)
+            let resized = uiImage.resized(toMaxDimension: 1920)
+            guard let compressedData = resized.compressed(toMaxBytes: 1_000_000) else {
+                await MainActor.run {
+                    isUploadingBackground = false
+                    backgroundErrorMessage = "Failed to compress image. Please try a different image."
+                    showingBackgroundError = true
+                }
+                return
+            }
+
+            print("🔵 [BACKGROUND] Original: \(data.count) bytes, Compressed: \(compressedData.count) bytes")
+
             // Upload to Firebase Storage
-            let url = try await FirebaseManager.shared.uploadEventPhoto(imageData: data)
+            let url = try await FirebaseManager.shared.uploadEventPhoto(imageData: compressedData)
             await MainActor.run {
                 backgroundImageURL = url
                 print("✅ Background image uploaded: \(url)")
