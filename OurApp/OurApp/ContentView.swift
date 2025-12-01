@@ -5,7 +5,7 @@ struct ContentView: View {
     @StateObject private var uploadManager = UploadProgressManager.shared
 
     var body: some View {
-        ZStack(alignment: .top) {
+        ZStack(alignment: .bottom) {
             TabView(selection: $selectedTab) {
                 VoiceMessagesView()
                     .tabItem {
@@ -39,11 +39,11 @@ struct ContentView: View {
             }
             .accentColor(Color(red: 0.8, green: 0.7, blue: 1.0)) // Light purple
 
-            // Global upload progress banner - visible across all tabs
+            // Global upload progress banner - visible across all tabs (above tab bar)
             VStack {
-                UploadProgressBanner()
-                    .padding(.top, 50) // Below safe area
                 Spacer()
+                UploadProgressBanner()
+                    .padding(.bottom, 50) // Above tab bar
             }
             .allowsHitTesting(uploadManager.isUploading || !uploadManager.recentlyCompletedBatches.isEmpty)
         }

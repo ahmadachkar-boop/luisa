@@ -1426,13 +1426,10 @@ struct EventDetailView: View {
     let event: CalendarEvent
     let onDelete: () -> Void
     @Environment(\.dismiss) var dismiss
+    @ObservedObject private var uploadManager = UploadProgressManager.shared
     @State private var showingDeleteAlert = false
     @State private var showingEditView = false
     @State private var photoPickerItems: [PhotosPickerItem] = []
-    @State private var isUploadingPhotos = false
-    @State private var uploadProgress: Double = 0.0
-    @State private var uploadedCount: Int = 0
-    @State private var totalUploadCount: Int = 0
     @State private var showingErrorAlert = false
     @State private var errorMessage = ""
     @State private var currentEvent: CalendarEvent
@@ -1631,7 +1628,7 @@ struct EventDetailView: View {
                                 // Add photos button for all events
                                 PhotosPicker(selection: $photoPickerItems, matching: .images) {
                                     HStack(spacing: 4) {
-                                        if isUploadingPhotos {
+                                        if uploadManager.hasActiveUploads(forEventId: currentEvent.id) {
                                             ProgressView()
                                                 .scaleEffect(0.8)
                                         } else {
@@ -1646,24 +1643,9 @@ struct EventDetailView: View {
                                     .background(Color(red: 0.95, green: 0.9, blue: 1.0))
                                     .cornerRadius(15)
                                 }
-                                .disabled(isUploadingPhotos)
+                                .disabled(uploadManager.hasActiveUploads(forEventId: currentEvent.id))
                             }
                             .padding(.horizontal)
-
-                            // Upload progress bar
-                            if isUploadingPhotos {
-                                VStack(spacing: 8) {
-                                    ProgressView(value: uploadProgress, total: 1.0)
-                                        .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
-
-                                    Text("Uploading \(uploadedCount) of \(totalUploadCount) photos...")
-                                        .font(.caption)
-                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                                }
-                                .padding(.horizontal)
-                                .padding(.vertical, 8)
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                            }
 
                             if !currentEvent.photoURLs.isEmpty {
                                 ScrollView(.horizontal, showsIndicators: false) {
@@ -2000,12 +1982,8 @@ struct EventDetailView: View {
     func uploadPhotos(_ items: [PhotosPickerItem]) async {
         print("🔵 [UPLOAD START] Beginning photo upload for \(items.count) items")
 
-        await MainActor.run {
-            isUploadingPhotos = true
-            totalUploadCount = items.count
-            uploadedCount = 0
-            uploadProgress = 0.0
-        }
+        // Create a batch in the global upload manager
+        let batchId = uploadManager.createBatch(count: items.count, type: .photo, eventId: currentEvent.id)
 
         var newPhotoURLs: [String] = []
         var uploadErrors: [String] = []
@@ -2014,15 +1992,20 @@ struct EventDetailView: View {
             print("🔵 [UPLOAD] Processing item \(index + 1)/\(items.count)")
 
             do {
+                // Update progress for this task
+                uploadManager.updateTaskProgress(batchId: batchId, taskIndex: index, progress: 0.1)
+
                 print("🔵 [UPLOAD] Loading image data...")
                 guard let data = try await item.loadTransferable(type: Data.self),
                       let uiImage = UIImage(data: data) else {
                     print("🔴 [UPLOAD ERROR] Failed to load image data for item \(index + 1)")
                     uploadErrors.append("Failed to load image \(index + 1)")
+                    uploadManager.failTask(batchId: batchId, taskIndex: index, error: "Failed to load image")
                     continue
                 }
 
                 print("🔵 [UPLOAD] Processing image: \(uiImage.size)")
+                uploadManager.updateTaskProgress(batchId: batchId, taskIndex: index, progress: 0.3)
 
                 // Extract original capture date from EXIF metadata
                 let capturedAt = extractCaptureDate(from: data)
@@ -2035,15 +2018,18 @@ struct EventDetailView: View {
                 // Resize and compress
                 let resized = uiImage.resized(toMaxDimension: 1920)
                 print("🔵 [UPLOAD] Resized to: \(resized.size)")
+                uploadManager.updateTaskProgress(batchId: batchId, taskIndex: index, progress: 0.5)
 
                 guard let compressedData = resized.compressed(toMaxBytes: 1_000_000) else {
                     print("🔴 [UPLOAD ERROR] Failed to compress image \(index + 1)")
                     uploadErrors.append("Failed to compress image \(index + 1)")
+                    uploadManager.failTask(batchId: batchId, taskIndex: index, error: "Failed to compress image")
                     continue
                 }
 
                 print("🔵 [UPLOAD] Compressed size: \(compressedData.count) bytes")
                 print("🔵 [UPLOAD] Uploading to Firebase with event linkage...")
+                uploadManager.updateTaskProgress(batchId: batchId, taskIndex: index, progress: 0.7)
 
                 // Upload photo with event linkage to photo gallery
                 let photoURL = try await FirebaseManager.shared.uploadPhoto(
@@ -2057,15 +2043,13 @@ struct EventDetailView: View {
                 print("🟢 [UPLOAD SUCCESS] Photo \(index + 1) uploaded and linked to event: \(photoURL)")
                 newPhotoURLs.append(photoURL)
 
-                // Update progress
-                await MainActor.run {
-                    uploadedCount = index + 1
-                    uploadProgress = Double(uploadedCount) / Double(totalUploadCount)
-                }
+                // Mark task as completed
+                uploadManager.completeTask(batchId: batchId, taskIndex: index)
 
             } catch {
                 print("🔴 [UPLOAD ERROR] Failed to upload photo \(index + 1): \(error)")
                 uploadErrors.append("Failed to upload photo \(index + 1): \(error.localizedDescription)")
+                uploadManager.failTask(batchId: batchId, taskIndex: index, error: error.localizedDescription)
             }
         }
 
@@ -2105,7 +2089,6 @@ struct EventDetailView: View {
             showingErrorAlert = true
         }
 
-        isUploadingPhotos = false
         photoPickerItems = []
     }
 
