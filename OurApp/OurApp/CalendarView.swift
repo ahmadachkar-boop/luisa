@@ -1995,19 +1995,36 @@ struct EventDetailView: View {
     func uploadPhotos(_ items: [PhotosPickerItem]) async {
         print("🔵 [UPLOAD START] Beginning photo upload for \(items.count) items")
 
-        // Create a batch in the global upload manager
-        let batchId = uploadManager.createBatch(count: items.count, type: .photo, eventId: currentEvent.id)
+        // Use background-protected batch for reliable uploads even when app is backgrounded
+        let (batchId, backgroundTaskId) = uploadManager.createBackgroundProtectedBatch(
+            count: items.count,
+            type: .photo,
+            eventId: currentEvent.id
+        )
 
         var newPhotoURLs: [String] = []
         var uploadErrors: [String] = []
 
+        // Pre-process: Load and compress all images first, storing data for potential retry
+        struct PreparedUpload {
+            let index: Int
+            let compressedData: Data
+            let capturedAt: Date?
+        }
+        var preparedUploads: [PreparedUpload] = []
+
+        // Phase 1: Prepare all images (load, resize, compress)
         for (index, item) in items.enumerated() {
+            // Check for task cancellation (app backgrounded)
+            if Task.isCancelled {
+                print("⚠️ [UPLOAD] Task cancelled during preparation at index \(index)")
+                break
+            }
+
             print("🔵 [UPLOAD] Processing item \(index + 1)/\(items.count)")
+            uploadManager.updateTaskProgress(batchId: batchId, taskIndex: index, progress: 0.1)
 
             do {
-                // Update progress for this task
-                uploadManager.updateTaskProgress(batchId: batchId, taskIndex: index, progress: 0.1)
-
                 print("🔵 [UPLOAD] Loading image data...")
                 guard let data = try await item.loadTransferable(type: Data.self),
                       let uiImage = UIImage(data: data) else {
@@ -2018,7 +2035,7 @@ struct EventDetailView: View {
                 }
 
                 print("🔵 [UPLOAD] Processing image: \(uiImage.size)")
-                uploadManager.updateTaskProgress(batchId: batchId, taskIndex: index, progress: 0.3)
+                uploadManager.updateTaskProgress(batchId: batchId, taskIndex: index, progress: 0.2)
 
                 // Extract original capture date from EXIF metadata
                 let capturedAt = extractCaptureDate(from: data)
@@ -2031,7 +2048,7 @@ struct EventDetailView: View {
                 // Resize and compress
                 let resized = uiImage.resized(toMaxDimension: 1920)
                 print("🔵 [UPLOAD] Resized to: \(resized.size)")
-                uploadManager.updateTaskProgress(batchId: batchId, taskIndex: index, progress: 0.5)
+                uploadManager.updateTaskProgress(batchId: batchId, taskIndex: index, progress: 0.3)
 
                 guard let compressedData = resized.compressed(toMaxBytes: 1_000_000) else {
                     print("🔴 [UPLOAD ERROR] Failed to compress image \(index + 1)")
@@ -2041,30 +2058,70 @@ struct EventDetailView: View {
                 }
 
                 print("🔵 [UPLOAD] Compressed size: \(compressedData.count) bytes")
-                print("🔵 [UPLOAD] Uploading to Firebase with event linkage...")
-                uploadManager.updateTaskProgress(batchId: batchId, taskIndex: index, progress: 0.7)
-
-                // Upload photo with event linkage to photo gallery
-                let photoURL = try await FirebaseManager.shared.uploadPhoto(
-                    imageData: compressedData,
-                    caption: "",
-                    uploadedBy: UserIdentityManager.shared.currentUserName,
-                    capturedAt: capturedAt,
-                    eventId: currentEvent.id,
-                    folderId: nil
-                )
-                print("🟢 [UPLOAD SUCCESS] Photo \(index + 1) uploaded and linked to event: \(photoURL)")
-                newPhotoURLs.append(photoURL)
-
-                // Mark task as completed
-                uploadManager.completeTask(batchId: batchId, taskIndex: index)
+                preparedUploads.append(PreparedUpload(index: index, compressedData: compressedData, capturedAt: capturedAt))
 
             } catch {
-                print("🔴 [UPLOAD ERROR] Failed to upload photo \(index + 1): \(error)")
-                uploadErrors.append("Failed to upload photo \(index + 1): \(error.localizedDescription)")
+                print("🔴 [UPLOAD ERROR] Failed to prepare photo \(index + 1): \(error)")
+                uploadErrors.append("Failed to prepare photo \(index + 1): \(error.localizedDescription)")
                 uploadManager.failTask(batchId: batchId, taskIndex: index, error: error.localizedDescription)
             }
         }
+
+        // Phase 2: Upload prepared images
+        for prepared in preparedUploads {
+            // Check for task cancellation - queue remaining uploads for later
+            if Task.isCancelled {
+                print("⚠️ [UPLOAD] Task cancelled during upload at index \(prepared.index), queuing remaining...")
+                let remainingUploads = preparedUploads.filter { $0.index >= prepared.index }
+                for remaining in remainingUploads {
+                    OfflineManager.shared.queuePhotoUpload(
+                        imageData: remaining.compressedData,
+                        capturedAt: remaining.capturedAt,
+                        eventId: currentEvent.id,
+                        folderId: nil
+                    )
+                    print("📤 [UPLOAD] Queued photo \(remaining.index + 1) for background upload")
+                }
+                break
+            }
+
+            print("🔵 [UPLOAD] Uploading to Firebase with event linkage...")
+            uploadManager.updateTaskProgress(batchId: batchId, taskIndex: prepared.index, progress: 0.6)
+
+            do {
+                // Upload photo with event linkage to photo gallery
+                let photoURL = try await FirebaseManager.shared.uploadPhoto(
+                    imageData: prepared.compressedData,
+                    caption: "",
+                    uploadedBy: UserIdentityManager.shared.currentUserName,
+                    capturedAt: prepared.capturedAt,
+                    eventId: currentEvent.id,
+                    folderId: nil
+                )
+                print("🟢 [UPLOAD SUCCESS] Photo \(prepared.index + 1) uploaded and linked to event: \(photoURL)")
+                newPhotoURLs.append(photoURL)
+
+                // Mark task as completed
+                uploadManager.completeTask(batchId: batchId, taskIndex: prepared.index)
+
+            } catch {
+                print("🔴 [UPLOAD ERROR] Failed to upload photo \(prepared.index + 1): \(error)")
+                uploadManager.failTask(batchId: batchId, taskIndex: prepared.index, error: error.localizedDescription)
+
+                // Queue to OfflineManager for automatic retry when conditions improve
+                OfflineManager.shared.queuePhotoUpload(
+                    imageData: prepared.compressedData,
+                    capturedAt: prepared.capturedAt,
+                    eventId: currentEvent.id,
+                    folderId: nil
+                )
+                print("📤 [UPLOAD] Queued failed photo \(prepared.index + 1) for retry: \(error.localizedDescription)")
+                uploadErrors.append("Photo \(prepared.index + 1) queued for retry")
+            }
+        }
+
+        // End background task protection
+        uploadManager.completeBackgroundProtectedBatch(backgroundTaskId)
 
         print("🔵 [UPLOAD] Upload complete. Success: \(newPhotoURLs.count), Errors: \(uploadErrors.count)")
 
@@ -2098,7 +2155,13 @@ struct EventDetailView: View {
         }
 
         if !uploadErrors.isEmpty {
-            errorMessage = uploadErrors.joined(separator: "\n")
+            let queuedCount = uploadErrors.filter { $0.contains("queued") }.count
+            if queuedCount > 0 && queuedCount == uploadErrors.count {
+                // All errors are queued uploads - show friendlier message
+                errorMessage = "\(queuedCount) photo(s) will upload automatically when connection improves"
+            } else {
+                errorMessage = uploadErrors.joined(separator: "\n")
+            }
             showingErrorAlert = true
         }
 
