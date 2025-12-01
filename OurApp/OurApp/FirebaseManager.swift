@@ -2,6 +2,25 @@ import Foundation
 import FirebaseFirestore
 import FirebaseStorage
 
+// MARK: - Firebase Operation Errors
+/// Custom errors for Firebase operations to replace silent failures
+enum FirebaseOperationError: LocalizedError {
+    case missingDocumentID(String)
+    case operationFailed(String)
+    case invalidData(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingDocumentID(let type):
+            return "\(type) has no document ID. Cannot perform operation."
+        case .operationFailed(let message):
+            return "Operation failed: \(message)"
+        case .invalidData(let message):
+            return "Invalid data: \(message)"
+        }
+    }
+}
+
 class FirebaseManager: ObservableObject {
     static let shared = FirebaseManager()
 
@@ -59,7 +78,9 @@ class FirebaseManager: ObservableObject {
     }
 
     func deleteVoiceMessage(_ message: VoiceMessage) async throws {
-        guard let id = message.id else { return }
+        guard let id = message.id else {
+            throw FirebaseOperationError.missingDocumentID("VoiceMessage")
+        }
 
         // Delete from Storage
         let storageRef = storage.reference(forURL: message.audioURL)
@@ -133,7 +154,9 @@ class FirebaseManager: ObservableObject {
     }
 
     func deleteVoiceMemoFolder(_ folder: VoiceMemoFolder) async throws {
-        guard let id = folder.id else { return }
+        guard let id = folder.id else {
+            throw FirebaseOperationError.missingDocumentID("VoiceMemoFolder")
+        }
 
         // Remove folder reference from all voice memos in this folder
         let memosSnapshot = try await db.collection("voiceMessages")
@@ -246,14 +269,31 @@ class FirebaseManager: ObservableObject {
     }
 
     func deletePhoto(_ photo: Photo) async throws {
-        guard let id = photo.id else { return }
+        guard let id = photo.id else {
+            print("⚠️ [FIREBASE] Cannot delete photo: missing ID")
+            return
+        }
 
         // Delete from Storage
         let storageRef = storage.reference(forURL: photo.imageURL)
         try await storageRef.delete()
 
-        // Delete from Firestore
+        // Delete from Firestore photos collection
         try await db.collection("photos").document(id).delete()
+
+        // Also remove from any event's photoURLs array (fixes data inconsistency)
+        if let eventId = photo.eventId {
+            let eventDoc = db.collection("calendarEvents").document(eventId)
+            do {
+                try await eventDoc.updateData([
+                    "photoURLs": FieldValue.arrayRemove([photo.imageURL])
+                ])
+                print("✅ [FIREBASE] Removed photo from event \(eventId) photoURLs array")
+            } catch {
+                print("⚠️ [FIREBASE] Failed to remove photo from event photoURLs: \(error.localizedDescription)")
+                // Non-fatal: the photo document is still deleted
+            }
+        }
     }
 
     func deletePhotoByURL(_ photoURL: String) async throws {
@@ -424,7 +464,9 @@ class FirebaseManager: ObservableObject {
     }
 
     func deleteFolder(_ folder: PhotoFolder) async throws {
-        guard let id = folder.id else { return }
+        guard let id = folder.id else {
+            throw FirebaseOperationError.missingDocumentID("PhotoFolder")
+        }
 
         // Remove folder reference from all photos in this folder
         let photosSnapshot = try await db.collection("photos")
@@ -461,7 +503,9 @@ class FirebaseManager: ObservableObject {
     }
 
     func updatePhoto(_ photo: Photo) async throws {
-        guard let id = photo.id else { return }
+        guard let id = photo.id else {
+            throw FirebaseOperationError.missingDocumentID("Photo")
+        }
         try db.collection("photos").document(id).setData(from: photo)
     }
 
@@ -578,7 +622,7 @@ class FirebaseManager: ObservableObject {
     func updateEvent(_ event: CalendarEvent) async throws {
         guard let id = event.id else {
             print("🔴 [FIREBASE ERROR] Event has no ID!")
-            return
+            throw FirebaseOperationError.missingDocumentID("CalendarEvent")
         }
         print("🔵 [FIREBASE] Updating event \(id) with \(event.photoURLs.count) photos")
 
@@ -596,7 +640,9 @@ class FirebaseManager: ObservableObject {
     }
 
     func deleteCalendarEvent(_ event: CalendarEvent) async throws {
-        guard let id = event.id else { return }
+        guard let id = event.id else {
+            throw FirebaseOperationError.missingDocumentID("CalendarEvent")
+        }
 
         // Delete from Google Calendar if synced
         if let googleCalendarId = event.googleCalendarId {
@@ -694,12 +740,16 @@ class FirebaseManager: ObservableObject {
     }
 
     func updateWishListItem(_ item: WishListItem) async throws {
-        guard let id = item.id else { return }
+        guard let id = item.id else {
+            throw FirebaseOperationError.missingDocumentID("WishListItem")
+        }
         try db.collection("wishList").document(id).setData(from: item)
     }
 
     func deleteWishListItem(_ item: WishListItem) async throws {
-        guard let id = item.id else { return }
+        guard let id = item.id else {
+            throw FirebaseOperationError.missingDocumentID("WishListItem")
+        }
         try await db.collection("wishList").document(id).delete()
     }
 
@@ -733,12 +783,16 @@ class FirebaseManager: ObservableObject {
     }
 
     func updateWishCategory(_ category: WishCategory) async throws {
-        guard let id = category.id else { return }
+        guard let id = category.id else {
+            throw FirebaseOperationError.missingDocumentID("WishCategory")
+        }
         try db.collection("wishCategories").document(id).setData(from: category)
     }
 
     func deleteWishCategory(_ category: WishCategory) async throws {
-        guard let id = category.id else { return }
+        guard let id = category.id else {
+            throw FirebaseOperationError.missingDocumentID("WishCategory")
+        }
         try await db.collection("wishCategories").document(id).delete()
     }
 }

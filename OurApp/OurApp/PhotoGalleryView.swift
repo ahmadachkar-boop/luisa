@@ -1085,6 +1085,15 @@ struct PhotoGalleryView: View {
                 .onChange(of: selectedItems) { oldItems, newItems in
                 Task {
                     guard !newItems.isEmpty else { return }
+
+                    // Use global upload manager for persistent progress tracking
+                    let batchId = UploadProgressManager.shared.createBatch(
+                        count: newItems.count,
+                        type: .photo,
+                        eventId: nil // Gallery upload, no event
+                    )
+
+                    // Also update local state for UI feedback
                     isUploading = true
                     totalUploadCount = newItems.count
                     uploadedCount = 0
@@ -1094,24 +1103,59 @@ struct PhotoGalleryView: View {
 
                     for (index, item) in newItems.enumerated() {
                         do {
+                            // Update progress in global manager
+                            UploadProgressManager.shared.updateTaskProgress(
+                                batchId: batchId,
+                                taskIndex: index,
+                                progress: 0.1 // Started loading
+                            )
+
                             if let data = try await item.loadTransferable(type: Data.self),
                                let uiImage = UIImage(data: data) {
                                 // Extract original capture date from image metadata
                                 let capturedAt = extractCaptureDate(from: data)
 
+                                // Update progress - data loaded
+                                UploadProgressManager.shared.updateTaskProgress(
+                                    batchId: batchId,
+                                    taskIndex: index,
+                                    progress: 0.3
+                                )
+
                                 // Resize and compress the image before upload
                                 let resized = uiImage.resized(toMaxDimension: 1920)
                                 if let compressedData = resized.compressed(toMaxBytes: 1_000_000) {
+                                    // Update progress - compressed
+                                    UploadProgressManager.shared.updateTaskProgress(
+                                        batchId: batchId,
+                                        taskIndex: index,
+                                        progress: 0.5
+                                    )
+
                                     try await viewModel.uploadPhoto(imageData: compressedData, capturedAt: capturedAt)
+
+                                    // Mark as complete in global manager
+                                    UploadProgressManager.shared.completeTask(batchId: batchId, taskIndex: index)
+
                                     await MainActor.run {
                                         uploadedCount = index + 1
                                         uploadProgress = Double(uploadedCount) / Double(totalUploadCount)
                                     }
                                 } else {
+                                    UploadProgressManager.shared.failTask(
+                                        batchId: batchId,
+                                        taskIndex: index,
+                                        error: "Compression failed"
+                                    )
                                     uploadErrors.append("Failed to compress image \(index + 1)")
                                 }
                             }
                         } catch {
+                            UploadProgressManager.shared.failTask(
+                                batchId: batchId,
+                                taskIndex: index,
+                                error: error.localizedDescription
+                            )
                             uploadErrors.append("Failed to upload photo \(index + 1): \(error.localizedDescription)")
                         }
                     }
@@ -1238,9 +1282,19 @@ struct PhotoGalleryView: View {
         }
         .onAppear {
             updatePhotosCache()
+            // Initialize prefetch manager with all photo URLs for smart prefetching
+            let photoURLs = photosInDisplayOrder.map { $0.imageURL }
+            PhotoPrefetchManager.shared.setPhotoURLs(photoURLs)
+        }
+        .onDisappear {
+            // Reset prefetch manager when leaving gallery
+            PhotoPrefetchManager.shared.reset()
         }
         .onChange(of: viewModel.photos.count) { _, _ in
             updatePhotosCache()
+            // Update prefetch manager when photos change
+            let photoURLs = photosInDisplayOrder.map { $0.imageURL }
+            PhotoPrefetchManager.shared.setPhotoURLs(photoURLs)
         }
         .onChange(of: sortOption) { _, _ in
             updatePhotosCache()
@@ -1584,6 +1638,10 @@ struct PhotoGridCell: View {
             }
         }
         .drawingGroup() // Optimize rendering performance
+        .onAppear {
+            // Notify prefetch manager that this photo is visible for smart prefetching
+            PhotoPrefetchManager.shared.photoDidAppear(at: index)
+        }
     }
 }
 

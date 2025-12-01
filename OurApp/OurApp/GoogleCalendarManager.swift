@@ -404,12 +404,15 @@ class GoogleCalendarManager: ObservableObject {
         }
 
         // Update existing synced events that have been modified since last sync
-        for event in localEvents where event.googleCalendarId != nil {
+        for event in localEvents {
+            // Safely unwrap googleCalendarId to avoid force unwrap crash
+            guard let googleEventId = event.googleCalendarId else { continue }
+
             // Check if event was modified after last sync using updatedAt timestamp
             if let lastSynced = event.lastSyncedAt,
                let updatedAt = event.updatedAt,
                updatedAt > lastSynced {
-                try await updateEventInGoogle(event, calendarId: calendarId, googleEventId: event.googleCalendarId!, user: user)
+                try await updateEventInGoogle(event, calendarId: calendarId, googleEventId: googleEventId, user: user)
                 // Update lastSyncedAt after successful sync
                 var syncedEvent = event
                 syncedEvent.lastSyncedAt = Date()
