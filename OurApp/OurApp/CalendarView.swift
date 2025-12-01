@@ -1628,7 +1628,7 @@ struct EventDetailView: View {
                                 // Add photos button for all events
                                 PhotosPicker(selection: $photoPickerItems, matching: .images) {
                                     HStack(spacing: 4) {
-                                        if uploadManager.hasActiveUploads(forEventId: currentEvent.id) {
+                                        if uploadManager.hasActiveUploads(forEventId: currentEvent.id ?? "") {
                                             ProgressView()
                                                 .scaleEffect(0.8)
                                         } else {
@@ -1643,7 +1643,7 @@ struct EventDetailView: View {
                                     .background(Color(red: 0.95, green: 0.9, blue: 1.0))
                                     .cornerRadius(15)
                                 }
-                                .disabled(uploadManager.hasActiveUploads(forEventId: currentEvent.id))
+                                .disabled(uploadManager.hasActiveUploads(forEventId: currentEvent.id ?? ""))
                             }
                             .padding(.horizontal)
 
@@ -2320,8 +2320,8 @@ struct AddEventView: View {
             createdBy: UserIdentityManager.shared.currentUserName,
             isSpecial: isSpecial,
             photoURLs: [],
-            googleCalendarId: nil,
-            lastSyncedAt: nil,
+            googleCalendarIds: nil,
+            lastSyncedAts: nil,
             backgroundImageURL: nil,
             backgroundOffsetX: nil,
             backgroundOffsetY: nil,

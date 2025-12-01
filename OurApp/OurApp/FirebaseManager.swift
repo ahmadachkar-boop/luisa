@@ -644,10 +644,11 @@ class FirebaseManager: ObservableObject {
             throw FirebaseOperationError.missingDocumentID("CalendarEvent")
         }
 
-        // Delete from Google Calendar if synced
-        if let googleCalendarId = event.googleCalendarId {
+        // Delete from Google Calendar if synced (for current user only)
+        let currentUserName = await MainActor.run { UserIdentityManager.shared.currentUserName }
+        if let googleCalendarId = event.googleCalendarIds?[currentUserName] {
             do {
-                print("🔵 [GOOGLE SYNC] Deleting event from Google Calendar: \(googleCalendarId)")
+                print("🔵 [GOOGLE SYNC] Deleting event from Google Calendar for \(currentUserName): \(googleCalendarId)")
                 try await GoogleCalendarManager.shared.deleteEventFromGoogle(googleCalendarId)
                 print("✅ [GOOGLE SYNC] Event deleted from Google Calendar")
             } catch {
