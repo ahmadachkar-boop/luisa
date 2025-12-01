@@ -484,21 +484,22 @@ class GoogleCalendarManager: ObservableObject {
 
         // Upload new local events to Google Calendar (for this user)
         for event in localEvents {
+            guard let eventId = event.id else { continue }
+
             let userGoogleId = event.googleCalendarIds?[currentUserName]
 
             if userGoogleId == nil {
                 // This user hasn't synced this event yet - upload it
                 if (syncUpcoming && event.date >= Date()) || (syncPast && event.date < Date()) {
                     let googleEventId = try await uploadEventToGoogle(event, calendarId: calendarId, user: user)
-                    // Update local event with this user's Google Calendar ID
-                    var updatedEvent = event
-                    var ids = updatedEvent.googleCalendarIds ?? [:]
-                    ids[currentUserName] = googleEventId
-                    updatedEvent.googleCalendarIds = ids
-                    var syncDates = updatedEvent.lastSyncedAts ?? [:]
-                    syncDates[currentUserName] = Date()
-                    updatedEvent.lastSyncedAts = syncDates
-                    try await firebaseManager.updateEvent(updatedEvent)
+                    // Atomically update only this user's Google Calendar ID
+                    // This prevents race conditions when multiple users sync simultaneously
+                    try await firebaseManager.updateEventGoogleCalendarId(
+                        eventId: eventId,
+                        userName: currentUserName,
+                        googleCalendarId: googleEventId
+                    )
+                    print("✅ [GOOGLE SYNC] Uploaded and linked event: \(event.title)")
                 }
             } else {
                 // This user has already synced this event - check if update is needed
@@ -507,12 +508,11 @@ class GoogleCalendarManager: ObservableObject {
                    let updatedAt = event.updatedAt,
                    updatedAt > lastSynced {
                     try await updateEventInGoogle(event, calendarId: calendarId, googleEventId: userGoogleId!, user: user)
-                    // Update lastSyncedAt after successful sync
-                    var syncedEvent = event
-                    var syncDates = syncedEvent.lastSyncedAts ?? [:]
-                    syncDates[currentUserName] = Date()
-                    syncedEvent.lastSyncedAts = syncDates
-                    try? await firebaseManager.updateEvent(syncedEvent)
+                    // Atomically update only this user's lastSyncedAt timestamp
+                    try? await firebaseManager.updateEventLastSyncedAt(
+                        eventId: eventId,
+                        userName: currentUserName
+                    )
                 }
             }
         }
