@@ -1478,8 +1478,8 @@ struct PhotoGalleryView: View {
                     uploadedCount = 0
                     uploadProgress = 0.0
 
-                    // Start upload task
-                    Task { @MainActor in
+                    // Start upload task - NOT on MainActor to avoid blocking UI
+                    Task {
                         print("📸 [GALLERY UPLOAD] Starting upload task...")
 
                         // Use background-protected batch for reliable uploads even when app is backgrounded
@@ -1493,20 +1493,11 @@ struct PhotoGalleryView: View {
                         var uploadErrors: [String] = []
                         var successCount = 0
 
-                        // Pre-process: Load and compress all images first, storing data for potential retry
-                        struct PreparedUpload {
-                            let index: Int
-                            let compressedData: Data
-                            let capturedAt: Date?
-                        }
-                        var preparedUploads: [PreparedUpload] = []
-
-                        // Phase 1: Prepare all images (load, resize, compress)
-                        print("📸 [GALLERY UPLOAD] Phase 1: Preparing images...")
+                        // Process and upload one image at a time to avoid memory issues
                         for (index, item) in newItems.enumerated() {
                             // Check for task cancellation (app backgrounded)
                             if Task.isCancelled {
-                                print("⚠️ [UPLOAD] Task cancelled during preparation at index \(index)")
+                                print("⚠️ [UPLOAD] Task cancelled at index \(index)")
                                 break
                             }
 
@@ -1517,105 +1508,72 @@ struct PhotoGalleryView: View {
                             )
 
                             do {
-                                print("📸 [GALLERY UPLOAD] Loading image \(index + 1)/\(newItems.count)...")
-                                if let data = try await item.loadTransferable(type: Data.self),
-                                   let uiImage = UIImage(data: data) {
-                                    let capturedAt = extractCaptureDate(from: data)
+                                print("📸 [GALLERY UPLOAD] Processing image \(index + 1)/\(newItems.count)...")
 
-                                    UploadProgressManager.shared.updateTaskProgress(
+                                // Load image data
+                                guard let data = try await item.loadTransferable(type: Data.self),
+                                      let uiImage = UIImage(data: data) else {
+                                    print("🔴 [GALLERY UPLOAD] Failed to load image \(index + 1)")
+                                    UploadProgressManager.shared.failTask(
                                         batchId: batchId,
                                         taskIndex: index,
-                                        progress: 0.2
+                                        error: "Failed to load image"
                                     )
-
-                                    let resized = uiImage.resized(toMaxDimension: 1920)
-                                    if let compressedData = resized.compressed(toMaxBytes: 1_000_000) {
-                                        preparedUploads.append(PreparedUpload(
-                                            index: index,
-                                            compressedData: compressedData,
-                                            capturedAt: capturedAt
-                                        ))
-                                        print("📸 [GALLERY UPLOAD] Prepared image \(index + 1): \(compressedData.count) bytes")
-
-                                        UploadProgressManager.shared.updateTaskProgress(
-                                            batchId: batchId,
-                                            taskIndex: index,
-                                            progress: 0.3
-                                        )
-                                    } else {
-                                        UploadProgressManager.shared.failTask(
-                                            batchId: batchId,
-                                            taskIndex: index,
-                                            error: "Compression failed"
-                                        )
-                                        uploadErrors.append("Failed to compress image \(index + 1)")
-                                    }
+                                    uploadErrors.append("Failed to load image \(index + 1)")
+                                    continue
                                 }
-                            } catch {
-                                print("🔴 [GALLERY UPLOAD] Failed to load image \(index + 1): \(error)")
+
+                                let capturedAt = extractCaptureDate(from: data)
+
+                                UploadProgressManager.shared.updateTaskProgress(
+                                    batchId: batchId,
+                                    taskIndex: index,
+                                    progress: 0.3
+                                )
+
+                                // Resize and compress
+                                let resized = uiImage.resized(toMaxDimension: 1920)
+                                guard let compressedData = resized.compressed(toMaxBytes: 1_000_000) else {
+                                    print("🔴 [GALLERY UPLOAD] Failed to compress image \(index + 1)")
+                                    UploadProgressManager.shared.failTask(
+                                        batchId: batchId,
+                                        taskIndex: index,
+                                        error: "Compression failed"
+                                    )
+                                    uploadErrors.append("Failed to compress image \(index + 1)")
+                                    continue
+                                }
+
+                                print("📸 [GALLERY UPLOAD] Compressed image \(index + 1): \(compressedData.count) bytes")
+
+                                UploadProgressManager.shared.updateTaskProgress(
+                                    batchId: batchId,
+                                    taskIndex: index,
+                                    progress: 0.5
+                                )
+
+                                // Upload immediately
+                                print("📸 [GALLERY UPLOAD] Uploading image \(index + 1)...")
+                                try await viewModel.uploadPhoto(imageData: compressedData, capturedAt: capturedAt)
+
+                                UploadProgressManager.shared.completeTask(batchId: batchId, taskIndex: index)
+                                successCount += 1
+                                print("🟢 [GALLERY UPLOAD] Uploaded image \(index + 1) successfully")
+
+                                // Update UI on main thread
+                                await MainActor.run {
+                                    uploadedCount = successCount
+                                    uploadProgress = Double(successCount) / Double(newItems.count)
+                                }
+
+                            } catch let uploadError {
+                                print("🔴 [GALLERY UPLOAD] Failed image \(index + 1): \(uploadError)")
                                 UploadProgressManager.shared.failTask(
                                     batchId: batchId,
                                     taskIndex: index,
-                                    error: error.localizedDescription
+                                    error: uploadError.localizedDescription
                                 )
-                                uploadErrors.append("Failed to load image \(index + 1): \(error.localizedDescription)")
-                            }
-                        }
-
-                        // Phase 2: Upload prepared images
-                        print("📸 [GALLERY UPLOAD] Phase 2: Uploading \(preparedUploads.count) prepared images...")
-                        for prepared in preparedUploads {
-                            // Check for task cancellation - queue remaining uploads for later
-                            if Task.isCancelled {
-                                print("⚠️ [UPLOAD] Task cancelled during upload at index \(prepared.index), queuing remaining...")
-                                // Queue this and remaining uploads to OfflineManager for background retry
-                                let remainingUploads = preparedUploads.filter { $0.index >= prepared.index }
-                                for remaining in remainingUploads {
-                                    OfflineManager.shared.queuePhotoUpload(
-                                        imageData: remaining.compressedData,
-                                        capturedAt: remaining.capturedAt,
-                                        eventId: nil,
-                                        folderId: nil
-                                    )
-                                    print("📤 [UPLOAD] Queued photo \(remaining.index + 1) for background upload")
-                                }
-                                break
-                            }
-
-                            UploadProgressManager.shared.updateTaskProgress(
-                                batchId: batchId,
-                                taskIndex: prepared.index,
-                                progress: 0.5
-                            )
-
-                            do {
-                                print("📸 [GALLERY UPLOAD] Uploading image \(prepared.index + 1)...")
-                                try await viewModel.uploadPhoto(imageData: prepared.compressedData, capturedAt: prepared.capturedAt)
-
-                                UploadProgressManager.shared.completeTask(batchId: batchId, taskIndex: prepared.index)
-                                successCount += 1
-                                print("🟢 [GALLERY UPLOAD] Uploaded image \(prepared.index + 1) successfully")
-
-                                uploadedCount = successCount
-                                uploadProgress = Double(uploadedCount) / Double(totalUploadCount)
-                            } catch {
-                                print("🔴 [GALLERY UPLOAD] Failed to upload image \(prepared.index + 1): \(error)")
-                                // Upload failed - queue for background retry instead of just failing
-                                UploadProgressManager.shared.failTask(
-                                    batchId: batchId,
-                                    taskIndex: prepared.index,
-                                    error: error.localizedDescription
-                                )
-
-                                // Queue to OfflineManager for automatic retry when conditions improve
-                                OfflineManager.shared.queuePhotoUpload(
-                                    imageData: prepared.compressedData,
-                                    capturedAt: prepared.capturedAt,
-                                    eventId: nil,
-                                    folderId: nil
-                                )
-                                print("📤 [UPLOAD] Queued failed photo \(prepared.index + 1) for retry: \(error.localizedDescription)")
-                                uploadErrors.append("Photo \(prepared.index + 1) queued for retry")
+                                uploadErrors.append("Image \(index + 1) failed")
                             }
                         }
 
@@ -1623,27 +1581,24 @@ struct PhotoGalleryView: View {
                         UploadProgressManager.shared.completeBackgroundProtectedBatch(backgroundTaskId)
                         print("📸 [GALLERY UPLOAD] Completed. Success: \(successCount), Errors: \(uploadErrors.count)")
 
-                        if !uploadErrors.isEmpty {
-                            let queuedCount = uploadErrors.filter { $0.contains("queued") }.count
-                            if queuedCount > 0 && queuedCount == uploadErrors.count {
-                                // All errors are queued uploads - show friendlier message
-                                errorMessage = "\(queuedCount) photo(s) will upload automatically when connection improves"
-                            } else {
-                                errorMessage = uploadErrors.joined(separator: "\n")
+                        // Update UI on main thread
+                        await MainActor.run {
+                            if !uploadErrors.isEmpty {
+                                errorMessage = "Uploaded \(successCount) of \(newItems.count) photos.\n\(uploadErrors.count) failed."
+                                showError = true
                             }
-                            showError = true
-                        }
 
-                        // Send push notification for uploaded photos
-                        if successCount > 0 {
-                            NotificationManager.shared.notifyPhotosAdded(count: successCount, location: "gallery", eventId: nil)
-                        }
+                            // Send push notification for uploaded photos
+                            if successCount > 0 {
+                                NotificationManager.shared.notifyPhotosAdded(count: successCount, location: "gallery", eventId: nil)
+                            }
 
-                        isUploading = false
-                        uploadProgress = 0.0
-                        uploadedCount = 0
-                        totalUploadCount = 0
-                        selectedItems = []
+                            isUploading = false
+                            uploadProgress = 0.0
+                            uploadedCount = 0
+                            totalUploadCount = 0
+                            selectedItems = []
+                        }
                     }
                 }
             .alert("Error", isPresented: $showError) {
