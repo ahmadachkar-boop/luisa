@@ -1951,11 +1951,24 @@ struct EventDetailView: View {
 
         Task {
             var updatedPhotoURLs = currentEvent.photoURLs
+
+            // Delete each selected photo from Firebase Storage and Firestore
             for index in selectedPhotoIndices.sorted().reversed() {
                 guard index < updatedPhotoURLs.count else { continue }
+                let photoURLToDelete = updatedPhotoURLs[index]
+
+                // Delete from Firebase Storage and photos collection
+                do {
+                    try await FirebaseManager.shared.deletePhotoByURL(photoURLToDelete)
+                    print("🗑️ [DELETE] Deleted photo from Firebase: \(photoURLToDelete)")
+                } catch {
+                    print("⚠️ [DELETE] Failed to delete photo: \(error)")
+                }
+
                 updatedPhotoURLs.remove(at: index)
             }
 
+            // Update the event with the remaining photos
             var updatedEvent = currentEvent
             updatedEvent.photoURLs = updatedPhotoURLs
             try? await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
