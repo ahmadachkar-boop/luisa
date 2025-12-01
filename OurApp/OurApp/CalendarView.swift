@@ -210,6 +210,7 @@ struct RecapPhotoData: Identifiable {
 }
 
 struct CalendarView: View {
+    @Binding var resetTrigger: Int
     @StateObject private var viewModel = CalendarViewModel()
     @StateObject private var googleCalendarManager = GoogleCalendarManager.shared
     @State private var showingAddEvent = false
@@ -877,6 +878,17 @@ struct CalendarView: View {
         }
         .onChange(of: selectedTags) { _, _ in
             updateEventsCache()
+        }
+        .onChange(of: resetTrigger) { _, _ in
+            // Return to current month when same tab is tapped
+            let today = Date()
+            if !Calendar.current.isDate(currentMonth, equalTo: today, toGranularity: .month) {
+                withAnimation {
+                    currentMonth = today
+                    selectedDate = today
+                    selectedDay = nil
+                }
+            }
         }
     }
 
@@ -3983,5 +3995,5 @@ struct FilterTagsView: View {
 
 
 #Preview {
-    CalendarView()
+    CalendarView(resetTrigger: .constant(0))
 }

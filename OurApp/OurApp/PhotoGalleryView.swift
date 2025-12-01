@@ -210,6 +210,7 @@ enum PhotoSortOption: String, CaseIterable {
 }
 
 struct PhotoGalleryView: View {
+    @Binding var resetTrigger: Int
     @StateObject private var viewModel = PhotoGalleryViewModel()
     @State private var selectedItems: [PhotosPickerItem] = []
     @State private var showingAddPhoto = false
@@ -1773,6 +1774,14 @@ struct PhotoGalleryView: View {
                 HapticManager.light()
             }
         }
+        .onChange(of: resetTrigger) { _, _ in
+            // Return to All Photos when same tab is tapped
+            if currentFolderView != .allPhotos {
+                withAnimation {
+                    currentFolderView = .allPhotos
+                }
+            }
+        }
     }
 
     private func saveSelectedPhotos() {
@@ -2968,5 +2977,5 @@ struct AddToEventSheet: View {
 }
 
 #Preview {
-    PhotoGalleryView()
+    PhotoGalleryView(resetTrigger: .constant(0))
 }
