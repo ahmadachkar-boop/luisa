@@ -50,6 +50,7 @@ struct UploadBatch: Identifiable {
     var failedCount: Int
     var tasks: [UploadTask]
     let createdAt: Date
+    var completedAt: Date? // When the batch finished (for cleanup timing)
     var eventId: String?
 
     var progress: Double {
@@ -115,6 +116,7 @@ class UploadProgressManager: ObservableObject {
             failedCount: 0,
             tasks: tasks,
             createdAt: Date(),
+            completedAt: nil,
             eventId: eventId
         )
 
@@ -200,9 +202,10 @@ class UploadProgressManager: ObservableObject {
     private func checkBatchCompletion(at index: Int) {
         guard index < activeBatches.count else { return }
 
-        let batch = activeBatches[index]
+        var batch = activeBatches[index]
         if batch.isComplete {
-            // Move to recently completed
+            // Set completion time and move to recently completed
+            batch.completedAt = Date()
             recentlyCompletedBatches.append(batch)
             activeBatches.remove(at: index)
         }
@@ -230,8 +233,9 @@ class UploadProgressManager: ObservableObject {
         let cutoff = Date().addingTimeInterval(-completedBatchRetentionTime)
         DispatchQueue.main.async {
             self.recentlyCompletedBatches.removeAll { batch in
-                // Only remove if all tasks are complete (not failed)
-                batch.failedCount == 0 && batch.createdAt < cutoff
+                // Only remove if all tasks completed successfully and enough time has passed since completion
+                guard let completedAt = batch.completedAt else { return false }
+                return batch.failedCount == 0 && completedAt < cutoff
             }
         }
     }
