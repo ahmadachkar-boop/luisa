@@ -268,32 +268,20 @@ class GoogleCalendarManager: ObservableObject {
         try await refreshTokenIfNeeded(user: user)
         let accessToken = user.accessToken.tokenString
 
-        // First, try to find existing OurApp calendar
-        let listURL = URL(string: "https://www.googleapis.com/calendar/v3/users/me/calendarList")!
-        var listRequest = URLRequest(url: listURL)
-        listRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        // Search all pages for existing OurApp calendars
+        let allOurAppCalendars = try await fetchAllOurAppCalendars(accessToken: accessToken)
 
-        let (listData, listResponse) = try await URLSession.shared.data(for: listRequest)
+        if let firstCalendar = allOurAppCalendars.first {
+            // Use the first OurApp calendar found
+            ourAppCalendarId = firstCalendar
+            UserDefaults.standard.set(firstCalendar, forKey: "ourAppCalendarId")
+            print("✅ Found existing OurApp calendar: \(firstCalendar)")
 
-        guard let httpResponse = listResponse as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw GoogleCalendarError.apiError("Failed to fetch calendar list")
-        }
-
-        if let json = try JSONSerialization.jsonObject(with: listData) as? [String: Any],
-           let items = json["items"] as? [[String: Any]] {
-            // Look for existing OurApp calendar
-            for item in items {
-                if let summary = item["summary"] as? String,
-                   summary == ourAppCalendarName,
-                   let calendarId = item["id"] as? String {
-                    // Found existing calendar
-                    ourAppCalendarId = calendarId
-                    UserDefaults.standard.set(calendarId, forKey: "ourAppCalendarId")
-                    print("✅ Found existing OurApp calendar: \(calendarId)")
-                    return
-                }
+            // Log if duplicates exist
+            if allOurAppCalendars.count > 1 {
+                print("⚠️ Found \(allOurAppCalendars.count) OurApp calendars - duplicates exist")
             }
+            return
         }
 
         // Calendar doesn't exist, create it
@@ -326,6 +314,106 @@ class GoogleCalendarManager: ObservableObject {
         ourAppCalendarId = calendarId
         UserDefaults.standard.set(calendarId, forKey: "ourAppCalendarId")
         print("✅ Created new OurApp calendar: \(calendarId)")
+    }
+
+    /// Fetches all OurApp calendar IDs, handling pagination
+    private func fetchAllOurAppCalendars(accessToken: String, pageToken: String? = nil) async throws -> [String] {
+        var components = URLComponents(string: "https://www.googleapis.com/calendar/v3/users/me/calendarList")!
+        if let token = pageToken {
+            components.queryItems = [URLQueryItem(name: "pageToken", value: token)]
+        }
+
+        var request = URLRequest(url: components.url!)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw GoogleCalendarError.apiError("Failed to fetch calendar list")
+        }
+
+        var ourAppCalendarIds: [String] = []
+
+        if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let items = json["items"] as? [[String: Any]] {
+            // Look for OurApp calendars
+            for item in items {
+                if let summary = item["summary"] as? String,
+                   summary == ourAppCalendarName,
+                   let calendarId = item["id"] as? String {
+                    ourAppCalendarIds.append(calendarId)
+                }
+            }
+
+            // Handle pagination
+            if let nextPageToken = json["nextPageToken"] as? String {
+                let moreCalendars = try await fetchAllOurAppCalendars(accessToken: accessToken, pageToken: nextPageToken)
+                ourAppCalendarIds.append(contentsOf: moreCalendars)
+            }
+        }
+
+        return ourAppCalendarIds
+    }
+
+    /// Finds and deletes duplicate OurApp calendars, keeping only the one currently in use
+    func cleanupDuplicateCalendars() async throws -> Int {
+        guard isSignedIn else {
+            throw GoogleCalendarError.notSignedIn
+        }
+
+        guard let user = GIDSignIn.sharedInstance.currentUser else {
+            throw GoogleCalendarError.notSignedIn
+        }
+
+        try await refreshTokenIfNeeded(user: user)
+        let accessToken = user.accessToken.tokenString
+
+        // Get all OurApp calendars
+        let allCalendars = try await fetchAllOurAppCalendars(accessToken: accessToken)
+
+        guard allCalendars.count > 1 else {
+            print("📅 [CLEANUP] No duplicate calendars found")
+            return 0
+        }
+
+        print("📅 [CLEANUP] Found \(allCalendars.count) OurApp calendars")
+
+        // Keep the currently active calendar, delete the rest
+        let activeCalendarId = ourAppCalendarId ?? allCalendars.first!
+        var deletedCount = 0
+
+        for calendarId in allCalendars where calendarId != activeCalendarId {
+            do {
+                try await deleteCalendar(calendarId: calendarId, accessToken: accessToken)
+                deletedCount += 1
+                print("🗑️ [CLEANUP] Deleted duplicate calendar: \(calendarId)")
+            } catch {
+                print("⚠️ [CLEANUP] Failed to delete calendar \(calendarId): \(error)")
+            }
+        }
+
+        // Ensure the active calendar ID is set correctly
+        ourAppCalendarId = activeCalendarId
+        UserDefaults.standard.set(activeCalendarId, forKey: "ourAppCalendarId")
+
+        return deletedCount
+    }
+
+    private func deleteCalendar(calendarId: String, accessToken: String) async throws {
+        let encodedCalendarId = calendarId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? calendarId
+        let url = URL(string: "https://www.googleapis.com/calendar/v3/calendars/\(encodedCalendarId)")!
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw GoogleCalendarError.apiError("Failed to delete calendar")
+        }
     }
 
     // MARK: - Sync Operations
@@ -391,32 +479,41 @@ class GoogleCalendarManager: ObservableObject {
             endDate: endDate
         )
 
-        // Upload new local events to Google Calendar
-        for event in localEvents where event.googleCalendarId == nil {
-            if (syncUpcoming && event.date >= Date()) || (syncPast && event.date < Date()) {
-                let googleEventId = try await uploadEventToGoogle(event, calendarId: calendarId, user: user)
-                // Update local event with Google Calendar ID
-                var updatedEvent = event
-                updatedEvent.googleCalendarId = googleEventId
-                updatedEvent.lastSyncedAt = Date()
-                try await firebaseManager.updateEvent(updatedEvent)
-            }
-        }
+        // Get the current app user name for per-user sync tracking
+        let currentUserName = UserIdentityManager.shared.currentUserName
 
-        // Update existing synced events that have been modified since last sync
+        // Upload new local events to Google Calendar (for this user)
         for event in localEvents {
-            // Safely unwrap googleCalendarId to avoid force unwrap crash
-            guard let googleEventId = event.googleCalendarId else { continue }
+            guard let eventId = event.id else { continue }
 
-            // Check if event was modified after last sync using updatedAt timestamp
-            if let lastSynced = event.lastSyncedAt,
-               let updatedAt = event.updatedAt,
-               updatedAt > lastSynced {
-                try await updateEventInGoogle(event, calendarId: calendarId, googleEventId: googleEventId, user: user)
-                // Update lastSyncedAt after successful sync
-                var syncedEvent = event
-                syncedEvent.lastSyncedAt = Date()
-                try? await firebaseManager.updateEvent(syncedEvent)
+            let userGoogleId = event.googleCalendarIds?[currentUserName]
+
+            if userGoogleId == nil {
+                // This user hasn't synced this event yet - upload it
+                if (syncUpcoming && event.date >= Date()) || (syncPast && event.date < Date()) {
+                    let googleEventId = try await uploadEventToGoogle(event, calendarId: calendarId, user: user)
+                    // Atomically update only this user's Google Calendar ID
+                    // This prevents race conditions when multiple users sync simultaneously
+                    try await firebaseManager.updateEventGoogleCalendarId(
+                        eventId: eventId,
+                        userName: currentUserName,
+                        googleCalendarId: googleEventId
+                    )
+                    print("✅ [GOOGLE SYNC] Uploaded and linked event: \(event.title)")
+                }
+            } else {
+                // This user has already synced this event - check if update is needed
+                let lastSynced = event.lastSyncedAts?[currentUserName]
+                if let lastSynced = lastSynced,
+                   let updatedAt = event.updatedAt,
+                   updatedAt > lastSynced {
+                    try await updateEventInGoogle(event, calendarId: calendarId, googleEventId: userGoogleId!, user: user)
+                    // Atomically update only this user's lastSyncedAt timestamp
+                    try? await firebaseManager.updateEventLastSyncedAt(
+                        eventId: eventId,
+                        userName: currentUserName
+                    )
+                }
             }
         }
 

@@ -50,6 +50,7 @@ struct UploadBatch: Identifiable {
     var failedCount: Int
     var tasks: [UploadTask]
     let createdAt: Date
+    var completedAt: Date? // When the batch finished (for cleanup timing)
     var eventId: String?
 
     var progress: Double {
@@ -115,6 +116,7 @@ class UploadProgressManager: ObservableObject {
             failedCount: 0,
             tasks: tasks,
             createdAt: Date(),
+            completedAt: nil,
             eventId: eventId
         )
 
@@ -200,9 +202,10 @@ class UploadProgressManager: ObservableObject {
     private func checkBatchCompletion(at index: Int) {
         guard index < activeBatches.count else { return }
 
-        let batch = activeBatches[index]
+        var batch = activeBatches[index]
         if batch.isComplete {
-            // Move to recently completed
+            // Set completion time and move to recently completed
+            batch.completedAt = Date()
             recentlyCompletedBatches.append(batch)
             activeBatches.remove(at: index)
         }
@@ -230,8 +233,9 @@ class UploadProgressManager: ObservableObject {
         let cutoff = Date().addingTimeInterval(-completedBatchRetentionTime)
         DispatchQueue.main.async {
             self.recentlyCompletedBatches.removeAll { batch in
-                // Only remove if all tasks are complete (not failed)
-                batch.failedCount == 0 && batch.createdAt < cutoff
+                // Only remove if all tasks completed successfully and enough time has passed since completion
+                guard let completedAt = batch.completedAt else { return false }
+                return batch.failedCount == 0 && completedAt < cutoff
             }
         }
     }
@@ -241,106 +245,117 @@ class UploadProgressManager: ObservableObject {
     }
 }
 
-// MARK: - Upload Progress Banner View
-/// A floating banner that shows upload progress, visible across all screens
-struct UploadProgressBanner: View {
-    @ObservedObject var uploadManager = UploadProgressManager.shared
-    @State private var isExpanded = false
+// MARK: - Mini Upload Indicator
+/// Animated upload indicator similar to voice memo waveform
+struct MiniUploadIndicator: View {
+    let isUploading: Bool
+    @State private var animationPhase: CGFloat = 0
 
     var body: some View {
-        VStack(spacing: 0) {
+        if isUploading {
+            HStack(spacing: 3) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(Color(red: 0.8, green: 0.7, blue: 1.0))
+                        .frame(width: 6, height: 6)
+                        .offset(y: dotOffset(for: index))
+                }
+            }
+            .onAppear {
+                startAnimation()
+            }
+        } else {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 20))
+                .foregroundColor(.green)
+        }
+    }
+
+    private func dotOffset(for index: Int) -> CGFloat {
+        let phase = animationPhase + CGFloat(index) * 0.8
+        return sin(phase) * 4
+    }
+
+    private func startAnimation() {
+        withAnimation(.linear(duration: 0.6).repeatForever(autoreverses: false)) {
+            animationPhase = .pi * 2
+        }
+    }
+}
+
+// MARK: - Upload Progress Banner View
+/// A compact floating banner that shows upload progress, styled like mini player
+struct UploadProgressBanner: View {
+    @ObservedObject var uploadManager = UploadProgressManager.shared
+
+    var body: some View {
+        Group {
             // Only show if there are active uploads or recently completed
             if uploadManager.isUploading || !uploadManager.recentlyCompletedBatches.isEmpty {
-                VStack(spacing: 8) {
-                    // Main progress bar
-                    HStack(spacing: 12) {
-                        // Icon
-                        if uploadManager.isUploading {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        } else {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                        }
+                HStack(spacing: 12) {
+                    // Animated upload indicator
+                    MiniUploadIndicator(isUploading: uploadManager.isUploading)
+                        .frame(width: 30)
 
-                        // Status text
-                        VStack(alignment: .leading, spacing: 2) {
-                            if let firstBatch = uploadManager.activeBatches.first {
-                                Text(firstBatch.statusText)
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundColor(AppTheme.Colors.textPrimary)
-                            } else if let completedBatch = uploadManager.recentlyCompletedBatches.first {
-                                Text(completedBatch.statusText)
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundColor(AppTheme.Colors.textPrimary)
-                            }
+                    // Status text
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let firstBatch = uploadManager.activeBatches.first {
+                            Text(firstBatch.statusText)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
+                                .lineLimit(1)
 
                             if uploadManager.activeBatches.count > 1 {
-                                Text("+\(uploadManager.activeBatches.count - 1) more")
+                                Text("+\(uploadManager.activeBatches.count - 1) more upload\(uploadManager.activeBatches.count > 2 ? "s" : "")")
                                     .font(.caption)
-                                    .foregroundColor(AppTheme.Colors.textTertiary)
+                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                            } else {
+                                Text(firstBatch.eventId != nil ? "Event photos" : "Gallery photos")
+                                    .font(.caption)
+                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
                             }
-                        }
-
-                        Spacer()
-
-                        // Progress percentage
-                        if uploadManager.isUploading {
-                            Text("\(Int(uploadManager.totalProgress * 100))%")
+                        } else if let completedBatch = uploadManager.recentlyCompletedBatches.first {
+                            Text(completedBatch.statusText)
                                 .font(.subheadline.weight(.semibold))
-                                .foregroundColor(AppTheme.Colors.accent)
-                        }
+                                .foregroundColor(Color(red: 0.2, green: 0.1, blue: 0.4))
+                                .lineLimit(1)
 
-                        // Expand/collapse button
-                        if uploadManager.activeBatches.count > 1 || isExpanded {
-                            Button(action: {
-                                withAnimation(.spring(response: 0.3)) {
-                                    isExpanded.toggle()
-                                }
-                            }) {
-                                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                                    .font(.caption)
-                                    .foregroundColor(AppTheme.Colors.textTertiary)
-                            }
+                            Text("Upload complete")
+                                .font(.caption)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
 
-                    // Progress bar
+                    Spacer()
+
+                    // Progress percentage or completion indicator
                     if uploadManager.isUploading {
-                        ProgressView(value: uploadManager.totalProgress)
-                            .tint(AppTheme.Colors.accent)
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 8)
+                        Text("\(Int(uploadManager.totalProgress * 100))%")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                     }
 
-                    // Expanded details
-                    if isExpanded {
-                        VStack(spacing: 8) {
-                            ForEach(uploadManager.activeBatches) { batch in
-                                HStack {
-                                    Text(batch.eventId != nil ? "Event Upload" : "Gallery Upload")
-                                        .font(.caption)
-                                        .foregroundColor(AppTheme.Colors.textSecondary)
-                                    Spacer()
-                                    Text(batch.statusText)
-                                        .font(.caption)
-                                        .foregroundColor(AppTheme.Colors.textTertiary)
-                                }
-                                .padding(.horizontal, 16)
-                            }
+                    // Dismiss button for completed uploads
+                    if !uploadManager.isUploading && !uploadManager.recentlyCompletedBatches.isEmpty {
+                        Button(action: {
+                            uploadManager.clearCompletedBatches()
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title3)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
                         }
-                        .padding(.bottom, 8)
                     }
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.white)
-                        .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 4)
-                )
                 .padding(.horizontal, 16)
-                .transition(.move(edge: .top).combined(with: .opacity))
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(Color.white)
+                        .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: -2)
+                )
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .animation(.spring(response: 0.3), value: uploadManager.isUploading)
@@ -350,9 +365,15 @@ struct UploadProgressBanner: View {
 
 // MARK: - Preview
 #Preview {
-    VStack {
-        UploadProgressBanner()
-        Spacer()
+    ZStack(alignment: .bottom) {
+        Color.gray.opacity(0.1)
+            .ignoresSafeArea()
+
+        VStack {
+            Spacer()
+            UploadProgressBanner()
+                .padding(.bottom, 50)
+        }
     }
     .onAppear {
         // Simulate an upload for preview

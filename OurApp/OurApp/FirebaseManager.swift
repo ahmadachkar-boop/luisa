@@ -639,15 +639,37 @@ class FirebaseManager: ObservableObject {
         try await updateEvent(event)
     }
 
+    /// Atomically updates only the Google Calendar sync fields for a specific user
+    /// This prevents race conditions when multiple users sync simultaneously
+    func updateEventGoogleCalendarId(eventId: String, userName: String, googleCalendarId: String) async throws {
+        print("🔵 [FIREBASE] Atomic update of Google Calendar ID for user \(userName) on event \(eventId)")
+
+        // Use dot notation to update nested dictionary fields atomically
+        try await db.collection("calendarEvents").document(eventId).updateData([
+            "googleCalendarIds.\(userName)": googleCalendarId,
+            "lastSyncedAts.\(userName)": Timestamp(date: Date())
+        ])
+
+        print("🟢 [FIREBASE SUCCESS] Google Calendar ID updated atomically")
+    }
+
+    /// Atomically updates only the lastSyncedAt timestamp for a specific user
+    func updateEventLastSyncedAt(eventId: String, userName: String) async throws {
+        try await db.collection("calendarEvents").document(eventId).updateData([
+            "lastSyncedAts.\(userName)": Timestamp(date: Date())
+        ])
+    }
+
     func deleteCalendarEvent(_ event: CalendarEvent) async throws {
         guard let id = event.id else {
             throw FirebaseOperationError.missingDocumentID("CalendarEvent")
         }
 
-        // Delete from Google Calendar if synced
-        if let googleCalendarId = event.googleCalendarId {
+        // Delete from Google Calendar if synced (for current user only)
+        let currentUserName = await MainActor.run { UserIdentityManager.shared.currentUserName }
+        if let googleCalendarId = event.googleCalendarIds?[currentUserName] {
             do {
-                print("🔵 [GOOGLE SYNC] Deleting event from Google Calendar: \(googleCalendarId)")
+                print("🔵 [GOOGLE SYNC] Deleting event from Google Calendar for \(currentUserName): \(googleCalendarId)")
                 try await GoogleCalendarManager.shared.deleteEventFromGoogle(googleCalendarId)
                 print("✅ [GOOGLE SYNC] Event deleted from Google Calendar")
             } catch {

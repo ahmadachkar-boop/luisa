@@ -102,6 +102,7 @@ struct SettingsView: View {
     @State private var showingSyncAlert = false
     @State private var syncAlertMessage = ""
     @State private var isCleaningUp = false
+    @State private var isCleaningUpCalendars = false
     @State private var showingCleanupAlert = false
     @State private var cleanupMessage = ""
 
@@ -242,7 +243,7 @@ struct SettingsView: View {
                         }) {
                             HStack {
                                 Image(systemName: "calendar.badge.exclamationmark")
-                                Text("Clean Up Google Calendar Duplicates")
+                                Text("Clean Up Duplicate Events")
                                 Spacer()
                                 if googleCalendarManager.isSyncing {
                                     ProgressView()
@@ -250,12 +251,28 @@ struct SettingsView: View {
                             }
                         }
                         .disabled(googleCalendarManager.isSyncing)
+
+                        Button(action: {
+                            Task {
+                                await cleanupDuplicateCalendars()
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "calendar.badge.minus")
+                                Text("Delete Duplicate OurApp Calendars")
+                                Spacer()
+                                if isCleaningUpCalendars {
+                                    ProgressView()
+                                }
+                            }
+                        }
+                        .disabled(isCleaningUpCalendars)
                     }
                 } header: {
                     Text("Maintenance")
                 } footer: {
                     if googleCalendarManager.isSignedIn {
-                        Text("Remove photo entries that no longer have associated files. Clean up duplicate events in Google Calendar.")
+                        Text("Remove photo entries without files. Clean up duplicate events or remove extra OurApp calendars from Google Calendar.")
                     } else {
                         Text("Remove photo entries that no longer have associated files. This fixes eternal gray loading screens.")
                     }
@@ -334,6 +351,24 @@ struct SettingsView: View {
                 cleanupMessage = "Successfully removed \(deletedCount) duplicate event\(deletedCount == 1 ? "" : "s") from Google Calendar."
             } else {
                 cleanupMessage = "No duplicate events found. Your Google Calendar is clean!"
+            }
+            showingCleanupAlert = true
+        } catch {
+            cleanupMessage = "Cleanup failed: \(error.localizedDescription)"
+            showingCleanupAlert = true
+        }
+    }
+
+    func cleanupDuplicateCalendars() async {
+        isCleaningUpCalendars = true
+        defer { isCleaningUpCalendars = false }
+
+        do {
+            let deletedCount = try await googleCalendarManager.cleanupDuplicateCalendars()
+            if deletedCount > 0 {
+                cleanupMessage = "Successfully deleted \(deletedCount) duplicate OurApp calendar\(deletedCount == 1 ? "" : "s")."
+            } else {
+                cleanupMessage = "No duplicate calendars found. You only have one OurApp calendar."
             }
             showingCleanupAlert = true
         } catch {
