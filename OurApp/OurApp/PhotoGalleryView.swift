@@ -1956,13 +1956,42 @@ struct PhotoGalleryView: View {
         guard !selectedPhotoIndices.isEmpty else { return }
 
         Task {
-            let photoIds = selectedPhotoIndices.sorted().compactMap { index -> String? in
+            // Get both photo IDs and URLs for the selected photos
+            let selectedPhotos = selectedPhotoIndices.sorted().compactMap { index -> Photo? in
                 guard index < photosInDisplayOrder.count else { return nil }
-                return photosInDisplayOrder[index].id
+                return photosInDisplayOrder[index]
             }
 
+            let photoIds = selectedPhotos.compactMap { $0.id }
+            let photoURLs = selectedPhotos.map { $0.imageURL }
+
+            // Update the photos' eventId
             try? await viewModel.assignPhotosToEvent(photoIds, eventId: eventId) { current, total in
                 // Could show progress here if needed
+            }
+
+            // Also update the event's photoURLs array
+            if let eventId = eventId {
+                // Adding photos to an event - append to event's photoURLs
+                if let event = viewModel.events.first(where: { $0.id == eventId }) {
+                    var updatedEvent = event
+                    // Add new URLs that aren't already in the event
+                    let newURLs = photoURLs.filter { !updatedEvent.photoURLs.contains($0) }
+                    updatedEvent.photoURLs.append(contentsOf: newURLs)
+                    try? await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
+                    print("📸 [ASSIGN TO EVENT] Added \(newURLs.count) photos to event '\(event.title)'")
+                }
+            } else {
+                // Removing photos from events - remove from each photo's previous event
+                for photo in selectedPhotos {
+                    if let previousEventId = photo.eventId,
+                       let previousEvent = viewModel.events.first(where: { $0.id == previousEventId }) {
+                        var updatedEvent = previousEvent
+                        updatedEvent.photoURLs.removeAll { $0 == photo.imageURL }
+                        try? await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
+                        print("📸 [REMOVE FROM EVENT] Removed photo from event '\(previousEvent.title)'")
+                    }
+                }
             }
 
             await MainActor.run {
