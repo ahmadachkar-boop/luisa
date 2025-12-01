@@ -239,6 +239,7 @@ struct PhotoGalleryView: View {
     @State private var filterStartDate: Date? = nil
     @State private var filterEndDate: Date? = nil
     @State private var showingMoveToFolder = false
+    @State private var showingAddToEvent = false
     @State private var uploadProgress: Double = 0.0
     @State private var uploadedCount: Int = 0
     @State private var totalUploadCount: Int = 0
@@ -1433,6 +1434,16 @@ struct PhotoGalleryView: View {
                                 }
                                 .disabled(selectedPhotoIndices.isEmpty)
 
+                                // Add to event button
+                                Button(action: {
+                                    HapticManager.light()
+                                    showingAddToEvent = true
+                                }) {
+                                    Image(systemName: "calendar.badge.plus")
+                                        .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
+                                }
+                                .disabled(selectedPhotoIndices.isEmpty)
+
                                 // Save button
                                 Button(action: {
                                     HapticManager.light()
@@ -1724,6 +1735,20 @@ struct PhotoGalleryView: View {
             )
             .presentationDetents([.medium])
         }
+        .sheet(isPresented: $showingAddToEvent) {
+            AddToEventSheet(
+                events: viewModel.allEvents,
+                onSelectEvent: { eventId in
+                    assignSelectedPhotosToEvent(eventId)
+                    showingAddToEvent = false
+                },
+                onRemoveFromEvent: {
+                    assignSelectedPhotosToEvent(nil)
+                    showingAddToEvent = false
+                }
+            )
+            .presentationDetents([.medium, .large])
+        }
         .onAppear {
             updatePhotosCache()
             // Initialize prefetch manager with all photo URLs for smart prefetching
@@ -1903,6 +1928,27 @@ struct PhotoGalleryView: View {
             }
 
             try? await viewModel.movePhotosToFolder(photoIds, folderId: folderId) { current, total in
+                // Could show progress here if needed
+            }
+
+            await MainActor.run {
+                HapticManager.success()
+                selectionMode = false
+                selectedPhotoIndices.removeAll()
+            }
+        }
+    }
+
+    private func assignSelectedPhotosToEvent(_ eventId: String?) {
+        guard !selectedPhotoIndices.isEmpty else { return }
+
+        Task {
+            let photoIds = selectedPhotoIndices.sorted().compactMap { index -> String? in
+                guard index < photosInDisplayOrder.count else { return nil }
+                return photosInDisplayOrder[index].id
+            }
+
+            try? await viewModel.assignPhotosToEvent(photoIds, eventId: eventId) { current, total in
                 // Could show progress here if needed
             }
 
@@ -2464,6 +2510,16 @@ class PhotoGalleryViewModel: ObservableObject {
         try await firebaseManager.batchUpdatePhotoFolders(photoIds, folderId: folderId, progressHandler: progressHandler)
     }
 
+    // MARK: - Add to Event
+    func assignPhotosToEvent(_ photoIds: [String], eventId: String?, progressHandler: ((Int, Int) -> Void)? = nil) async throws {
+        try await firebaseManager.batchUpdatePhotoEvents(photoIds, eventId: eventId, progressHandler: progressHandler)
+    }
+
+    // Get all events (not just those with photos) sorted by date descending
+    var allEvents: [CalendarEvent] {
+        events.sorted { $0.date > $1.date }
+    }
+
     // MARK: - Batch Delete
     func batchDeletePhotos(_ photos: [Photo], progressHandler: ((Int, Int) -> Void)? = nil) async throws {
         try await firebaseManager.batchDeletePhotos(photos, progressHandler: progressHandler)
@@ -2735,6 +2791,172 @@ struct MoveToFolderSheet: View {
             }
             .background(Color(red: 0.96, green: 0.94, blue: 0.98).ignoresSafeArea())
             .navigationTitle("Move to Folder")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Add to Event Sheet
+struct AddToEventSheet: View {
+    let events: [CalendarEvent]
+    let onSelectEvent: (String) -> Void
+    let onRemoveFromEvent: () -> Void
+    @Environment(\.dismiss) var dismiss
+    @State private var searchText = ""
+
+    private var filteredEvents: [CalendarEvent] {
+        if searchText.isEmpty {
+            return events
+        }
+        return events.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    private let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 16) {
+                    // Search bar
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        TextField("Search events...", text: $searchText)
+                            .textFieldStyle(.plain)
+                    }
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white)
+                            .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
+                    )
+
+                    // Remove from event option
+                    Button(action: onRemoveFromEvent) {
+                        HStack(spacing: 16) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.gray.opacity(0.15))
+                                    .frame(width: 50, height: 50)
+                                Image(systemName: "calendar.badge.minus")
+                                    .font(.title2)
+                                    .foregroundColor(.gray)
+                            }
+
+                            Text("Remove from Event")
+                                .fontWeight(.medium)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                            Spacer()
+                        }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color.white)
+                                .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 2)
+                        )
+                    }
+
+                    if !filteredEvents.isEmpty {
+                        Divider()
+                            .padding(.vertical, 8)
+
+                        Text("Add to Event")
+                            .font(.headline)
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(filteredEvents, id: \.id) { event in
+                            Button(action: {
+                                if let eventId = event.id {
+                                    onSelectEvent(eventId)
+                                }
+                            }) {
+                                HStack(spacing: 16) {
+                                    ZStack {
+                                        Circle()
+                                            .fill(event.isSpecial ?
+                                                Color(red: 0.9, green: 0.4, blue: 0.6).opacity(0.15) :
+                                                Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.15))
+                                            .frame(width: 50, height: 50)
+                                        Image(systemName: event.isSpecial ? "star.fill" : "calendar")
+                                            .font(.title2)
+                                            .foregroundColor(event.isSpecial ?
+                                                Color(red: 0.9, green: 0.4, blue: 0.6) :
+                                                Color(red: 0.6, green: 0.4, blue: 0.85))
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(event.title)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                                            .lineLimit(1)
+
+                                        Text(dateFormatter.string(from: event.date))
+                                            .font(.caption)
+                                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                }
+                                .padding()
+                                .background(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .fill(Color.white)
+                                        .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 2)
+                                )
+                            }
+                        }
+                    } else if events.isEmpty {
+                        VStack(spacing: 16) {
+                            Image(systemName: "calendar.badge.exclamationmark")
+                                .font(.system(size: 50))
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.5))
+
+                            Text("No Events")
+                                .font(.headline)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                            Text("Create events in the Calendar tab to add photos to them")
+                                .font(.subheadline)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(.vertical, 40)
+                    } else if filteredEvents.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 40))
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.5))
+
+                            Text("No matching events")
+                                .font(.subheadline)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        }
+                        .padding(.vertical, 30)
+                    }
+                }
+                .padding()
+            }
+            .background(Color(red: 0.96, green: 0.94, blue: 0.98).ignoresSafeArea())
+            .navigationTitle("Add to Event")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
