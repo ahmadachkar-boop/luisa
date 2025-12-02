@@ -2300,8 +2300,8 @@ struct FullScreenMediaViewer: View {
             }
 
             // Uploaded by info
-            if let media = currentMedia, let uploadedBy = media.uploadedBy {
-                Text("Added by \(uploadedBy)")
+            if let media = currentMedia, !media.uploadedBy.isEmpty {
+                Text("Added by \(media.uploadedBy)")
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .foregroundColor(.white)
@@ -2311,8 +2311,8 @@ struct FullScreenMediaViewer: View {
             }
 
             // Capture date
-            if let media = currentMedia, let date = media.capturedAt ?? media.createdAt {
-                Text(date, style: .date)
+            if let media = currentMedia {
+                Text(media.capturedAt ?? media.createdAt, style: .date)
                     .font(.caption)
                     .foregroundColor(.white.opacity(0.9))
                     .padding(.horizontal, 12)
