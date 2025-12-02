@@ -1870,11 +1870,14 @@ struct FullScreenVideoPlayer: View {
 
         // Check cache first, then stream
         let playbackURL: URL
+        let isCached: Bool
         if let cachedURL = VideoCache.shared.getCachedVideoURL(for: videoURL) {
             playbackURL = cachedURL
+            isCached = true
             print("🎬 [VIDEO PLAYER] Playing from cache: \(cachedURL.lastPathComponent)")
         } else {
             playbackURL = url
+            isCached = false
             print("🎬 [VIDEO PLAYER] Streaming from remote URL")
         }
 
@@ -1885,13 +1888,14 @@ struct FullScreenVideoPlayer: View {
 
         let playerItem = AVPlayerItem(asset: asset)
 
-        // Optimize buffering for faster start
-        playerItem.preferredForwardBufferDuration = 3
+        // Optimize buffering - give more buffer time for streaming
+        playerItem.preferredForwardBufferDuration = isCached ? 0 : 10 // 10 seconds buffer for streaming
         playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused = true
 
         let newPlayer = AVPlayer(playerItem: playerItem)
         newPlayer.actionAtItemEnd = AVPlayer.ActionAtItemEnd.pause
-        newPlayer.automaticallyWaitsToMinimizeStalling = false // Don't wait, start playing ASAP
+        // Let AVPlayer manage stalling - prevents premature playback that stalls
+        newPlayer.automaticallyWaitsToMinimizeStalling = !isCached
 
         // Use KVO for status observation (more reliable than Combine with @State)
         statusObservation = playerItem.observe(\.status, options: [.new, .initial]) { (item: AVPlayerItem, _) in
@@ -1969,21 +1973,26 @@ struct FullScreenVideoPlayer: View {
         newPlayer.play()
         isPlaying = true
 
-        // Start background caching if not cached
-        if VideoCache.shared.getCachedVideoURL(for: videoURL) == nil {
-            Task.detached(priority: .background) {
-                print("🎬 [VIDEO PLAYER] Starting background cache...")
-                _ = await VideoCache.shared.downloadAndCache(from: url)
-                print("🎬 [VIDEO PLAYER] Background cache complete")
-            }
-        }
+        // DON'T start background caching while streaming - it competes for bandwidth
+        // Videos are pre-cached when they appear in the gallery grid instead
     }
 
     @State private var errorObserver: NSObjectProtocol?
+    @State private var videoURLForCaching: String?
 
     private func cleanupPlayer() {
         // Stop playback
         player?.pause()
+
+        // Cache video in background after playback ends (if not already cached)
+        if let urlString = videoURLForCaching ?? videoURL.isEmpty ? nil : videoURL,
+           let url = URL(string: urlString),
+           VideoCache.shared.getCachedVideoURL(for: urlString) == nil {
+            Task.detached(priority: .background) {
+                print("🎬 [VIDEO PLAYER] Caching video after playback...")
+                _ = await VideoCache.shared.downloadAndCache(from: url)
+            }
+        }
 
         // Remove time observer
         if let observer = timeObserver {
