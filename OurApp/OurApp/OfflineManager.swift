@@ -197,12 +197,15 @@ class OfflineManager: ObservableObject {
     // MARK: - Pending Operations Queue
     enum PendingOperationType: String, Codable {
         case uploadPhoto
+        case uploadVoiceMemo
         case deletePhoto
+        case deleteVoiceMemo
         case addEvent
         case updateEvent
         case deleteEvent
         case toggleFavorite
         case moveToFolder
+        case toggleVoiceMemoFavorite
     }
 
     struct PendingOperation: Codable, Identifiable {
@@ -435,6 +438,40 @@ class OfflineManager: ObservableObject {
                 throw OfflineError.invalidData
             }
             try await firebaseManager.updatePhotoFolder(moveData.photoId, folderId: moveData.folderId)
+
+        case .uploadVoiceMemo:
+            guard let uploadData = try? JSONDecoder().decode(VoiceMemoUploadData.self, from: operation.data) else {
+                throw OfflineError.invalidData
+            }
+
+            // Load audio data from temporary file
+            let tempFileURL = cacheDirectory.appendingPathComponent(uploadData.audioFilePath)
+            guard let audioData = try? Data(contentsOf: tempFileURL) else {
+                print("OfflineManager: Could not load voice memo from temp file - \(uploadData.audioFilePath)")
+                throw OfflineError.invalidData
+            }
+
+            _ = try await firebaseManager.uploadVoiceMessage(
+                audioData: audioData,
+                title: uploadData.title,
+                duration: uploadData.duration,
+                fromUser: uploadData.fromUser
+            )
+
+            // Clean up temporary file after successful upload
+            try? FileManager.default.removeItem(at: tempFileURL)
+
+        case .deleteVoiceMemo:
+            guard let memoData = try? JSONDecoder().decode(VoiceMessage.self, from: operation.data) else {
+                throw OfflineError.invalidData
+            }
+            try await firebaseManager.deleteVoiceMessage(memoData)
+
+        case .toggleVoiceMemoFavorite:
+            guard let favoriteData = try? JSONDecoder().decode(VoiceMemoFavoriteToggleData.self, from: operation.data) else {
+                throw OfflineError.invalidData
+            }
+            try await firebaseManager.toggleVoiceMemoFavorite(favoriteData.memoId, isFavorite: favoriteData.isFavorite)
         }
     }
 
@@ -454,6 +491,19 @@ class OfflineManager: ObservableObject {
     struct MoveToFolderData: Codable {
         let photoId: String
         let folderId: String?
+    }
+
+    struct VoiceMemoUploadData: Codable {
+        let audioFilePath: String // Path to temporary file instead of raw data
+        let title: String
+        let duration: TimeInterval
+        let fromUser: String
+        let folderId: String?
+    }
+
+    struct VoiceMemoFavoriteToggleData: Codable {
+        let memoId: String
+        let isFavorite: Bool
     }
 
     enum OfflineError: Error {
@@ -515,6 +565,46 @@ class OfflineManager: ObservableObject {
         let moveData = MoveToFolderData(photoId: photoId, folderId: folderId)
         guard let data = try? JSONEncoder().encode(moveData) else { return }
         let operation = PendingOperation(type: .moveToFolder, data: data)
+        queueOperation(operation)
+    }
+
+    // MARK: - Voice Memo Convenience Methods
+
+    func queueVoiceMemoUpload(audioData: Data, title: String, duration: TimeInterval, fromUser: String, folderId: String? = nil) {
+        // Save audio data to a temporary file to avoid memory-intensive JSON encoding
+        let tempFileName = "pending_voice_upload_\(UUID().uuidString).m4a"
+        let tempFileURL = cacheDirectory.appendingPathComponent(tempFileName)
+
+        do {
+            try audioData.write(to: tempFileURL)
+        } catch {
+            print("OfflineManager: Failed to save voice memo for offline upload - \(error)")
+            return
+        }
+
+        let uploadData = VoiceMemoUploadData(
+            audioFilePath: tempFileName,
+            title: title,
+            duration: duration,
+            fromUser: fromUser,
+            folderId: folderId
+        )
+
+        guard let data = try? JSONEncoder().encode(uploadData) else { return }
+        let operation = PendingOperation(type: .uploadVoiceMemo, data: data)
+        queueOperation(operation)
+    }
+
+    func queueVoiceMemoDelete(_ memoData: VoiceMessage) {
+        guard let data = try? JSONEncoder().encode(memoData) else { return }
+        let operation = PendingOperation(type: .deleteVoiceMemo, data: data)
+        queueOperation(operation)
+    }
+
+    func queueVoiceMemoFavoriteToggle(memoId: String, isFavorite: Bool) {
+        let toggleData = VoiceMemoFavoriteToggleData(memoId: memoId, isFavorite: isFavorite)
+        guard let data = try? JSONEncoder().encode(toggleData) else { return }
+        let operation = PendingOperation(type: .toggleVoiceMemoFavorite, data: data)
         queueOperation(operation)
     }
 

@@ -84,6 +84,7 @@ struct MiniPlayerWaveform: View {
 }
 
 struct VoiceMessagesView: View {
+    @Binding var resetTrigger: Int
     @StateObject private var viewModel = VoiceMessagesViewModel()
     @State private var showingRecorder = false
     @State private var showingExpandedHeader = false
@@ -445,6 +446,15 @@ struct VoiceMessagesView: View {
             }
             .onChange(of: currentFolderView) { _, _ in
                 updateMessagesCache()
+            }
+            .onChange(of: resetTrigger) { _, _ in
+                // Return to category selection when same tab is tapped
+                if currentFolderView != .categorySelection {
+                    withAnimation {
+                        currentFolderView = .categorySelection
+                        folderNavStack.removeAll()
+                    }
+                }
             }
         }
     }
@@ -4559,5 +4569,5 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
 }
 
 #Preview {
-    VoiceMessagesView()
+    VoiceMessagesView(resetTrigger: .constant(0))
 }

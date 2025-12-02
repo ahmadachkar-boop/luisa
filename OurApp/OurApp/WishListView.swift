@@ -19,6 +19,7 @@ struct DefaultWishCategories {
 }
 
 struct WishListView: View {
+    @Binding var resetTrigger: Int
     @StateObject private var viewModel = WishListViewModel()
     @State private var currentView: WishViewType = .categorySelection
     @State private var viewNavStack: [WishViewType] = []
@@ -51,6 +52,15 @@ struct WishListView: View {
         }
         .onAppear {
             viewModel.initializeDefaultCategoriesIfNeeded()
+        }
+        .onChange(of: resetTrigger) { _, _ in
+            // Return to category selection when same tab is tapped
+            if currentView != .categorySelection {
+                withAnimation {
+                    currentView = .categorySelection
+                    viewNavStack.removeAll()
+                }
+            }
         }
     }
 
@@ -1541,5 +1551,5 @@ extension Color {
 }
 
 #Preview {
-    WishListView()
+    WishListView(resetTrigger: .constant(0))
 }

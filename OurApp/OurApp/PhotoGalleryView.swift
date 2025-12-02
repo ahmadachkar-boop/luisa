@@ -2,6 +2,177 @@ import SwiftUI
 import PhotosUI
 import ImageIO
 
+// MARK: - Shimmer Effect for Loading Placeholders
+struct ShimmerEffect: ViewModifier {
+    @State private var phase: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                GeometryReader { geometry in
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.0),
+                            Color.white.opacity(0.3),
+                            Color.white.opacity(0.0)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: geometry.size.width * 2)
+                    .offset(x: -geometry.size.width + (phase * geometry.size.width * 2))
+                }
+            )
+            .clipped()
+            .onAppear {
+                withAnimation(
+                    Animation.linear(duration: 1.2)
+                        .repeatForever(autoreverses: false)
+                ) {
+                    phase = 1
+                }
+            }
+    }
+}
+
+extension View {
+    func shimmer() -> some View {
+        modifier(ShimmerEffect())
+    }
+}
+
+// MARK: - Skeleton Loading Grid
+struct SkeletonPhotoGrid: View {
+    let columnCount: Int
+
+    private var columns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 8), count: columnCount)
+    }
+
+    private var cellSize: CGFloat {
+        let spacing: CGFloat = 8 * CGFloat(columnCount - 1)
+        let padding: CGFloat = 16
+        return (UIScreen.main.bounds.width - padding - spacing) / CGFloat(columnCount)
+    }
+
+    private var cornerRadius: CGFloat {
+        columnCount == 2 ? 16 : (columnCount == 3 ? 12 : 8)
+    }
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 8) {
+            ForEach(0..<12, id: \.self) { index in
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(Color.gray.opacity(0.15))
+                    .frame(width: cellSize, height: cellSize)
+                    .shimmer()
+                    .opacity(1.0 - Double(index) * 0.05)
+            }
+        }
+        .padding(.horizontal, 8)
+    }
+}
+
+// MARK: - Animated Upload Progress Bar
+struct AnimatedUploadProgressBar: View {
+    let progress: Double
+    let uploadedCount: Int
+    let totalCount: Int
+
+    @State private var stripeOffset: CGFloat = 0
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("Uploading photos...")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                Spacer()
+                Text("\(uploadedCount) of \(totalCount)")
+                    .font(.caption.weight(.medium))
+                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+            }
+
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    // Background track
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+
+                    // Animated progress fill
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.7, green: 0.45, blue: 0.95),
+                                    Color(red: 0.6, green: 0.4, blue: 0.85),
+                                    Color(red: 0.7, green: 0.45, blue: 0.95)
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: geometry.size.width * CGFloat(progress))
+                        .overlay(
+                            // Animated stripes
+                            GeometryReader { progressGeometry in
+                                HStack(spacing: 8) {
+                                    ForEach(0..<20, id: \.self) { _ in
+                                        Rectangle()
+                                            .fill(Color.white.opacity(0.2))
+                                            .frame(width: 8)
+                                            .rotationEffect(.degrees(-45))
+                                    }
+                                }
+                                .offset(x: stripeOffset)
+                            }
+                            .mask(RoundedRectangle(cornerRadius: 6))
+                        )
+                        .animation(.spring(response: 0.4), value: progress)
+                }
+            }
+            .frame(height: 12)
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white)
+                .shadow(color: Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.15), radius: 8, x: 0, y: 4)
+        )
+        .onAppear {
+            withAnimation(
+                Animation.linear(duration: 0.8)
+                    .repeatForever(autoreverses: false)
+            ) {
+                stripeOffset = 20
+            }
+        }
+    }
+}
+
+// MARK: - Haptic Feedback Manager
+struct HapticManager {
+    static func light() {
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
+    }
+
+    static func medium() {
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+    }
+
+    static func success() {
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.success)
+    }
+
+    static func selection() {
+        let generator = UISelectionFeedbackGenerator()
+        generator.selectionChanged()
+    }
+}
+
 // Helper function to extract capture date from image metadata
 func extractCaptureDate(from imageData: Data) -> Date? {
     guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, nil),
@@ -39,6 +210,7 @@ enum PhotoSortOption: String, CaseIterable {
 }
 
 struct PhotoGalleryView: View {
+    @Binding var resetTrigger: Int
     @StateObject private var viewModel = PhotoGalleryViewModel()
     @State private var selectedItems: [PhotosPickerItem] = []
     @State private var showingAddPhoto = false
@@ -68,12 +240,15 @@ struct PhotoGalleryView: View {
     @State private var filterStartDate: Date? = nil
     @State private var filterEndDate: Date? = nil
     @State private var showingMoveToFolder = false
+    @State private var showingAddToEvent = false
     @State private var uploadProgress: Double = 0.0
     @State private var uploadedCount: Int = 0
     @State private var totalUploadCount: Int = 0
     @State private var showingBatchProgress = false
     @State private var batchProgress: Double = 0.0
     @State private var batchOperationMessage = ""
+    @State private var isInitialLoad = true
+    @State private var folderTransitionId = UUID() // For folder transition animations
 
     // Computed columns based on user preference
     private var columns: [GridItem] {
@@ -237,11 +412,19 @@ struct PhotoGalleryView: View {
                         .padding(.horizontal)
                         .padding(.top, 8)
 
-                    // Upload progress bar
+                    // Animated upload progress bar
                     if isUploading {
-                        uploadProgressBar
-                            .padding(.horizontal)
-                            .padding(.top, 8)
+                        AnimatedUploadProgressBar(
+                            progress: uploadProgress,
+                            uploadedCount: uploadedCount,
+                            totalCount: totalUploadCount
+                        )
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .top).combined(with: .opacity),
+                            removal: .opacity
+                        ))
                     }
 
                     // Active filters indicator
@@ -363,78 +546,128 @@ struct PhotoGalleryView: View {
         )
     }
 
-    // MARK: - Upload Progress Bar
-    private var uploadProgressBar: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Text("Uploading photos...")
-                    .font(.subheadline)
-                    .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-                Spacer()
-                Text("\(uploadedCount) of \(totalUploadCount)")
-                    .font(.caption)
-                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-            }
-            ProgressView(value: uploadProgress, total: 1.0)
-                .tint(Color(red: 0.6, green: 0.4, blue: 0.85))
-        }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white)
-                .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
-        )
+    // MARK: - Active Filters Bar (Enhanced)
+    @State private var filtersBarAppeared = false
+
+    private var activeFilterCount: Int {
+        var count = 0
+        if sortOption != .newestFirst { count += 1 }
+        if hasDateFilter { count += 1 }
+        return count
     }
 
-    // MARK: - Active Filters Bar
     private var activeFiltersBar: some View {
         HStack(spacing: 8) {
-            // Sort indicator
-            if sortOption != .newestFirst {
-                HStack(spacing: 4) {
-                    Image(systemName: sortOption.icon)
-                        .font(.caption)
-                    Text(sortOption.rawValue)
-                        .font(.caption)
+            // Scrollable filter chips
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    // Sort indicator (tappable to show sort options)
+                    if sortOption != .newestFirst {
+                        Button(action: {
+                            HapticManager.light()
+                            withAnimation(.spring(response: 0.3)) {
+                                showingExpandedHeader = true
+                            }
+                        }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: sortOption.icon)
+                                    .font(.caption.weight(.medium))
+                                Text(sortOption.rawValue)
+                                    .font(.caption.weight(.medium))
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 8, weight: .bold))
+                            }
+                            .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule()
+                                    .fill(Color(red: 0.95, green: 0.9, blue: 1.0))
+                            )
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.2), lineWidth: 1)
+                            )
+                        }
+                        .transition(.asymmetric(
+                            insertion: .scale.combined(with: .opacity),
+                            removal: .scale.combined(with: .opacity)
+                        ))
+                    }
+
+                    // Date filter indicator (tappable to edit)
+                    if hasDateFilter {
+                        Button(action: {
+                            HapticManager.light()
+                            showingDateFilter = true
+                        }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "calendar")
+                                    .font(.caption.weight(.medium))
+                                if let start = filterStartDate, let end = filterEndDate {
+                                    Text("\(start, format: .dateTime.month(.abbreviated).day()) - \(end, format: .dateTime.month(.abbreviated).day())")
+                                        .font(.caption.weight(.medium))
+                                } else if let start = filterStartDate {
+                                    Text("From \(start, format: .dateTime.month(.abbreviated).day())")
+                                        .font(.caption.weight(.medium))
+                                } else if let end = filterEndDate {
+                                    Text("Until \(end, format: .dateTime.month(.abbreviated).day())")
+                                        .font(.caption.weight(.medium))
+                                }
+
+                                Button(action: {
+                                    HapticManager.light()
+                                    withAnimation(.spring(response: 0.3)) {
+                                        filterStartDate = nil
+                                        filterEndDate = nil
+                                    }
+                                }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.caption)
+                                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.6))
+                                }
+                            }
+                            .foregroundColor(Color(red: 0.5, green: 0.35, blue: 0.75))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule()
+                                    .fill(Color(red: 0.95, green: 0.9, blue: 1.0))
+                            )
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.2), lineWidth: 1)
+                            )
+                        }
+                        .transition(.asymmetric(
+                            insertion: .scale.combined(with: .opacity),
+                            removal: .scale.combined(with: .opacity)
+                        ))
+                    }
                 }
-                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color(red: 0.95, green: 0.9, blue: 1.0))
-                .cornerRadius(12)
             }
 
-            // Date filter indicator
-            if hasDateFilter {
-                HStack(spacing: 4) {
-                    Image(systemName: "calendar")
-                        .font(.caption)
-                    if let start = filterStartDate, let end = filterEndDate {
-                        Text("\(start, format: .dateTime.month(.abbreviated).day()) - \(end, format: .dateTime.month(.abbreviated).day())")
-                            .font(.caption)
-                    } else if let start = filterStartDate {
-                        Text("From \(start, format: .dateTime.month(.abbreviated).day())")
-                            .font(.caption)
-                    } else if let end = filterEndDate {
-                        Text("Until \(end, format: .dateTime.month(.abbreviated).day())")
-                            .font(.caption)
+            // Clear All button (when 2+ filters active)
+            if activeFilterCount >= 2 {
+                Button(action: {
+                    HapticManager.medium()
+                    withAnimation(.spring(response: 0.3)) {
+                        sortOption = .newestFirst
+                        filterStartDate = nil
+                        filterEndDate = nil
                     }
-
-                    Button(action: {
-                        withAnimation {
-                            filterStartDate = nil
-                            filterEndDate = nil
-                        }
-                    }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.caption)
-                    }
+                }) {
+                    Text("Clear All")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(Color(red: 0.8, green: 0.4, blue: 0.4))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(Color(red: 1.0, green: 0.95, blue: 0.95))
+                        )
                 }
-                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color(red: 0.95, green: 0.9, blue: 1.0))
-                .cornerRadius(12)
+                .transition(.scale.combined(with: .opacity))
             }
 
             Spacer()
@@ -442,21 +675,30 @@ struct PhotoGalleryView: View {
             // Grid size indicator
             HStack(spacing: 4) {
                 Image(systemName: "square.grid.\(columnCount)x\(columnCount)")
-                    .font(.caption)
+                    .font(.caption.weight(.medium))
             }
             .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Color(red: 0.95, green: 0.93, blue: 0.98))
-            .cornerRadius(8)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                Capsule()
+                    .fill(Color(red: 0.95, green: 0.93, blue: 0.98))
+            )
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.9))
-                .shadow(color: Color.black.opacity(0.05), radius: 3, x: 0, y: 1)
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.ultraThinMaterial)
+                .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
         )
+        .opacity(filtersBarAppeared ? 1 : 0)
+        .offset(y: filtersBarAppeared ? 0 : -10)
+        .onAppear {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                filtersBarAppeared = true
+            }
+        }
     }
 
     // MARK: - Expandable Header (hidden when collapsed)
@@ -676,6 +918,7 @@ struct PhotoGalleryView: View {
             // Back button if we're in a subfolder
             if currentFolderView != .allPhotos {
                 Button(action: {
+                    HapticManager.light()
                     let previousView = folderNavStack.popLast() ?? .allPhotos
 
                     // If navigating back from Events or Special Events parent folders to All Photos,
@@ -688,7 +931,7 @@ struct PhotoGalleryView: View {
                     }
                 }) {
                     Image(systemName: "chevron.left")
-                        .font(.title3)
+                        .font(.title3.weight(.medium))
                         .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                 }
             }
@@ -696,6 +939,7 @@ struct PhotoGalleryView: View {
             // Current folder title
             if currentFolderView == .allPhotos {
                 Button(action: {
+                    HapticManager.light()
                     withAnimation(.easeInOut(duration: 0.3)) {
                         showingFoldersOverview = true
                     }
@@ -775,51 +1019,58 @@ struct PhotoGalleryView: View {
         .padding(.top, 12)
     }
 
+    // Helper to get thumbnail URLs for a folder type
+    private func thumbnailURLs(for folderType: FolderViewType, limit: Int = 4) -> [String] {
+        return Array(viewModel.photos(for: folderType).prefix(limit).map { $0.imageURL })
+    }
+
     private var foldersOverviewView: some View {
         ScrollView {
             VStack(spacing: 16) {
                 // Header
                 HStack {
                     Button(action: {
+                        HapticManager.light()
                         withAnimation(.easeInOut(duration: 0.3)) {
                             showingFoldersOverview = false
                         }
                     }) {
                         Image(systemName: "chevron.left")
-                            .font(.title3)
+                            .font(.title3.weight(.medium))
                             .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
                     }
 
                     Text("Folders")
-                        .font(.title)
-                        .fontWeight(.bold)
-                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                        .font(.title.weight(.bold))
+                        .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
 
                     Spacer()
                 }
                 .padding(.horizontal)
                 .padding(.top, 8)
 
-                // All Photos
+                // All Photos with thumbnails
                 FolderCard(
                     title: "All Photos",
                     icon: "photo.on.rectangle",
                     count: viewModel.photos.count,
-                    color: Color(red: 0.7, green: 0.5, blue: 0.9)
+                    color: Color(red: 0.7, green: 0.5, blue: 0.9),
+                    thumbnailURLs: thumbnailURLs(for: .allPhotos)
                 ) {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         showingFoldersOverview = false
                     }
                 }
 
-                // Favorites
+                // Favorites with thumbnails
                 let favoritesCount = viewModel.favoritesCount
                 if favoritesCount > 0 {
                     FolderCard(
                         title: "Favorites",
                         icon: "heart.fill",
                         count: favoritesCount,
-                        color: Color(red: 0.9, green: 0.4, blue: 0.5)
+                        color: Color(red: 0.9, green: 0.4, blue: 0.5),
+                        thumbnailURLs: thumbnailURLs(for: .favorites)
                     ) {
                         withAnimation(.easeInOut(duration: 0.3)) {
                             showingFoldersOverview = false
@@ -829,17 +1080,17 @@ struct PhotoGalleryView: View {
                 }
 
                 // Events (excluding special events to match folder content)
-                let eventPhotosCount = viewModel.photos.filter { photo in
+                let eventPhotos = viewModel.photos.filter { photo in
                     guard let eventId = photo.eventId else { return false }
-                    // Only count photos from non-special events
                     return viewModel.events.first(where: { $0.id == eventId })?.isSpecial == false
-                }.count
-                if eventPhotosCount > 0 {
+                }
+                if !eventPhotos.isEmpty {
                     FolderCard(
                         title: "Events",
                         icon: "calendar",
-                        count: eventPhotosCount,
-                        color: Color(red: 0.6, green: 0.4, blue: 0.85)
+                        count: eventPhotos.count,
+                        color: Color(red: 0.6, green: 0.4, blue: 0.85),
+                        thumbnailURLs: Array(eventPhotos.prefix(4).map { $0.imageURL })
                     ) {
                         withAnimation(.easeInOut(duration: 0.3)) {
                             showingFoldersOverview = false
@@ -848,17 +1099,18 @@ struct PhotoGalleryView: View {
                     }
                 }
 
-                // Special Events
-                let specialEventPhotosCount = viewModel.photos.filter { photo in
+                // Special Events with thumbnails
+                let specialEventPhotos = viewModel.photos.filter { photo in
                     guard let eventId = photo.eventId else { return false }
                     return viewModel.events.first(where: { $0.id == eventId })?.isSpecial == true
-                }.count
-                if specialEventPhotosCount > 0 {
+                }
+                if !specialEventPhotos.isEmpty {
                     FolderCard(
                         title: "Special Events",
                         icon: "star.circle",
-                        count: specialEventPhotosCount,
-                        color: Color(red: 0.8, green: 0.6, blue: 0.95)
+                        count: specialEventPhotos.count,
+                        color: Color(red: 0.8, green: 0.6, blue: 0.95),
+                        thumbnailURLs: Array(specialEventPhotos.prefix(4).map { $0.imageURL })
                     ) {
                         withAnimation(.easeInOut(duration: 0.3)) {
                             showingFoldersOverview = false
@@ -867,25 +1119,29 @@ struct PhotoGalleryView: View {
                     }
                 }
 
-                // Custom Folders
+                // Custom Folders with thumbnails
                 let customFolders = viewModel.folders.filter { $0.type == .custom }
                 if !customFolders.isEmpty {
                     Divider()
                         .padding(.horizontal)
+                        .padding(.vertical, 4)
 
                     Text("Custom Folders")
-                        .font(.headline)
-                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+                        .textCase(.uppercase)
+                        .tracking(0.5)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal)
+                        .padding(.horizontal, 20)
 
                     ForEach(customFolders, id: \.id) { folder in
-                        let folderPhotosCount = viewModel.photos.filter { $0.folderId == folder.id }.count
+                        let folderPhotos = viewModel.photos.filter { $0.folderId == folder.id }
                         FolderCard(
                             title: folder.name,
                             icon: "folder.fill",
-                            count: folderPhotosCount,
-                            color: Color(red: 0.65, green: 0.45, blue: 0.8)
+                            count: folderPhotos.count,
+                            color: Color(red: 0.65, green: 0.45, blue: 0.8),
+                            thumbnailURLs: Array(folderPhotos.prefix(4).map { $0.imageURL })
                         ) {
                             withAnimation(.easeInOut(duration: 0.3)) {
                                 showingFoldersOverview = false
@@ -896,6 +1152,7 @@ struct PhotoGalleryView: View {
                         }
                         .contextMenu {
                             Button(role: .destructive, action: {
+                                HapticManager.medium()
                                 Task {
                                     try? await viewModel.deleteFolder(folder)
                                 }
@@ -916,6 +1173,7 @@ struct PhotoGalleryView: View {
                 .onEnded { value in
                     // Swipe right to go back to all photos
                     if value.translation.width > 80 && abs(value.translation.height) < 100 {
+                        HapticManager.light()
                         withAnimation(.easeInOut(duration: 0.3)) {
                             showingFoldersOverview = false
                         }
@@ -936,12 +1194,19 @@ struct PhotoGalleryView: View {
 
                     ForEach(dateGroups, id: \.key) { dateGroup in
                         VStack(alignment: .leading, spacing: 8) {
-                            // Subtle date header
-                            Text(dateGroup.key)
-                                .font(.caption)
-                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.7))
-                                .padding(.horizontal, 16)
-                                .padding(.top, dateGroup.key == dateGroups.first?.key ? 8 : 16)
+                            // Subtle day header
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.4))
+                                    .frame(width: 4, height: 4)
+                                Text(dateGroup.key)
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.8))
+                                    .textCase(.uppercase)
+                                    .tracking(0.5)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.top, dateGroup.key == dateGroups.first?.key ? 4 : 14)
 
                             LazyVGrid(columns: columns, spacing: 8) {
                                 ForEach(Array(dateGroup.photos.enumerated()), id: \.element.id) { _, photo in
@@ -988,20 +1253,50 @@ struct PhotoGalleryView: View {
     }
 
     private func monthHeaderView(monthGroup: (key: String, photos: [Photo])) -> some View {
-        HStack {
+        HStack(spacing: 12) {
+            // Month name with pill background
             Text(monthGroup.key)
-                .font(.title3)
-                .fontWeight(.bold)
-                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                .font(.subheadline.weight(.bold))
+                .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule()
+                        .fill(Color.white)
+                        .shadow(color: Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.12), radius: 4, x: 0, y: 2)
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.15), lineWidth: 1)
+                )
 
-            Spacer()
+            // Decorative line
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.3),
+                            Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.05)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(height: 1.5)
 
-            Text("\(monthGroup.photos.count) photo\(monthGroup.photos.count == 1 ? "" : "s")")
-                .font(.caption)
+            // Photo count badge
+            Text("\(monthGroup.photos.count)")
+                .font(.caption.weight(.semibold))
                 .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                )
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.vertical, 12)
     }
 
     var body: some View {
@@ -1014,29 +1309,98 @@ struct PhotoGalleryView: View {
 
                     if showingFoldersOverview {
                         foldersOverviewView
-                    } else if viewModel.photos.isEmpty && currentFolderView == .allPhotos {
-                        VStack(spacing: 20) {
-                            Image(systemName: "heart.text.square.fill")
-                                .font(.system(size: 80))
-                                .foregroundColor(Color(red: 0.7, green: 0.6, blue: 0.9))
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .trailing).combined(with: .opacity),
+                                removal: .move(edge: .trailing).combined(with: .opacity)
+                            ))
+                    } else if isInitialLoad && viewModel.photos.isEmpty {
+                        // Skeleton loading state
+                        VStack(spacing: 16) {
+                            // Skeleton header
+                            HStack {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.gray.opacity(0.15))
+                                    .frame(width: 120, height: 24)
+                                    .shimmer()
+                                Spacer()
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
 
-                            Text("No photos yet")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
-
-                            Text("Add your first memory together 📸")
-                                .font(.subheadline)
-                                .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.6))
+                            SkeletonPhotoGrid(columnCount: columnCount)
                         }
+                        .transition(.opacity)
+                    } else if viewModel.photos.isEmpty && currentFolderView == .allPhotos {
+                        // Enhanced empty state
+                        VStack(spacing: 24) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color(red: 0.95, green: 0.92, blue: 1.0))
+                                    .frame(width: 140, height: 140)
+
+                                Image(systemName: "photo.on.rectangle.angled")
+                                    .font(.system(size: 56, weight: .light))
+                                    .foregroundStyle(
+                                        LinearGradient(
+                                            colors: [
+                                                Color(red: 0.7, green: 0.5, blue: 0.95),
+                                                Color(red: 0.55, green: 0.35, blue: 0.85)
+                                            ],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                            }
+
+                            VStack(spacing: 8) {
+                                Text("No photos yet")
+                                    .font(.title2.weight(.bold))
+                                    .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
+
+                                Text("Start capturing your memories together")
+                                    .font(.subheadline)
+                                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                    .multilineTextAlignment(.center)
+                            }
+
+                            // Quick add button in empty state
+                            PhotosPicker(selection: $selectedItems, matching: .images) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "plus.circle.fill")
+                                        .font(.body.weight(.semibold))
+                                    Text("Add Photos")
+                                        .font(.body.weight(.semibold))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 28)
+                                .padding(.vertical, 14)
+                                .background(
+                                    LinearGradient(
+                                        colors: [
+                                            Color(red: 0.7, green: 0.45, blue: 0.95),
+                                            Color(red: 0.55, green: 0.35, blue: 0.85)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .clipShape(Capsule())
+                                .shadow(color: Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.4), radius: 8, x: 0, y: 4)
+                            }
+                        }
+                        .padding(.horizontal, 32)
+                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
                     } else {
                         contentView
+                            .id(folderTransitionId)
+                            .transition(.opacity)
                     }
                 }
                 .toolbar {
                     if selectionMode {
                         ToolbarItem(placement: .navigationBarLeading) {
                             Button("Cancel") {
+                                HapticManager.light()
                                 selectionMode = false
                                 selectedPhotoIndices.removeAll()
                             }
@@ -1052,28 +1416,50 @@ struct PhotoGalleryView: View {
                         ToolbarItem(placement: .navigationBarTrailing) {
                             HStack(spacing: 12) {
                                 // Favorite button
-                                Button(action: toggleFavoritesForSelected) {
+                                Button(action: {
+                                    HapticManager.light()
+                                    toggleFavoritesForSelected()
+                                }) {
                                     Image(systemName: "heart.fill")
                                         .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
                                 }
                                 .disabled(selectedPhotoIndices.isEmpty)
 
                                 // Move to folder button
-                                Button(action: { showingMoveToFolder = true }) {
+                                Button(action: {
+                                    HapticManager.light()
+                                    showingMoveToFolder = true
+                                }) {
                                     Image(systemName: "folder.badge.plus")
                                         .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
                                 }
                                 .disabled(selectedPhotoIndices.isEmpty)
 
+                                // Add to event button
+                                Button(action: {
+                                    HapticManager.light()
+                                    showingAddToEvent = true
+                                }) {
+                                    Image(systemName: "calendar.badge.plus")
+                                        .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
+                                }
+                                .disabled(selectedPhotoIndices.isEmpty)
+
                                 // Save button
-                                Button(action: saveSelectedPhotos) {
+                                Button(action: {
+                                    HapticManager.light()
+                                    saveSelectedPhotos()
+                                }) {
                                     Image(systemName: "square.and.arrow.down")
                                         .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
                                 }
                                 .disabled(selectedPhotoIndices.isEmpty)
 
                                 // Delete button
-                                Button(action: deleteSelectedPhotos) {
+                                Button(action: {
+                                    HapticManager.medium()
+                                    deleteSelectedPhotos()
+                                }) {
                                     Image(systemName: "trash")
                                         .foregroundColor(.red)
                                 }
@@ -1083,101 +1469,139 @@ struct PhotoGalleryView: View {
                     }
                 }
                 .onChange(of: selectedItems) { oldItems, newItems in
-                Task {
                     guard !newItems.isEmpty else { return }
 
-                    // Use global upload manager for persistent progress tracking
-                    let batchId = UploadProgressManager.shared.createBatch(
-                        count: newItems.count,
-                        type: .photo,
-                        eventId: nil // Gallery upload, no event
-                    )
+                    print("📸 [GALLERY UPLOAD] Selected \(newItems.count) photos for upload")
 
-                    // Also update local state for UI feedback
+                    // Immediately update UI on main thread
                     isUploading = true
                     totalUploadCount = newItems.count
                     uploadedCount = 0
                     uploadProgress = 0.0
 
-                    var uploadErrors: [String] = []
+                    // Start upload task - NOT on MainActor to avoid blocking UI
+                    Task {
+                        print("📸 [GALLERY UPLOAD] Starting upload task...")
 
-                    for (index, item) in newItems.enumerated() {
-                        do {
-                            // Update progress in global manager
+                        // Use background-protected batch for reliable uploads even when app is backgrounded
+                        let (batchId, backgroundTaskId) = UploadProgressManager.shared.createBackgroundProtectedBatch(
+                            count: newItems.count,
+                            type: .photo,
+                            eventId: nil // Gallery upload, no event
+                        )
+                        print("📸 [GALLERY UPLOAD] Created batch \(batchId) with background task protection")
+
+                        var uploadErrors: [String] = []
+                        var successCount = 0
+
+                        // Process and upload one image at a time to avoid memory issues
+                        for (index, item) in newItems.enumerated() {
+                            // Check for task cancellation (app backgrounded)
+                            if Task.isCancelled {
+                                print("⚠️ [UPLOAD] Task cancelled at index \(index)")
+                                break
+                            }
+
                             UploadProgressManager.shared.updateTaskProgress(
                                 batchId: batchId,
                                 taskIndex: index,
-                                progress: 0.1 // Started loading
+                                progress: 0.1
                             )
 
-                            if let data = try await item.loadTransferable(type: Data.self),
-                               let uiImage = UIImage(data: data) {
-                                // Extract original capture date from image metadata
+                            do {
+                                print("📸 [GALLERY UPLOAD] Processing image \(index + 1)/\(newItems.count)...")
+
+                                // Load image data
+                                guard let data = try await item.loadTransferable(type: Data.self),
+                                      let uiImage = UIImage(data: data) else {
+                                    print("🔴 [GALLERY UPLOAD] Failed to load image \(index + 1)")
+                                    UploadProgressManager.shared.failTask(
+                                        batchId: batchId,
+                                        taskIndex: index,
+                                        error: "Failed to load image"
+                                    )
+                                    uploadErrors.append("Failed to load image \(index + 1)")
+                                    continue
+                                }
+
                                 let capturedAt = extractCaptureDate(from: data)
 
-                                // Update progress - data loaded
                                 UploadProgressManager.shared.updateTaskProgress(
                                     batchId: batchId,
                                     taskIndex: index,
                                     progress: 0.3
                                 )
 
-                                // Resize and compress the image before upload
+                                // Resize and compress
                                 let resized = uiImage.resized(toMaxDimension: 1920)
-                                if let compressedData = resized.compressed(toMaxBytes: 1_000_000) {
-                                    // Update progress - compressed
-                                    UploadProgressManager.shared.updateTaskProgress(
-                                        batchId: batchId,
-                                        taskIndex: index,
-                                        progress: 0.5
-                                    )
-
-                                    try await viewModel.uploadPhoto(imageData: compressedData, capturedAt: capturedAt)
-
-                                    // Mark as complete in global manager
-                                    UploadProgressManager.shared.completeTask(batchId: batchId, taskIndex: index)
-
-                                    await MainActor.run {
-                                        uploadedCount = index + 1
-                                        uploadProgress = Double(uploadedCount) / Double(totalUploadCount)
-                                    }
-                                } else {
+                                guard let compressedData = resized.compressed(toMaxBytes: 1_000_000) else {
+                                    print("🔴 [GALLERY UPLOAD] Failed to compress image \(index + 1)")
                                     UploadProgressManager.shared.failTask(
                                         batchId: batchId,
                                         taskIndex: index,
                                         error: "Compression failed"
                                     )
                                     uploadErrors.append("Failed to compress image \(index + 1)")
+                                    continue
                                 }
+
+                                print("📸 [GALLERY UPLOAD] Compressed image \(index + 1): \(compressedData.count) bytes")
+
+                                UploadProgressManager.shared.updateTaskProgress(
+                                    batchId: batchId,
+                                    taskIndex: index,
+                                    progress: 0.5
+                                )
+
+                                // Upload immediately
+                                print("📸 [GALLERY UPLOAD] Uploading image \(index + 1)...")
+                                try await viewModel.uploadPhoto(imageData: compressedData, capturedAt: capturedAt)
+
+                                UploadProgressManager.shared.completeTask(batchId: batchId, taskIndex: index)
+                                successCount += 1
+                                print("🟢 [GALLERY UPLOAD] Uploaded image \(index + 1) successfully")
+
+                                // Update UI on main thread
+                                await MainActor.run {
+                                    uploadedCount = successCount
+                                    uploadProgress = Double(successCount) / Double(newItems.count)
+                                }
+
+                            } catch let uploadError {
+                                print("🔴 [GALLERY UPLOAD] Failed image \(index + 1): \(uploadError)")
+                                UploadProgressManager.shared.failTask(
+                                    batchId: batchId,
+                                    taskIndex: index,
+                                    error: uploadError.localizedDescription
+                                )
+                                uploadErrors.append("Image \(index + 1) failed")
                             }
-                        } catch {
-                            UploadProgressManager.shared.failTask(
-                                batchId: batchId,
-                                taskIndex: index,
-                                error: error.localizedDescription
-                            )
-                            uploadErrors.append("Failed to upload photo \(index + 1): \(error.localizedDescription)")
+                        }
+
+                        // End background task protection
+                        UploadProgressManager.shared.completeBackgroundProtectedBatch(backgroundTaskId)
+                        print("📸 [GALLERY UPLOAD] Completed. Success: \(successCount), Errors: \(uploadErrors.count)")
+
+                        // Update UI on main thread
+                        await MainActor.run {
+                            if !uploadErrors.isEmpty {
+                                errorMessage = "Uploaded \(successCount) of \(newItems.count) photos.\n\(uploadErrors.count) failed."
+                                showError = true
+                            }
+
+                            // Send push notification for uploaded photos
+                            if successCount > 0 {
+                                NotificationManager.shared.notifyPhotosAdded(count: successCount, location: "gallery", eventId: nil)
+                            }
+
+                            isUploading = false
+                            uploadProgress = 0.0
+                            uploadedCount = 0
+                            totalUploadCount = 0
+                            selectedItems = []
                         }
                     }
-
-                    if !uploadErrors.isEmpty {
-                        errorMessage = uploadErrors.joined(separator: "\n")
-                        showError = true
-                    }
-
-                    // Send push notification for uploaded photos (gallery photos, not event photos)
-                    let successfulUploads = newItems.count - uploadErrors.count
-                    if successfulUploads > 0 {
-                        NotificationManager.shared.notifyPhotosAdded(count: successfulUploads, location: "gallery", eventId: nil)
-                    }
-
-                    isUploading = false
-                    uploadProgress = 0.0
-                    uploadedCount = 0
-                    totalUploadCount = 0
-                    selectedItems = []
                 }
-            }
             .alert("Error", isPresented: $showError) {
                 Button("OK", role: .cancel) { }
             } message: {
@@ -1280,21 +1704,51 @@ struct PhotoGalleryView: View {
             )
             .presentationDetents([.medium])
         }
+        .sheet(isPresented: $showingAddToEvent) {
+            AddToEventSheet(
+                events: viewModel.allEvents,
+                onSelectEvent: { eventId in
+                    assignSelectedPhotosToEvent(eventId)
+                    showingAddToEvent = false
+                },
+                onRemoveFromEvent: {
+                    assignSelectedPhotosToEvent(nil)
+                    showingAddToEvent = false
+                }
+            )
+            .presentationDetents([.medium, .large])
+        }
         .onAppear {
             updatePhotosCache()
             // Initialize prefetch manager with all photo URLs for smart prefetching
             let photoURLs = photosInDisplayOrder.map { $0.imageURL }
             PhotoPrefetchManager.shared.setPhotoURLs(photoURLs)
+
+            // Dismiss initial load state after a short delay if photos exist
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if !viewModel.photos.isEmpty {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        isInitialLoad = false
+                    }
+                }
+            }
         }
         .onDisappear {
             // Reset prefetch manager when leaving gallery
             PhotoPrefetchManager.shared.reset()
         }
-        .onChange(of: viewModel.photos.count) { _, _ in
+        .onChange(of: viewModel.photos.count) { oldCount, newCount in
             updatePhotosCache()
             // Update prefetch manager when photos change
             let photoURLs = photosInDisplayOrder.map { $0.imageURL }
             PhotoPrefetchManager.shared.setPhotoURLs(photoURLs)
+
+            // Dismiss initial load state when photos arrive
+            if newCount > 0 && isInitialLoad {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    isInitialLoad = false
+                }
+            }
         }
         .onChange(of: sortOption) { _, _ in
             updatePhotosCache()
@@ -1307,6 +1761,26 @@ struct PhotoGalleryView: View {
         }
         .onChange(of: currentFolderView) { _, _ in
             updatePhotosCache()
+            // Animate folder transition
+            withAnimation(.easeInOut(duration: 0.25)) {
+                folderTransitionId = UUID()
+            }
+        }
+        .onChange(of: selectionMode) { _, newValue in
+            // Haptic feedback when entering/exiting selection mode
+            if newValue {
+                HapticManager.medium()
+            } else {
+                HapticManager.light()
+            }
+        }
+        .onChange(of: resetTrigger) { _, _ in
+            // Return to All Photos when same tab is tapped
+            if currentFolderView != .allPhotos {
+                withAnimation {
+                    currentFolderView = .allPhotos
+                }
+            }
         }
     }
 
@@ -1367,6 +1841,7 @@ struct PhotoGalleryView: View {
                 if savedCount > 0 && !errorOccurred {
                     savedPhotoCount = savedCount
                     showingSaveSuccess = true
+                    HapticManager.success()
                 }
                 selectionMode = false
                 selectedPhotoIndices.removeAll()
@@ -1413,6 +1888,7 @@ struct PhotoGalleryView: View {
             }
 
             await MainActor.run {
+                HapticManager.success()
                 selectionMode = false
                 selectedPhotoIndices.removeAll()
             }
@@ -1433,6 +1909,57 @@ struct PhotoGalleryView: View {
             }
 
             await MainActor.run {
+                HapticManager.success()
+                selectionMode = false
+                selectedPhotoIndices.removeAll()
+            }
+        }
+    }
+
+    private func assignSelectedPhotosToEvent(_ eventId: String?) {
+        guard !selectedPhotoIndices.isEmpty else { return }
+
+        Task {
+            // Get both photo IDs and URLs for the selected photos
+            let selectedPhotos = selectedPhotoIndices.sorted().compactMap { index -> Photo? in
+                guard index < photosInDisplayOrder.count else { return nil }
+                return photosInDisplayOrder[index]
+            }
+
+            let photoIds = selectedPhotos.compactMap { $0.id }
+            let photoURLs = selectedPhotos.map { $0.imageURL }
+
+            // Update the photos' eventId
+            try? await viewModel.assignPhotosToEvent(photoIds, eventId: eventId) { current, total in
+                // Could show progress here if needed
+            }
+
+            // Also update the event's photoURLs array
+            if let eventId = eventId {
+                // Adding photos to an event - append to event's photoURLs
+                if let event = viewModel.events.first(where: { $0.id == eventId }) {
+                    var updatedEvent = event
+                    // Add new URLs that aren't already in the event
+                    let newURLs = photoURLs.filter { !updatedEvent.photoURLs.contains($0) }
+                    updatedEvent.photoURLs.append(contentsOf: newURLs)
+                    try? await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
+                    print("📸 [ASSIGN TO EVENT] Added \(newURLs.count) photos to event '\(event.title)'")
+                }
+            } else {
+                // Removing photos from events - remove from each photo's previous event
+                for photo in selectedPhotos {
+                    if let previousEventId = photo.eventId,
+                       let previousEvent = viewModel.events.first(where: { $0.id == previousEventId }) {
+                        var updatedEvent = previousEvent
+                        updatedEvent.photoURLs.removeAll { $0 == photo.imageURL }
+                        try? await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
+                        print("📸 [REMOVE FROM EVENT] Removed photo from event '\(previousEvent.title)'")
+                    }
+                }
+            }
+
+            await MainActor.run {
+                HapticManager.success()
                 selectionMode = false
                 selectedPhotoIndices.removeAll()
             }
@@ -1579,6 +2106,11 @@ struct PhotoGridCell: View {
     let onTap: () -> Void
     let onLongPress: () -> Void
 
+    // Animation states
+    @State private var isPressed = false
+    @State private var hasAppeared = false
+    @State private var checkmarkScale: CGFloat = 0.5
+
     // Calculate size based on column count
     private var cellSize: CGFloat {
         let spacing: CGFloat = 8 * CGFloat(columnCount - 1) // spacing between cells
@@ -1590,57 +2122,143 @@ struct PhotoGridCell: View {
         columnCount == 2 ? 16 : (columnCount == 3 ? 12 : 8)
     }
 
+    // Staggered animation delay based on index
+    private var appearDelay: Double {
+        Double(index % 12) * 0.03
+    }
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
             CachedAsyncImage(url: URL(string: photo.imageURL), thumbnailSize: cellSize) { image in
                 image
                     .resizable()
                     .aspectRatio(contentMode: .fill)
+                    .overlay(
+                        // Inner shadow/vignette for depth
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .stroke(
+                                LinearGradient(
+                                    colors: [
+                                        Color.black.opacity(0.15),
+                                        Color.clear,
+                                        Color.clear,
+                                        Color.black.opacity(0.08)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 1.5
+                            )
+                            .blendMode(.multiply)
+                    )
             } placeholder: {
-                Rectangle()
-                    .fill(Color.gray.opacity(0.3))
-                    .overlay {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                    }
+                // Shimmer loading placeholder
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.92, green: 0.90, blue: 0.96),
+                                Color(red: 0.88, green: 0.86, blue: 0.94)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .shimmer()
             }
             .frame(width: cellSize, height: cellSize)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-            .shadow(color: Color.black.opacity(0.1), radius: columnCount == 2 ? 4 : 2, x: 0, y: 1)
+            .shadow(color: Color.black.opacity(0.12), radius: columnCount == 2 ? 6 : 3, x: 0, y: 2)
+            // Selection overlay wash
             .overlay(
-                selectionMode ?
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .stroke(isSelected ? Color(red: 0.8, green: 0.7, blue: 1.0) : Color.clear, lineWidth: 3)
-                : nil
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(selectionMode && isSelected ? 0.15 : 0))
+                    .animation(.easeInOut(duration: 0.2), value: isSelected)
+            )
+            // Selection border
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(
+                        selectionMode && isSelected ? Color(red: 0.7, green: 0.5, blue: 0.95) : Color.clear,
+                        lineWidth: 3
+                    )
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
             )
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
-            .onTapGesture(perform: onTap)
-            .onLongPressGesture(minimumDuration: 0.5, perform: onLongPress)
+            // Press animation
+            .scaleEffect(isPressed ? 0.95 : 1.0)
+            .brightness(isPressed ? -0.05 : 0)
+            .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isPressed)
+            // Staggered fade-in animation
+            .opacity(hasAppeared ? 1 : 0)
+            .scaleEffect(hasAppeared ? 1 : 0.9)
+            .onTapGesture {
+                HapticManager.light()
+                onTap()
+            }
+            .onLongPressGesture(minimumDuration: 0.5, pressing: { pressing in
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isPressed = pressing
+                }
+            }, perform: {
+                HapticManager.medium()
+                onLongPress()
+            })
 
-            // Favorite indicator (bottom right)
+            // Favorite indicator (bottom right) with animation
             if photo.isFavorite == true && !selectionMode {
                 Image(systemName: "heart.fill")
                     .font(columnCount == 2 ? .body : .caption)
                     .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
-                    .shadow(radius: 2)
+                    .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
                     .padding(columnCount == 2 ? 10 : 6)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .transition(.scale.combined(with: .opacity))
             }
 
-            // Checkmark overlay
+            // Animated checkmark overlay
             if selectionMode {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(columnCount == 2 ? .title : .title2)
-                    .foregroundColor(isSelected ? Color(red: 0.8, green: 0.7, blue: 1.0) : .white)
-                    .shadow(radius: 3)
-                    .padding(columnCount == 2 ? 10 : 8)
-                    .allowsHitTesting(false)
+                ZStack {
+                    // Background circle for unchecked state
+                    Circle()
+                        .fill(Color.black.opacity(0.3))
+                        .frame(width: columnCount == 2 ? 28 : 24, height: columnCount == 2 ? 28 : 24)
+                        .opacity(isSelected ? 0 : 1)
+
+                    // Checkmark with spring animation
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(columnCount == 2 ? .title : .title2)
+                        .foregroundStyle(
+                            isSelected ?
+                                AnyShapeStyle(
+                                    LinearGradient(
+                                        colors: [
+                                            Color(red: 0.8, green: 0.6, blue: 1.0),
+                                            Color(red: 0.6, green: 0.4, blue: 0.85)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                ) :
+                                AnyShapeStyle(Color.white.opacity(0.9))
+                        )
+                        .shadow(color: Color.black.opacity(0.3), radius: 3, x: 0, y: 1)
+                        .scaleEffect(isSelected ? 1.0 : 0.9)
+                        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isSelected)
+                }
+                .padding(columnCount == 2 ? 10 : 8)
+                .allowsHitTesting(false)
             }
         }
         .drawingGroup() // Optimize rendering performance
         .onAppear {
             // Notify prefetch manager that this photo is visible for smart prefetching
             PhotoPrefetchManager.shared.photoDidAppear(at: index)
+
+            // Staggered fade-in animation
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8).delay(appearDelay)) {
+                hasAppeared = true
+            }
         }
     }
 }
@@ -1651,24 +2269,40 @@ struct FolderCard: View {
     let count: Int
     let color: Color
     let action: () -> Void
+    var thumbnailURLs: [String] = [] // Optional thumbnail URLs for preview grid
+
+    @State private var isPressed = false
 
     var body: some View {
-        Button(action: action) {
+        Button(action: {
+            HapticManager.light()
+            action()
+        }) {
             HStack(spacing: 16) {
+                // Thumbnail preview grid or icon
                 ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(color.opacity(0.15))
-                        .frame(width: 60, height: 60)
+                    if thumbnailURLs.isEmpty {
+                        // Fallback to icon
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(color.opacity(0.15))
+                            .frame(width: 70, height: 70)
 
-                    Image(systemName: icon)
-                        .font(.system(size: 28))
-                        .foregroundColor(color)
+                        Image(systemName: icon)
+                            .font(.system(size: 28))
+                            .foregroundColor(color)
+                    } else {
+                        // 2x2 thumbnail grid
+                        FolderThumbnailGrid(
+                            thumbnailURLs: thumbnailURLs,
+                            color: color
+                        )
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
-                        .font(.headline)
-                        .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                        .font(.headline.weight(.semibold))
+                        .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
                     Text("\(count) photo\(count == 1 ? "" : "s")")
                         .font(.subheadline)
                         .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
@@ -1677,18 +2311,82 @@ struct FolderCard: View {
                 Spacer()
 
                 Image(systemName: "chevron.right")
-                    .font(.caption)
+                    .font(.body.weight(.medium))
                     .foregroundColor(Color(red: 0.6, green: 0.5, blue: 0.8))
             }
             .padding()
             .background(
-                RoundedRectangle(cornerRadius: 16)
+                RoundedRectangle(cornerRadius: 18)
                     .fill(Color.white)
-                    .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
+                    .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 4)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(color.opacity(0.1), lineWidth: 1)
             )
             .padding(.horizontal)
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(FolderCardButtonStyle())
+    }
+}
+
+// MARK: - Folder Thumbnail Grid (2x2 preview)
+struct FolderThumbnailGrid: View {
+    let thumbnailURLs: [String]
+    let color: Color
+
+    var body: some View {
+        ZStack {
+            // Background
+            RoundedRectangle(cornerRadius: 14)
+                .fill(color.opacity(0.08))
+                .frame(width: 70, height: 70)
+
+            // 2x2 grid of thumbnails
+            VStack(spacing: 2) {
+                HStack(spacing: 2) {
+                    thumbnailCell(index: 0)
+                    thumbnailCell(index: 1)
+                }
+                HStack(spacing: 2) {
+                    thumbnailCell(index: 2)
+                    thumbnailCell(index: 3)
+                }
+            }
+            .frame(width: 64, height: 64)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    @ViewBuilder
+    private func thumbnailCell(index: Int) -> some View {
+        if index < thumbnailURLs.count {
+            CachedAsyncImage(url: URL(string: thumbnailURLs[index]), thumbnailSize: 32) { image in
+                image
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } placeholder: {
+                Rectangle()
+                    .fill(color.opacity(0.15))
+                    .shimmer()
+            }
+            .frame(width: 30, height: 30)
+            .clipped()
+        } else {
+            Rectangle()
+                .fill(color.opacity(0.1))
+                .frame(width: 30, height: 30)
+        }
+    }
+}
+
+// MARK: - Folder Card Button Style
+struct FolderCardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .opacity(configuration.isPressed ? 0.9 : 1.0)
+            .animation(.spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
@@ -1816,6 +2514,16 @@ class PhotoGalleryViewModel: ObservableObject {
     // MARK: - Move to Folder
     func movePhotosToFolder(_ photoIds: [String], folderId: String?, progressHandler: ((Int, Int) -> Void)? = nil) async throws {
         try await firebaseManager.batchUpdatePhotoFolders(photoIds, folderId: folderId, progressHandler: progressHandler)
+    }
+
+    // MARK: - Add to Event
+    func assignPhotosToEvent(_ photoIds: [String], eventId: String?, progressHandler: ((Int, Int) -> Void)? = nil) async throws {
+        try await firebaseManager.batchUpdatePhotoEvents(photoIds, eventId: eventId, progressHandler: progressHandler)
+    }
+
+    // Get all events (not just those with photos) sorted by date descending
+    var allEvents: [CalendarEvent] {
+        events.sorted { $0.date > $1.date }
     }
 
     // MARK: - Batch Delete
@@ -2102,6 +2810,172 @@ struct MoveToFolderSheet: View {
     }
 }
 
+// MARK: - Add to Event Sheet
+struct AddToEventSheet: View {
+    let events: [CalendarEvent]
+    let onSelectEvent: (String) -> Void
+    let onRemoveFromEvent: () -> Void
+    @Environment(\.dismiss) var dismiss
+    @State private var searchText = ""
+
+    private var filteredEvents: [CalendarEvent] {
+        if searchText.isEmpty {
+            return events
+        }
+        return events.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    private let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 16) {
+                    // Search bar
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        TextField("Search events...", text: $searchText)
+                            .textFieldStyle(.plain)
+                    }
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white)
+                            .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
+                    )
+
+                    // Remove from event option
+                    Button(action: onRemoveFromEvent) {
+                        HStack(spacing: 16) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.gray.opacity(0.15))
+                                    .frame(width: 50, height: 50)
+                                Image(systemName: "calendar.badge.minus")
+                                    .font(.title2)
+                                    .foregroundColor(.gray)
+                            }
+
+                            Text("Remove from Event")
+                                .fontWeight(.medium)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                            Spacer()
+                        }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color.white)
+                                .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 2)
+                        )
+                    }
+
+                    if !filteredEvents.isEmpty {
+                        Divider()
+                            .padding(.vertical, 8)
+
+                        Text("Add to Event")
+                            .font(.headline)
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(filteredEvents, id: \.id) { event in
+                            Button(action: {
+                                if let eventId = event.id {
+                                    onSelectEvent(eventId)
+                                }
+                            }) {
+                                HStack(spacing: 16) {
+                                    ZStack {
+                                        Circle()
+                                            .fill(event.isSpecial ?
+                                                Color(red: 0.9, green: 0.4, blue: 0.6).opacity(0.15) :
+                                                Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.15))
+                                            .frame(width: 50, height: 50)
+                                        Image(systemName: event.isSpecial ? "star.fill" : "calendar")
+                                            .font(.title2)
+                                            .foregroundColor(event.isSpecial ?
+                                                Color(red: 0.9, green: 0.4, blue: 0.6) :
+                                                Color(red: 0.6, green: 0.4, blue: 0.85))
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(event.title)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+                                            .lineLimit(1)
+
+                                        Text(dateFormatter.string(from: event.date))
+                                            .font(.caption)
+                                            .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                }
+                                .padding()
+                                .background(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .fill(Color.white)
+                                        .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 2)
+                                )
+                            }
+                        }
+                    } else if events.isEmpty {
+                        VStack(spacing: 16) {
+                            Image(systemName: "calendar.badge.exclamationmark")
+                                .font(.system(size: 50))
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.5))
+
+                            Text("No Events")
+                                .font(.headline)
+                                .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
+
+                            Text("Create events in the Calendar tab to add photos to them")
+                                .font(.subheadline)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(.vertical, 40)
+                    } else if filteredEvents.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 40))
+                                .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(0.5))
+
+                            Text("No matching events")
+                                .font(.subheadline)
+                                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                        }
+                        .padding(.vertical, 30)
+                    }
+                }
+                .padding()
+            }
+            .background(Color(red: 0.96, green: 0.94, blue: 0.98).ignoresSafeArea())
+            .navigationTitle("Add to Event")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.85))
+                }
+            }
+        }
+    }
+}
+
 #Preview {
-    PhotoGalleryView()
+    PhotoGalleryView(resetTrigger: .constant(0))
 }

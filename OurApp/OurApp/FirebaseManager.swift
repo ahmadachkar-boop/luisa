@@ -531,6 +531,39 @@ class FirebaseManager: ObservableObject {
         try await batch.commit()
     }
 
+    // MARK: - Photo Event Association
+    func updatePhotoEvent(_ photoId: String, eventId: String?) async throws {
+        if let eventId = eventId {
+            try await db.collection("photos").document(photoId).updateData([
+                "eventId": eventId
+            ])
+        } else {
+            try await db.collection("photos").document(photoId).updateData([
+                "eventId": FieldValue.delete()
+            ])
+        }
+    }
+
+    func batchUpdatePhotoEvents(_ photoIds: [String], eventId: String?, progressHandler: ((Int, Int) -> Void)? = nil) async throws {
+        let batch = db.batch()
+        let total = photoIds.count
+
+        for (index, photoId) in photoIds.enumerated() {
+            let docRef = db.collection("photos").document(photoId)
+            if let eventId = eventId {
+                batch.updateData(["eventId": eventId], forDocument: docRef)
+            } else {
+                batch.updateData(["eventId": FieldValue.delete()], forDocument: docRef)
+            }
+
+            await MainActor.run {
+                progressHandler?(index + 1, total)
+            }
+        }
+
+        try await batch.commit()
+    }
+
     func batchToggleFavorites(_ photoIds: [String], isFavorite: Bool, progressHandler: ((Int, Int) -> Void)? = nil) async throws {
         let batch = db.batch()
         let total = photoIds.count

@@ -10,6 +10,15 @@
 	<array>
 		<string>audio</string>
 		<string>remote-notification</string>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.ourapp.pending-uploads</string>
+		<string>com.ourapp.google-calendar-sync</string>
+		<string>com.ourapp.data-refresh</string>
+		<string>com.ourapp.cache-cleanup</string>
 	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>We use your location to show weather forecasts for your upcoming events</string>

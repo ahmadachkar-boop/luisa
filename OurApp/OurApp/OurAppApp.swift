@@ -4,8 +4,9 @@ import FirebaseMessaging
 import FirebaseAuth
 import GoogleSignIn
 import UserNotifications
+import BackgroundTasks
 
-// MARK: - App Delegate for Push Notifications
+// MARK: - App Delegate for Push Notifications and Background Tasks
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         // Configure Firebase FIRST before anything else
@@ -26,6 +27,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         } else {
             print("🔴 [APP INIT ERROR] Firebase app is nil after configuration!")
         }
+
+        // Register background tasks BEFORE returning from this method
+        // This is required by iOS - tasks must be registered at launch
+        print("🔵 [APP INIT] Registering background tasks...")
+        BackgroundTaskManager.shared.registerBackgroundTasks()
 
         // Setup notifications after Firebase is configured
         NotificationManager.shared.setup()
@@ -71,7 +77,8 @@ struct OurAppApp: App {
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             Task { @MainActor in
-                let manager = GoogleCalendarManager.shared
+                let calendarManager = GoogleCalendarManager.shared
+                let backgroundManager = BackgroundTaskManager.shared
 
                 switch newPhase {
                 case .active:
@@ -80,15 +87,30 @@ struct OurAppApp: App {
                     WidgetDataManager.shared.syncFromFirebase()
 
                     // Restart periodic sync if needed
-                    if manager.isSignedIn && manager.autoSyncEnabled {
+                    if calendarManager.isSignedIn && calendarManager.autoSyncEnabled {
                         print("🔄 [GOOGLE SYNC] Restarting periodic sync on app activation")
-                        await manager.handleAppBecameActive()
+                        await calendarManager.handleAppBecameActive()
+                    }
+
+                    // Process any pending offline operations
+                    if OfflineManager.shared.isOnline && OfflineManager.shared.pendingOperationsCount > 0 {
+                        print("🔄 [OFFLINE] Processing pending operations on app activation")
+                        OfflineManager.shared.processPendingOperationsInBackground()
                     }
 
                 case .background:
                     print("🔴 [APP LIFECYCLE] App entering background")
                     // Stop timer to save resources
-                    manager.handleAppEnteredBackground()
+                    calendarManager.handleAppEnteredBackground()
+
+                    // Schedule all background tasks for later execution
+                    print("🔵 [BACKGROUND] Scheduling background tasks...")
+                    backgroundManager.scheduleAllBackgroundTasks()
+
+                    // Debug: Print scheduled tasks
+                    #if DEBUG
+                    backgroundManager.debugPrintScheduledTasks()
+                    #endif
 
                 case .inactive:
                     print("⚪️ [APP LIFECYCLE] App became inactive")
