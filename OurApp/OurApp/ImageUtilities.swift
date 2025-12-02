@@ -2141,12 +2141,16 @@ struct FullScreenMediaViewer: View {
     let onDelete: ((Photo) -> Void)?
     let onToggleFavorite: ((Photo) -> Void)?
 
+    @State private var viewID = UUID()
     @State private var currentIndex: Int
+    @State private var isZoomed = false
     @State private var dragOffset: CGFloat = 0
+    @State private var showControls = true
     @State private var showingDeleteAlert = false
     @State private var showingSaveSuccess = false
     @State private var showingSaveError = false
     @State private var saveErrorMessage = ""
+    @State private var localFavoriteStates: [Bool] = []
 
     // Video state for current video (if any)
     @State private var videoPlayer: AVPlayer?
@@ -2166,6 +2170,7 @@ struct FullScreenMediaViewer: View {
         self.onDelete = onDelete
         self.onToggleFavorite = onToggleFavorite
         _currentIndex = State(initialValue: max(0, min(initialIndex, mediaItems.count - 1)))
+        _localFavoriteStates = State(initialValue: mediaItems.map { $0.isFavorite ?? false })
     }
 
     private var currentMedia: Photo? {
@@ -2180,42 +2185,109 @@ struct FullScreenMediaViewer: View {
                 .opacity(1.0 - abs(dragOffset) / 400.0)
 
             VStack(spacing: 0) {
-                // Fixed top bar (outside TabView)
+                // Top bar
                 topBar
-                    .opacity(dragOffset == 0 ? 1 : 0)
+                    .opacity(showControls && dragOffset == 0 ? 1 : 0)
 
-                // Content area with TabView
-                TabView(selection: $currentIndex) {
-                    ForEach(Array(mediaItems.enumerated()), id: \.offset) { index, media in
-                        MediaContentView(
-                            media: media,
-                            isCurrentItem: index == currentIndex,
-                            videoPlayer: index == currentIndex ? $videoPlayer : .constant(nil),
-                            isVideoPlaying: index == currentIndex ? $isVideoPlaying : .constant(false),
-                            videoIsLoading: index == currentIndex ? $videoIsLoading : .constant(true),
-                            videoDownloadStatus: index == currentIndex ? $videoDownloadStatus : .constant(nil),
-                            videoPlaybackError: index == currentIndex ? $videoPlaybackError : .constant(nil),
-                            onSetupVideo: index == currentIndex ? setupVideoPlayer : nil,
-                            onTogglePlayPause: index == currentIndex ? toggleVideoPlayPause : nil
-                        )
-                        .tag(index)
-                        .offset(y: dragOffset)
+                // Media display area - manual gesture-based navigation
+                GeometryReader { geometry in
+                    if currentIndex >= 0 && currentIndex < mediaItems.count {
+                        mediaContentView(geometry: geometry)
+                            .id("\(currentIndex)-\(viewID)")
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                            .offset(y: dragOffset)
+                            .gesture(
+                                DragGesture(minimumDistance: 20)
+                                    .onChanged { value in
+                                        if !isZoomed {
+                                            // Track vertical drag for dismiss gesture
+                                            if abs(value.translation.height) > abs(value.translation.width) {
+                                                dragOffset = value.translation.height
+                                            }
+                                        }
+                                    }
+                                    .onEnded { value in
+                                        if !isZoomed {
+                                            let horizontal = value.translation.width
+                                            let vertical = value.translation.height
+
+                                            // Vertical dismiss
+                                            if abs(dragOffset) > 100 {
+                                                cleanupVideoPlayer()
+                                                onDismiss()
+                                                return
+                                            }
+
+                                            // Horizontal swipe navigation
+                                            if abs(horizontal) > abs(vertical) && abs(horizontal) > 50 {
+                                                if horizontal > 0 && currentIndex > 0 {
+                                                    goToPrevious()
+                                                } else if horizontal < 0 && currentIndex < mediaItems.count - 1 {
+                                                    goToNext()
+                                                }
+                                            }
+
+                                            // Reset vertical offset
+                                            withAnimation(.spring(response: 0.3)) {
+                                                dragOffset = 0
+                                            }
+                                        }
+                                    }
+                            )
+                            .onTapGesture {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    showControls.toggle()
+                                }
+                            }
                     }
                 }
-                .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
 
-                // Bottom area: video controls (if video) + pagination dots
+                // Bottom info area
                 bottomArea
-                    .opacity(dragOffset == 0 ? 1 : 0)
+                    .opacity(showControls && dragOffset == 0 ? 1 : 0)
+            }
+
+            // Heart button overlay in bottom right
+            if onToggleFavorite != nil {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            if currentIndex < localFavoriteStates.count {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                    localFavoriteStates[currentIndex].toggle()
+                                }
+                            }
+                            if let media = currentMedia {
+                                onToggleFavorite?(media)
+                            }
+                        }) {
+                            let isFavorite = currentIndex < localFavoriteStates.count ? localFavoriteStates[currentIndex] : false
+                            Image(systemName: isFavorite ? "heart.fill" : "heart")
+                                .font(.system(size: 28))
+                                .foregroundColor(isFavorite ? .red : .white)
+                                .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+                                .scaleEffect(isFavorite ? 1.1 : 1.0)
+                        }
+                        .padding(.trailing, 24)
+                        .padding(.bottom, 80)
+                    }
+                }
+                .opacity(showControls && dragOffset == 0 ? 1 : 0)
             }
         }
         .statusBar(hidden: true)
-        .onChange(of: currentIndex) { oldValue, newValue in
-            // Cleanup old video when switching
-            cleanupVideoPlayer()
-            videoIsLoading = true
-            videoDownloadStatus = nil
-            videoPlaybackError = nil
+        .onAppear {
+            currentIndex = max(0, min(initialIndex, mediaItems.count - 1))
+            viewID = UUID()
+            dragOffset = 0
+            isZoomed = false
+            localFavoriteStates = mediaItems.map { $0.isFavorite ?? false }
+            // Setup video if starting on a video
+            if currentMedia?.isVideo == true {
+                setupVideoPlayer()
+            }
         }
         .onDisappear {
             cleanupVideoPlayer()
@@ -2239,6 +2311,126 @@ struct FullScreenMediaViewer: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(saveErrorMessage)
+        }
+    }
+
+    // MARK: - Navigation
+    private func goToPrevious() {
+        guard currentIndex > 0 else { return }
+        cleanupVideoPlayer()
+        withAnimation(.easeInOut(duration: 0.2)) {
+            currentIndex -= 1
+        }
+        // Setup video player if new item is video
+        if currentMedia?.isVideo == true {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                setupVideoPlayer()
+            }
+        }
+    }
+
+    private func goToNext() {
+        guard currentIndex < mediaItems.count - 1 else { return }
+        cleanupVideoPlayer()
+        withAnimation(.easeInOut(duration: 0.2)) {
+            currentIndex += 1
+        }
+        // Setup video player if new item is video
+        if currentMedia?.isVideo == true {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                setupVideoPlayer()
+            }
+        }
+    }
+
+    // MARK: - Media Content View
+    @ViewBuilder
+    private func mediaContentView(geometry: GeometryProxy) -> some View {
+        if let media = currentMedia {
+            if media.isVideo {
+                videoContentView(media: media, geometry: geometry)
+            } else {
+                SinglePhotoView(
+                    photoURL: media.imageURL,
+                    isZoomed: $isZoomed,
+                    onImageLoaded: { _ in }
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func videoContentView(media: Photo, geometry: GeometryProxy) -> some View {
+        ZStack {
+            // Thumbnail while loading
+            if videoIsLoading || videoDownloadStatus != nil {
+                CachedAsyncImage(url: URL(string: media.imageURL)) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                } placeholder: {
+                    Color.black
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .tint(.white)
+                        .scaleEffect(1.5)
+
+                    if let status = videoDownloadStatus {
+                        Text(status)
+                            .font(.subheadline)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(8)
+                    }
+                }
+            }
+
+            // Video player
+            if let player = videoPlayer {
+                VideoPlayerView(player: player)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+            }
+
+            // Error display
+            if let error = videoPlaybackError {
+                VStack(spacing: 16) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 50))
+                        .foregroundColor(.orange)
+
+                    Text("Unable to play video")
+                        .font(.headline)
+                        .foregroundColor(.white)
+
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.7))
+
+                    Button("Retry") {
+                        setupVideoPlayer()
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color.white.opacity(0.2))
+                    .cornerRadius(8)
+                }
+            }
+
+            // Play button overlay when paused
+            if !videoIsLoading && !isVideoPlaying && videoPlayer != nil && videoPlaybackError == nil {
+                Button(action: toggleVideoPlayPause) {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 70))
+                        .foregroundColor(.white.opacity(0.9))
+                        .shadow(radius: 10)
+                }
+            }
         }
     }
 
@@ -2320,10 +2512,10 @@ struct FullScreenMediaViewer: View {
                     .background(Capsule().fill(Color.black.opacity(0.4)))
             }
 
-            // Pagination dots
-            if mediaItems.count > 1 {
+            // Pagination dots (smart sliding indicator like original)
+            if !isZoomed && mediaItems.count > 1 {
                 paginationDots
-                    .padding(.vertical, 8)
+                    .padding(.bottom, 20)
             }
         }
         .padding(.bottom, 16)
@@ -2379,41 +2571,44 @@ struct FullScreenMediaViewer: View {
         )
     }
 
-    // MARK: - Pagination Dots
+    // MARK: - Pagination Dots (smart sliding indicator)
     private var paginationDots: some View {
         let maxDots = 10
         let showAllDots = mediaItems.count <= maxDots
+        let dotPosition = currentIndex + 1 // 1-based position
 
-        return HStack(spacing: 6) {
+        return Group {
             if showAllDots {
-                ForEach(0..<mediaItems.count, id: \.self) { index in
-                    Circle()
-                        .fill(index == currentIndex ? Color.white : Color.white.opacity(0.4))
-                        .frame(width: 8, height: 8)
+                // Show all dots if count is <= max
+                HStack(spacing: 8) {
+                    ForEach(1...mediaItems.count, id: \.self) { position in
+                        Circle()
+                            .fill(position == dotPosition ? Color.white : Color.white.opacity(0.5))
+                            .frame(width: 8, height: 8)
+                    }
                 }
             } else {
-                // Show subset of dots around current position
-                let startIdx = max(0, currentIndex - 4)
-                let endIdx = min(mediaItems.count - 1, startIdx + maxDots - 1)
-                let adjustedStart = max(0, endIdx - maxDots + 1)
+                // Show limited dots with scrolling highlighted dot
+                ZStack(alignment: .leading) {
+                    // Background dots (always visible, dimmed)
+                    HStack(spacing: 8) {
+                        ForEach(0..<maxDots, id: \.self) { index in
+                            Circle()
+                                .fill(Color.white.opacity(0.3))
+                                .frame(width: 6, height: 6)
+                        }
+                    }
 
-                if adjustedStart > 0 {
-                    Text("...")
-                        .foregroundColor(.white.opacity(0.6))
-                        .font(.caption2)
-                }
+                    // Highlighted dot that moves based on position
+                    let progress = CGFloat(dotPosition - 1) / CGFloat(mediaItems.count - 1)
+                    let dotOffset = progress * CGFloat((maxDots - 1)) * 14.0 // 6px dot + 8px gap
 
-                ForEach(adjustedStart...endIdx, id: \.self) { index in
                     Circle()
-                        .fill(index == currentIndex ? Color.white : Color.white.opacity(0.4))
-                        .frame(width: 8, height: 8)
+                        .fill(Color.white)
+                        .frame(width: 10, height: 10)
+                        .offset(x: dotOffset)
                 }
-
-                if endIdx < mediaItems.count - 1 {
-                    Text("...")
-                        .foregroundColor(.white.opacity(0.6))
-                        .font(.caption2)
-                }
+                .frame(maxWidth: .infinity)
             }
         }
     }
@@ -2630,118 +2825,4 @@ struct FullScreenMediaViewer: View {
     }
 }
 
-// MARK: - Media Content View (just the content, no controls)
-private struct MediaContentView: View {
-    let media: Photo
-    let isCurrentItem: Bool
-    @Binding var videoPlayer: AVPlayer?
-    @Binding var isVideoPlaying: Bool
-    @Binding var videoIsLoading: Bool
-    @Binding var videoDownloadStatus: String?
-    @Binding var videoPlaybackError: String?
-    let onSetupVideo: (() -> Void)?
-    let onTogglePlayPause: (() -> Void)?
-
-    @State private var isZoomed = false
-
-    var body: some View {
-        GeometryReader { geometry in
-            if media.isVideo {
-                videoContent(geometry: geometry)
-            } else {
-                photoContent(geometry: geometry)
-            }
-        }
-        .onAppear {
-            if media.isVideo && isCurrentItem {
-                onSetupVideo?()
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func photoContent(geometry: GeometryProxy) -> some View {
-        SinglePhotoView(
-            photoURL: media.imageURL,
-            isZoomed: $isZoomed,
-            onImageLoaded: { _ in }
-        )
-        .frame(width: geometry.size.width, height: geometry.size.height)
-    }
-
-    @ViewBuilder
-    private func videoContent(geometry: GeometryProxy) -> some View {
-        ZStack {
-            // Thumbnail while loading
-            if videoIsLoading || videoDownloadStatus != nil {
-                CachedAsyncImage(url: URL(string: media.imageURL)) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                } placeholder: {
-                    Color.black
-                }
-                .frame(width: geometry.size.width, height: geometry.size.height)
-
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .tint(.white)
-                        .scaleEffect(1.5)
-
-                    if let status = videoDownloadStatus {
-                        Text(status)
-                            .font(.subheadline)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(8)
-                    }
-                }
-            }
-
-            // Video player
-            if let player = videoPlayer {
-                VideoPlayerView(player: player)
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-            }
-
-            // Error display
-            if let error = videoPlaybackError {
-                VStack(spacing: 16) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 50))
-                        .foregroundColor(.orange)
-
-                    Text("Unable to play video")
-                        .font(.headline)
-                        .foregroundColor(.white)
-
-                    Text(error)
-                        .font(.caption)
-                        .foregroundColor(.white.opacity(0.7))
-
-                    Button("Retry") {
-                        onSetupVideo?()
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Color.white.opacity(0.2))
-                    .cornerRadius(8)
-                }
-            }
-
-            // Play button overlay when paused
-            if !videoIsLoading && !isVideoPlaying && videoPlayer != nil && videoPlaybackError == nil {
-                Button(action: { onTogglePlayPause?() }) {
-                    Image(systemName: "play.circle.fill")
-                        .font(.system(size: 70))
-                        .foregroundColor(.white.opacity(0.9))
-                        .shadow(radius: 10)
-                }
-            }
-        }
-    }
-}
 
