@@ -765,56 +765,119 @@ class VideoCompressor {
     static let shared = VideoCompressor()
     private init() {}
 
-    /// Compress video to a target quality while maintaining good visual quality
-    /// - Parameters:
-    ///   - inputURL: URL to the source video
-    ///   - maxFileSizeBytes: Target maximum file size (default 50MB for good quality)
-    ///   - completion: Callback with compressed video data and duration
-    func compressVideo(from inputURL: URL, maxFileSizeBytes: Int = 50_000_000) async throws -> (data: Data, duration: TimeInterval) {
+    /// Maximum file size for uploaded videos (100MB for high quality)
+    private let maxUploadSizeBytes: Int64 = 100_000_000
+
+    /// Compress video with adaptive quality based on file size
+    /// Uses highest quality possible while keeping file size reasonable
+    func compressVideo(from inputURL: URL, maxFileSizeBytes: Int = 100_000_000) async throws -> (data: Data, duration: TimeInterval) {
         let asset = AVURLAsset(url: inputURL)
         let duration = try await asset.load(.duration).seconds
 
-        // Create export session with high quality preset
-        guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetMediumQuality) else {
-            throw VideoError.exportSessionCreationFailed
+        // Get original file size to determine compression strategy
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: inputURL.path)
+        let originalSize = fileAttributes[.size] as? Int64 ?? 0
+
+        // Choose quality preset based on original size
+        // For small videos, use highest quality; for large videos, use adaptive compression
+        let presetName: String
+        if originalSize < 20_000_000 { // Under 20MB - use highest quality
+            presetName = AVAssetExportPresetHighestQuality
+        } else if originalSize < 50_000_000 { // 20-50MB - use 1080p
+            presetName = AVAssetExportPreset1920x1080
+        } else if originalSize < 150_000_000 { // 50-150MB - use 720p for reasonable size
+            presetName = AVAssetExportPreset1280x720
+        } else { // Very large files - use medium quality
+            presetName = AVAssetExportPresetMediumQuality
         }
 
+        print("🎬 [VIDEO COMPRESS] Original size: \(originalSize / 1_000_000)MB, using preset: \(presetName)")
+
+        // Create export session
+        guard let exportSession = AVAssetExportSession(asset: asset, presetName: presetName) else {
+            // Fallback to passthrough if preferred preset not available
+            guard let fallbackSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
+                throw VideoError.exportSessionCreationFailed
+            }
+            return try await exportWithSession(fallbackSession, duration: duration)
+        }
+
+        return try await exportWithSession(exportSession, duration: duration)
+    }
+
+    private func exportWithSession(_ exportSession: AVAssetExportSession, duration: TimeInterval) async throws -> (data: Data, duration: TimeInterval) {
         // Create temp output URL
         let tempDir = FileManager.default.temporaryDirectory
         let outputURL = tempDir.appendingPathComponent("\(UUID().uuidString).mp4")
+
+        // Clean up any existing file
+        try? FileManager.default.removeItem(at: outputURL)
 
         exportSession.outputURL = outputURL
         exportSession.outputFileType = .mp4
         exportSession.shouldOptimizeForNetworkUse = true
 
-        // Export
+        // Export with progress monitoring
         await exportSession.export()
 
-        guard exportSession.status == .completed else {
+        switch exportSession.status {
+        case .completed:
+            let data = try Data(contentsOf: outputURL)
+            print("🎬 [VIDEO COMPRESS] Compressed size: \(data.count / 1_000_000)MB")
+
+            // Clean up temp file
+            try? FileManager.default.removeItem(at: outputURL)
+            return (data, duration)
+
+        case .failed:
+            try? FileManager.default.removeItem(at: outputURL)
             if let error = exportSession.error {
+                print("🔴 [VIDEO COMPRESS] Export failed: \(error)")
                 throw error
             }
             throw VideoError.exportFailed
+
+        case .cancelled:
+            try? FileManager.default.removeItem(at: outputURL)
+            throw VideoError.exportCancelled
+
+        default:
+            try? FileManager.default.removeItem(at: outputURL)
+            throw VideoError.exportFailed
         }
-
-        // Read the compressed data
-        let data = try Data(contentsOf: outputURL)
-
-        // Clean up temp file
-        try? FileManager.default.removeItem(at: outputURL)
-
-        return (data, duration)
     }
 
-    /// Generate a thumbnail image from video at a specific time
-    func generateThumbnail(from url: URL, at time: CMTime = .zero) async throws -> UIImage {
+    /// Generate a high-quality thumbnail from video
+    /// Captures frame at 1 second or 10% through video (whichever is less)
+    func generateThumbnail(from url: URL, at time: CMTime? = nil) async throws -> UIImage {
         let asset = AVURLAsset(url: url)
+        let duration = try await asset.load(.duration)
+
+        // Default to 1 second or 10% of video duration (whichever is smaller)
+        let captureTime: CMTime
+        if let time = time {
+            captureTime = time
+        } else {
+            let tenPercent = CMTimeMultiplyByFloat64(duration, multiplier: 0.1)
+            let oneSecond = CMTime(seconds: 1.0, preferredTimescale: 600)
+            captureTime = tenPercent < oneSecond ? tenPercent : oneSecond
+        }
+
         let imageGenerator = AVAssetImageGenerator(asset: asset)
         imageGenerator.appliesPreferredTrackTransform = true
         imageGenerator.maximumSize = CGSize(width: 1920, height: 1920) // High quality thumbnail
+        imageGenerator.requestedTimeToleranceBefore = .zero
+        imageGenerator.requestedTimeToleranceAfter = .zero
 
-        let cgImage = try await imageGenerator.image(at: time).image
-        return UIImage(cgImage: cgImage)
+        do {
+            let cgImage = try await imageGenerator.image(at: captureTime).image
+            return UIImage(cgImage: cgImage)
+        } catch {
+            // Fallback to first frame if specific time fails
+            print("⚠️ [VIDEO THUMBNAIL] Failed at \(captureTime.seconds)s, trying first frame")
+            let cgImage = try await imageGenerator.image(at: .zero).image
+            return UIImage(cgImage: cgImage)
+        }
     }
 
     /// Extract video metadata including duration
@@ -823,12 +886,28 @@ class VideoCompressor {
         let duration = try await asset.load(.duration)
         return duration.seconds
     }
+
+    /// Get video resolution
+    func getVideoResolution(from url: URL) async throws -> CGSize {
+        let asset = AVURLAsset(url: url)
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+            return .zero
+        }
+        let size = try await track.load(.naturalSize)
+        let transform = try await track.load(.preferredTransform)
+
+        // Apply transform to get correct orientation
+        let transformedSize = size.applying(transform)
+        return CGSize(width: abs(transformedSize.width), height: abs(transformedSize.height))
+    }
 }
 
 enum VideoError: LocalizedError {
     case exportSessionCreationFailed
     case exportFailed
+    case exportCancelled
     case thumbnailGenerationFailed
+    case invalidVideoFile
 
     var errorDescription: String? {
         switch self {
@@ -836,8 +915,12 @@ enum VideoError: LocalizedError {
             return "Failed to create video export session"
         case .exportFailed:
             return "Video export failed"
+        case .exportCancelled:
+            return "Video export was cancelled"
         case .thumbnailGenerationFailed:
             return "Failed to generate video thumbnail"
+        case .invalidVideoFile:
+            return "Invalid or corrupted video file"
         }
     }
 }

@@ -286,14 +286,32 @@ struct PhotoGalleryView: View {
         filterStartDate != nil || filterEndDate != nil
     }
 
+    // Separate dated photos (with capturedAt) from undated ones (screenshots, etc.)
+    private var datedPhotos: [Photo] {
+        filteredPhotos.filter { $0.capturedAt != nil }
+    }
+
+    private var undatedPhotos: [Photo] {
+        let undated = filteredPhotos.filter { $0.capturedAt == nil }
+        // Sort by createdAt (upload date) - newest first by default
+        return undated.sorted { photo1, photo2 in
+            switch sortOption {
+            case .newestFirst, .recentlyAdded:
+                return photo1.createdAt > photo2.createdAt
+            case .oldestFirst:
+                return photo1.createdAt < photo2.createdAt
+            }
+        }
+    }
+
     // Group photos by month/year (using original capture date from metadata)
+    // Only includes photos with capturedAt date - undated photos shown separately
     private var photosByMonth: [(key: String, photos: [Photo])] {
-        let grouped = Dictionary(grouping: filteredPhotos) { photo -> String in
+        let grouped = Dictionary(grouping: datedPhotos) { photo -> String in
             let formatter = DateFormatter()
             formatter.dateFormat = "MMMM yyyy"
-            // Use capturedAt if available, otherwise fall back to createdAt
-            let dateToUse = photo.capturedAt ?? photo.createdAt
-            return formatter.string(from: dateToUse)
+            // Use capturedAt (guaranteed to exist due to datedPhotos filter)
+            return formatter.string(from: photo.capturedAt!)
         }
 
         // Sort months based on current sort option
@@ -317,13 +335,9 @@ struct PhotoGalleryView: View {
             let sortedPhotos = month.value.sorted { photo1, photo2 in
                 switch sortOption {
                 case .newestFirst:
-                    let date1 = photo1.capturedAt ?? photo1.createdAt
-                    let date2 = photo2.capturedAt ?? photo2.createdAt
-                    return date1 > date2
+                    return photo1.capturedAt! > photo2.capturedAt!
                 case .oldestFirst:
-                    let date1 = photo1.capturedAt ?? photo1.createdAt
-                    let date2 = photo2.capturedAt ?? photo2.createdAt
-                    return date1 < date2
+                    return photo1.capturedAt! < photo2.capturedAt!
                 case .recentlyAdded:
                     return photo1.createdAt > photo2.createdAt
                 }
@@ -355,19 +369,19 @@ struct PhotoGalleryView: View {
     // Cached photos in display order to avoid recomputation
     @State private var cachedPhotosInDisplayOrder: [Photo] = []
 
-    // Flat array of photos in display order (newest first) - uses cached value
+    // Flat array of photos in display order - dated photos first, then undated at bottom
     private var photosInDisplayOrder: [Photo] {
         // Return cached value; cache is updated via onChange modifiers
         if !cachedPhotosInDisplayOrder.isEmpty {
             return cachedPhotosInDisplayOrder
         }
         // Fallback for initial load before cache is populated
-        return photosByMonth.flatMap { $0.photos }
+        return photosByMonth.flatMap { $0.photos } + undatedPhotos
     }
 
     // Update cache when photos, filters, or sort options change
     private func updatePhotosCache() {
-        cachedPhotosInDisplayOrder = photosByMonth.flatMap { $0.photos }
+        cachedPhotosInDisplayOrder = photosByMonth.flatMap { $0.photos } + undatedPhotos
     }
 
     // Current folder title for display
@@ -1244,8 +1258,113 @@ struct PhotoGalleryView: View {
                     }
                 }
             }
+
+            // MARK: - Undated Media Section
+            // Shows screenshots, downloads, and other media without capture date metadata
+            if !undatedPhotos.isEmpty {
+                Section {
+                    undatedSectionView
+                }
+            }
         }
         .padding(.top, 8)
+    }
+
+    // MARK: - Undated Section View
+    private var undatedSectionView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Section header
+            HStack(spacing: 12) {
+                // "Undated" label with icon
+                HStack(spacing: 8) {
+                    Image(systemName: "clock.badge.questionmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                    Text("Undated")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule()
+                        .fill(Color.white)
+                        .shadow(color: Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.12), radius: 4, x: 0, y: 2)
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.15), lineWidth: 1)
+                )
+
+                // Decorative line
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.3),
+                                Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.05)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(height: 1.5)
+
+                // Count badge
+                Text("\(undatedPhotos.count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.08))
+                    )
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 24)
+
+            // Description text
+            Text("Screenshots, downloads, and media without date information")
+                .font(.caption)
+                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.7))
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+
+            // Photo grid
+            LazyVGrid(columns: columns, spacing: 8) {
+                ForEach(Array(undatedPhotos.enumerated()), id: \.element.id) { _, photo in
+                    let displayIndex = photosInDisplayOrder.firstIndex(where: { $0.id == photo.id }) ?? 0
+
+                    PhotoGridCell(
+                        photo: photo,
+                        index: displayIndex,
+                        selectionMode: selectionMode,
+                        isSelected: selectedPhotoIndices.contains(displayIndex),
+                        columnCount: columnCount,
+                        onTap: {
+                            if selectionMode {
+                                if selectedPhotoIndices.contains(displayIndex) {
+                                    selectedPhotoIndices.remove(displayIndex)
+                                } else {
+                                    selectedPhotoIndices.insert(displayIndex)
+                                }
+                            } else {
+                                selectedPhotoIndex = PhotoIndex(value: displayIndex)
+                            }
+                        },
+                        onLongPress: {
+                            if !selectionMode {
+                                selectionMode = true
+                                selectedPhotoIndices.insert(displayIndex)
+                            }
+                        }
+                    )
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+        }
     }
 
     private func navigateToFolder(_ folder: FolderViewType) {
@@ -1530,15 +1649,47 @@ struct PhotoGalleryView: View {
                                         continue
                                     }
 
+                                    // Store temp URL for cleanup
+                                    let tempVideoURL = movie.url
+                                    defer {
+                                        // Clean up temp video file after processing
+                                        try? FileManager.default.removeItem(at: tempVideoURL)
+                                    }
+
                                     UploadProgressManager.shared.updateTaskProgress(
                                         batchId: batchId,
                                         taskIndex: index,
-                                        progress: 0.2
+                                        progress: 0.15
                                     )
 
-                                    // Generate thumbnail
+                                    // Verify video file exists and is valid
+                                    guard FileManager.default.fileExists(atPath: tempVideoURL.path) else {
+                                        print("🔴 [GALLERY UPLOAD] Video file not found \(index + 1)")
+                                        UploadProgressManager.shared.failTask(
+                                            batchId: batchId,
+                                            taskIndex: index,
+                                            error: "Video file not found"
+                                        )
+                                        uploadErrors.append("Video file not found \(index + 1)")
+                                        continue
+                                    }
+
+                                    // Generate thumbnail first (faster, validates video is readable)
                                     print("🎬 [GALLERY UPLOAD] Generating thumbnail for video \(index + 1)...")
-                                    let thumbnail = try await VideoCompressor.shared.generateThumbnail(from: movie.url)
+                                    let thumbnail: UIImage
+                                    do {
+                                        thumbnail = try await VideoCompressor.shared.generateThumbnail(from: tempVideoURL)
+                                    } catch {
+                                        print("🔴 [GALLERY UPLOAD] Failed to generate thumbnail \(index + 1): \(error)")
+                                        UploadProgressManager.shared.failTask(
+                                            batchId: batchId,
+                                            taskIndex: index,
+                                            error: "Invalid video format"
+                                        )
+                                        uploadErrors.append("Invalid video \(index + 1)")
+                                        continue
+                                    }
+
                                     let thumbnailResized = thumbnail.resized(toMaxDimension: 1920)
                                     guard let thumbnailData = thumbnailResized.compressed(toMaxBytes: 500_000) else {
                                         print("🔴 [GALLERY UPLOAD] Failed to compress thumbnail \(index + 1)")
@@ -1557,10 +1708,24 @@ struct PhotoGalleryView: View {
                                         progress: 0.3
                                     )
 
-                                    // Compress video
+                                    // Compress video with progress
                                     print("🎬 [GALLERY UPLOAD] Compressing video \(index + 1)...")
-                                    let (compressedVideoData, duration) = try await VideoCompressor.shared.compressVideo(from: movie.url)
-                                    print("🎬 [GALLERY UPLOAD] Compressed video \(index + 1): \(compressedVideoData.count) bytes, duration: \(duration)s")
+                                    let compressedVideoData: Data
+                                    let duration: TimeInterval
+                                    do {
+                                        (compressedVideoData, duration) = try await VideoCompressor.shared.compressVideo(from: tempVideoURL)
+                                    } catch {
+                                        print("🔴 [GALLERY UPLOAD] Failed to compress video \(index + 1): \(error)")
+                                        UploadProgressManager.shared.failTask(
+                                            batchId: batchId,
+                                            taskIndex: index,
+                                            error: "Video compression failed: \(error.localizedDescription)"
+                                        )
+                                        uploadErrors.append("Failed to compress video \(index + 1)")
+                                        continue
+                                    }
+
+                                    print("🎬 [GALLERY UPLOAD] Compressed video \(index + 1): \(compressedVideoData.count / 1_000_000)MB, duration: \(String(format: "%.1f", duration))s")
 
                                     UploadProgressManager.shared.updateTaskProgress(
                                         batchId: batchId,
