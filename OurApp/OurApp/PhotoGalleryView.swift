@@ -189,6 +189,65 @@ func extractCaptureDate(from imageData: Data) -> Date? {
     return formatter.date(from: dateTimeOriginal)
 }
 
+// Helper function to extract creation date from video metadata
+func extractVideoCreationDate(from videoURL: URL) async -> Date? {
+    let asset = AVURLAsset(url: videoURL)
+
+    do {
+        // Try to get creation date from common metadata
+        let metadata = try await asset.load(.commonMetadata)
+
+        // Look for creation date in metadata
+        for item in metadata {
+            if let key = item.commonKey, key == .commonKeyCreationDate {
+                if let dateValue = try await item.load(.dateValue) {
+                    return dateValue
+                }
+                if let stringValue = try await item.load(.stringValue) {
+                    // Try parsing ISO 8601 date
+                    let formatter = ISO8601DateFormatter()
+                    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                    if let date = formatter.date(from: stringValue) {
+                        return date
+                    }
+                    // Try without fractional seconds
+                    formatter.formatOptions = [.withInternetDateTime]
+                    if let date = formatter.date(from: stringValue) {
+                        return date
+                    }
+                }
+            }
+        }
+
+        // Fallback: try creation date metadata key
+        let creationDateItems = AVMetadataItem.metadataItems(from: metadata, filteredByIdentifier: .commonIdentifierCreationDate)
+        if let dateItem = creationDateItems.first {
+            if let dateValue = try await dateItem.load(.dateValue) {
+                return dateValue
+            }
+        }
+
+    } catch {
+        print("⚠️ [VIDEO METADATA] Failed to load metadata: \(error)")
+    }
+
+    // Last resort: check file creation date
+    do {
+        let attrs = try FileManager.default.attributesOfItem(atPath: videoURL.path)
+        if let creationDate = attrs[.creationDate] as? Date {
+            // Only use file date if it seems reasonable (not today, which would indicate a temp file)
+            let calendar = Calendar.current
+            if !calendar.isDateInToday(creationDate) {
+                return creationDate
+            }
+        }
+    } catch {
+        print("⚠️ [VIDEO METADATA] Failed to get file attributes: \(error)")
+    }
+
+    return nil
+}
+
 // Wrapper to make Int work with .fullScreenCover(item:)
 struct PhotoIndex: Identifiable {
     let id = UUID()
@@ -1674,12 +1733,13 @@ struct PhotoGalleryView: View {
                                         continue
                                     }
 
-                                    // Process video and generate thumbnail in parallel for speed
+                                    // Process video, generate thumbnail, and extract metadata in parallel
                                     print("🎬 [GALLERY UPLOAD] Processing video \(index + 1)...")
 
-                                    // Start both operations concurrently
+                                    // Start all operations concurrently
                                     async let thumbnailTask = VideoCompressor.shared.generateThumbnail(from: tempVideoURL)
                                     async let processTask = VideoCompressor.shared.processVideo(from: tempVideoURL)
+                                    async let metadataTask = extractVideoCreationDate(from: tempVideoURL)
 
                                     // Wait for thumbnail first (faster, validates video)
                                     let thumbnail: UIImage
@@ -1736,6 +1796,14 @@ struct PhotoGalleryView: View {
                                         }
                                     }
 
+                                    // Get video creation date (already running in parallel)
+                                    let videoCapturedAt = await metadataTask
+                                    if let date = videoCapturedAt {
+                                        print("🎬 [GALLERY UPLOAD] Video \(index + 1) captured at: \(date)")
+                                    } else {
+                                        print("🎬 [GALLERY UPLOAD] Video \(index + 1) has no capture date metadata")
+                                    }
+
                                     print("🎬 [GALLERY UPLOAD] Video \(index + 1) ready, duration: \(String(format: "%.1f", processedVideo.duration))s")
 
                                     UploadProgressManager.shared.updateTaskProgress(
@@ -1750,7 +1818,7 @@ struct PhotoGalleryView: View {
                                         videoURL: processedVideo.fileURL,
                                         thumbnailData: thumbnailData,
                                         duration: processedVideo.duration,
-                                        capturedAt: nil
+                                        capturedAt: videoCapturedAt
                                     )
 
                                     UploadProgressManager.shared.completeTask(batchId: batchId, taskIndex: index)

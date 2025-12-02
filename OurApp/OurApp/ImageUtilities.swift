@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import CommonCrypto
 import AVKit
+import Combine
 
 // MARK: - Array Extension for Safe Subscripting
 extension Array {
@@ -1526,6 +1527,7 @@ struct FullScreenVideoPlayer: View {
     @State private var isPlaying = false
     @State private var currentTime: TimeInterval = 0
     @State private var isLoading = true
+    @State private var isBuffering = false
     @State private var dragOffset: CGFloat = 0
     @State private var showingDeleteAlert = false
     @State private var showingSaveSuccess = false
@@ -1535,6 +1537,9 @@ struct FullScreenVideoPlayer: View {
     @State private var isSeeking = false
     @State private var showControls = true
     @State private var hideControlsTimer: Timer?
+    @State private var timeObserver: Any?
+    @State private var endObserver: NSObjectProtocol?
+    @State private var stallObserver: NSObjectProtocol?
 
     private func formatDuration(_ duration: TimeInterval) -> String {
         let minutes = Int(duration) / 60
@@ -1553,7 +1558,7 @@ struct FullScreenVideoPlayer: View {
                 if showControls {
                     HStack {
                         Button(action: {
-                            player?.pause()
+                            cleanupPlayer()
                             onDismiss()
                         }) {
                             Image(systemName: "xmark.circle.fill")
@@ -1620,8 +1625,15 @@ struct FullScreenVideoPlayer: View {
                                 }
                         }
 
+                        // Buffering indicator (shows during playback stalls)
+                        if isBuffering && !isLoading {
+                            ProgressView()
+                                .tint(.white)
+                                .scaleEffect(1.2)
+                        }
+
                         // Center play/pause button
-                        if showControls && !isLoading {
+                        if showControls && !isLoading && !isBuffering {
                             Button(action: togglePlayPause) {
                                 Circle()
                                     .fill(.ultraThinMaterial)
@@ -1647,7 +1659,7 @@ struct FullScreenVideoPlayer: View {
                             }
                             .onEnded { value in
                                 if abs(dragOffset) > 100 {
-                                    player?.pause()
+                                    cleanupPlayer()
                                     onDismiss()
                                     return
                                 }
@@ -1674,13 +1686,17 @@ struct FullScreenVideoPlayer: View {
                                     set: { newValue in
                                         currentTime = newValue
                                         isSeeking = true
-                                        let time = CMTime(seconds: newValue, preferredTimescale: 600)
-                                        player?.seek(to: time) { _ in
-                                            isSeeking = false
-                                        }
+                                        seekToTime(newValue)
                                     }
                                 ),
-                                in: 0...max(duration, 1)
+                                in: 0...max(duration, 0.1),
+                                onEditingChanged: { editing in
+                                    if !editing {
+                                        // Final seek when user releases slider
+                                        isSeeking = false
+                                        seekToTime(currentTime, precise: true)
+                                    }
+                                }
                             )
                             .tint(Color(red: 0.7, green: 0.5, blue: 0.95))
 
@@ -1726,13 +1742,12 @@ struct FullScreenVideoPlayer: View {
             resetHideControlsTimer()
         }
         .onDisappear {
-            player?.pause()
-            hideControlsTimer?.invalidate()
+            cleanupPlayer()
         }
         .alert("Delete Video?", isPresented: $showingDeleteAlert) {
             Button("Cancel", role: .cancel) { }
             Button("Delete", role: .destructive) {
-                player?.pause()
+                cleanupPlayer()
                 onDelete?()
                 onDismiss()
             }
@@ -1754,49 +1769,133 @@ struct FullScreenVideoPlayer: View {
     private func setupPlayer() {
         guard let url = URL(string: videoURL) else { return }
 
-        // Check cache first
+        // Use streaming with cache fallback for faster start
         Task {
-            let localURL: URL
+            // Check if we have it cached (instant playback)
+            let playbackURL: URL
             if let cachedURL = VideoCache.shared.getCachedVideoURL(for: videoURL) {
-                localURL = cachedURL
-            } else if let downloadedURL = await VideoCache.shared.downloadAndCache(from: url) {
-                localURL = downloadedURL
+                playbackURL = cachedURL
+                print("🎬 [VIDEO PLAYER] Playing from cache")
             } else {
-                localURL = url // Fallback to streaming
+                // Stream directly from URL (faster initial playback)
+                playbackURL = url
+                print("🎬 [VIDEO PLAYER] Streaming from URL")
+                // Start background caching for next time
+                Task.detached(priority: .background) {
+                    _ = await VideoCache.shared.downloadAndCache(from: url)
+                }
             }
 
             await MainActor.run {
-                let playerItem = AVPlayerItem(url: localURL)
+                // Create player with optimized buffering
+                let asset = AVURLAsset(url: playbackURL, options: [
+                    "AVURLAssetPreferPreciseDurationAndTimingKey": false
+                ])
+                let playerItem = AVPlayerItem(asset: asset)
+
+                // Optimize for streaming - start playing sooner
+                playerItem.preferredForwardBufferDuration = 5 // Buffer 5 seconds ahead
+
                 player = AVPlayer(playerItem: playerItem)
                 player?.actionAtItemEnd = .pause
+                player?.automaticallyWaitsToMinimizeStalling = true
 
-                // Observe time updates
-                player?.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { time in
+                // Faster time updates for smooth scrubbing
+                timeObserver = player?.addPeriodicTimeObserver(
+                    forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
+                    queue: .main
+                ) { [self] time in
                     if !isSeeking {
                         currentTime = time.seconds
                     }
+                    // Check if we're buffering
+                    if let item = player?.currentItem {
+                        isBuffering = !item.isPlaybackLikelyToKeepUp && isPlaying
+                    }
                 }
 
-                // Observe when video is ready
-                NotificationCenter.default.addObserver(forName: AVPlayerItem.newAccessLogEntryNotification, object: playerItem, queue: .main) { _ in
-                    isLoading = false
+                // Observe when video ends
+                endObserver = NotificationCenter.default.addObserver(
+                    forName: .AVPlayerItemDidPlayToEndTime,
+                    object: playerItem,
+                    queue: .main
+                ) { _ in
+                    isPlaying = false
+                    showControls = true
+                    hideControlsTimer?.invalidate()
                 }
 
-                // Also check if video is already ready
-                if playerItem.status == .readyToPlay {
-                    isLoading = false
+                // Observe playback stalls
+                stallObserver = NotificationCenter.default.addObserver(
+                    forName: .AVPlayerItemPlaybackStalled,
+                    object: playerItem,
+                    queue: .main
+                ) { _ in
+                    isBuffering = true
                 }
 
-                // Short delay then check loading status
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    isLoading = false
-                }
+                // Observe when ready to play
+                playerItem.publisher(for: \.status)
+                    .receive(on: DispatchQueue.main)
+                    .sink { status in
+                        if status == .readyToPlay {
+                            isLoading = false
+                        }
+                    }
+                    .store(in: &cancellables)
+
+                // Also observe buffer status
+                playerItem.publisher(for: \.isPlaybackLikelyToKeepUp)
+                    .receive(on: DispatchQueue.main)
+                    .sink { isReady in
+                        if isReady {
+                            isLoading = false
+                            isBuffering = false
+                        }
+                    }
+                    .store(in: &cancellables)
 
                 // Auto-play
                 player?.play()
                 isPlaying = true
             }
         }
+    }
+
+    @State private var cancellables = Set<AnyCancellable>()
+
+    private func cleanupPlayer() {
+        // Stop playback
+        player?.pause()
+
+        // Remove time observer
+        if let observer = timeObserver {
+            player?.removeTimeObserver(observer)
+            timeObserver = nil
+        }
+
+        // Remove notification observers
+        if let observer = endObserver {
+            NotificationCenter.default.removeObserver(observer)
+            endObserver = nil
+        }
+        if let observer = stallObserver {
+            NotificationCenter.default.removeObserver(observer)
+            stallObserver = nil
+        }
+
+        // Cancel any publishers
+        cancellables.removeAll()
+
+        // Release player
+        player?.replaceCurrentItem(with: nil)
+        player = nil
+
+        // Cancel timer
+        hideControlsTimer?.invalidate()
+        hideControlsTimer = nil
+
+        print("🎬 [VIDEO PLAYER] Cleaned up")
     }
 
     private func togglePlayPause() {
@@ -1812,6 +1911,19 @@ struct FullScreenVideoPlayer: View {
         }
         isPlaying.toggle()
         resetHideControlsTimer()
+    }
+
+    private func seekToTime(_ seconds: TimeInterval, precise: Bool = false) {
+        let time = CMTime(seconds: seconds, preferredTimescale: 600)
+
+        if precise {
+            // Precise seek for final position (when user releases slider)
+            player?.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        } else {
+            // Fast seek while dragging (allows some tolerance for speed)
+            player?.seek(to: time, toleranceBefore: CMTime(seconds: 0.5, preferredTimescale: 600),
+                        toleranceAfter: CMTime(seconds: 0.5, preferredTimescale: 600))
+        }
     }
 
     private func resetHideControlsTimer() {
