@@ -1492,10 +1492,28 @@ struct SinglePhotoView: View {
                                 let newScale = scale * delta
                                 scale = min(max(newScale, 1), 4)
                                 isZoomed = scale > 1.01
+
+                                // Constrain offset as we zoom out to prevent image going off-screen
+                                if scale <= 1.01 {
+                                    offset = .zero
+                                    lastOffset = .zero
+                                } else {
+                                    // Adjust offset bounds based on current scale
+                                    let imageWidth = geometry.size.width * scale
+                                    let imageHeight = geometry.size.height * scale
+                                    let maxOffsetX = max(0, (imageWidth - geometry.size.width) / 2)
+                                    let maxOffsetY = max(0, (imageHeight - geometry.size.height) / 2)
+
+                                    offset = CGSize(
+                                        width: min(max(offset.width, -maxOffsetX), maxOffsetX),
+                                        height: min(max(offset.height, -maxOffsetY), maxOffsetY)
+                                    )
+                                    lastOffset = offset
+                                }
                             }
                             .onEnded { _ in
                                 lastScale = 1.0
-                                if scale < 1 {
+                                if scale <= 1.01 {
                                     withAnimation(.spring(response: 0.3)) {
                                         scale = 1
                                         offset = .zero
