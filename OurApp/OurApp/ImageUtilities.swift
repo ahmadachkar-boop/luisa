@@ -2259,13 +2259,11 @@ struct FullScreenMediaViewer: View {
                 VStack {
                     // Top bar
                     topBar
-                        .padding(.top, geometry.safeAreaInsets.top)
 
                     Spacer()
 
                     // Bottom info area
                     bottomArea
-                        .padding(.bottom, geometry.safeAreaInsets.bottom)
                 }
                 .opacity(showControls && dragOffset == 0 ? 1 : 0)
 
@@ -2300,7 +2298,6 @@ struct FullScreenMediaViewer: View {
                 }
             }
         }
-        .ignoresSafeArea()
         .statusBar(hidden: true)
         .onAppear {
             currentIndex = max(0, min(initialIndex, mediaItems.count - 1))

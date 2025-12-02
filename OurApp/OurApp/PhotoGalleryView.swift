@@ -1285,16 +1285,17 @@ struct PhotoGalleryView: View {
                             LazyVGrid(columns: columns, spacing: 8) {
                                 ForEach(dateGroup.photos, id: \.id) { photo in
                                     let photoId = photo.id ?? ""
+                                    let isSelected = selectedPhotoIds.contains(photoId)
 
                                     PhotoGridCell(
                                         photo: photo,
                                         index: 0, // Index no longer used for selection
                                         selectionMode: selectionMode,
-                                        isSelected: selectedPhotoIds.contains(photoId),
+                                        isSelected: isSelected,
                                         columnCount: columnCount,
                                         onTap: {
                                             if selectionMode {
-                                                if selectedPhotoIds.contains(photoId) {
+                                                if isSelected {
                                                     selectedPhotoIds.remove(photoId)
                                                 } else {
                                                     selectedPhotoIds.insert(photoId)
@@ -1312,6 +1313,7 @@ struct PhotoGalleryView: View {
                                             }
                                         }
                                     )
+                                    .id("\(photoId)-\(isSelected)-\(selectionMode)")
                                 }
                             }
                             .padding(.horizontal, 8)
@@ -1396,16 +1398,17 @@ struct PhotoGalleryView: View {
             LazyVGrid(columns: columns, spacing: 8) {
                 ForEach(undatedPhotos, id: \.id) { photo in
                     let photoId = photo.id ?? ""
+                    let isSelected = selectedPhotoIds.contains(photoId)
 
                     PhotoGridCell(
                         photo: photo,
                         index: 0, // Index no longer used for selection
                         selectionMode: selectionMode,
-                        isSelected: selectedPhotoIds.contains(photoId),
+                        isSelected: isSelected,
                         columnCount: columnCount,
                         onTap: {
                             if selectionMode {
-                                if selectedPhotoIds.contains(photoId) {
+                                if isSelected {
                                     selectedPhotoIds.remove(photoId)
                                 } else {
                                     selectedPhotoIds.insert(photoId)
@@ -1423,6 +1426,7 @@ struct PhotoGalleryView: View {
                             }
                         }
                     )
+                    .id("\(photoId)-\(isSelected)-\(selectionMode)")
                 }
             }
             .padding(.horizontal, 8)
@@ -2659,7 +2663,6 @@ struct PhotoGridCell: View {
                     .allowsHitTesting(false)
             }
         }
-        .drawingGroup() // Optimize rendering performance
         .onAppear {
             // Notify prefetch manager that this photo is visible for smart prefetching
             PhotoPrefetchManager.shared.photoDidAppear(at: index)
