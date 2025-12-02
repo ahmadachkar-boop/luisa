@@ -2579,7 +2579,6 @@ struct PhotoGridCell: View {
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(selectionMode && isSelected ? 0.15 : 0))
-                    .animation(.easeInOut(duration: 0.2), value: isSelected)
             )
             // Selection border
             .overlay(
@@ -2588,7 +2587,6 @@ struct PhotoGridCell: View {
                         selectionMode && isSelected ? Color(red: 0.7, green: 0.5, blue: 0.95) : Color.clear,
                         lineWidth: 3
                     )
-                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
             )
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
             // Press animation
@@ -2633,38 +2631,32 @@ struct PhotoGridCell: View {
                     .transition(.scale.combined(with: .opacity))
             }
 
-            // Animated checkmark overlay
+            // Checkmark overlay
             if selectionMode {
-                ZStack {
-                    // Background circle for unchecked state
-                    Circle()
-                        .fill(Color.black.opacity(0.3))
-                        .frame(width: columnCount == 2 ? 28 : 24, height: columnCount == 2 ? 28 : 24)
-                        .opacity(isSelected ? 0 : 1)
-
-                    // Checkmark with spring animation
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(columnCount == 2 ? .title : .title2)
-                        .foregroundStyle(
-                            isSelected ?
-                                AnyShapeStyle(
-                                    LinearGradient(
-                                        colors: [
-                                            Color(red: 0.8, green: 0.6, blue: 1.0),
-                                            Color(red: 0.6, green: 0.4, blue: 0.85)
-                                        ],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-                                ) :
-                                AnyShapeStyle(Color.white.opacity(0.9))
-                        )
-                        .shadow(color: Color.black.opacity(0.3), radius: 3, x: 0, y: 1)
-                        .scaleEffect(isSelected ? 1.0 : 0.9)
-                        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isSelected)
-                }
-                .padding(columnCount == 2 ? 10 : 8)
-                .allowsHitTesting(false)
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(columnCount == 2 ? .title : .title2)
+                    .foregroundStyle(
+                        isSelected ?
+                            AnyShapeStyle(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 0.8, green: 0.6, blue: 1.0),
+                                        Color(red: 0.6, green: 0.4, blue: 0.85)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            ) :
+                            AnyShapeStyle(Color.white.opacity(0.9))
+                    )
+                    .background(
+                        Circle()
+                            .fill(isSelected ? Color.clear : Color.black.opacity(0.3))
+                            .frame(width: columnCount == 2 ? 28 : 24, height: columnCount == 2 ? 28 : 24)
+                    )
+                    .shadow(color: Color.black.opacity(0.3), radius: 3, x: 0, y: 1)
+                    .padding(columnCount == 2 ? 10 : 8)
+                    .allowsHitTesting(false)
             }
         }
         .drawingGroup() // Optimize rendering performance
