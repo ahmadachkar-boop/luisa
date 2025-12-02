@@ -1662,8 +1662,8 @@ struct FullScreenVideoPlayer: View {
                 // Video player area
                 GeometryReader { geometry in
                     ZStack {
-                        // Thumbnail placeholder while loading
-                        if isLoading {
+                        // Thumbnail placeholder while loading/downloading
+                        if isLoading || downloadStatus != nil {
                             CachedAsyncImage(url: URL(string: thumbnailURL)) { image in
                                 image
                                     .resizable()
@@ -1673,9 +1673,21 @@ struct FullScreenVideoPlayer: View {
                             }
                             .frame(width: geometry.size.width, height: geometry.size.height)
 
-                            ProgressView()
-                                .tint(.white)
-                                .scaleEffect(1.5)
+                            VStack(spacing: 12) {
+                                ProgressView()
+                                    .tint(.white)
+                                    .scaleEffect(1.5)
+
+                                if let status = downloadStatus {
+                                    Text(status)
+                                        .font(.subheadline)
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 8)
+                                        .background(.ultraThinMaterial)
+                                        .cornerRadius(8)
+                                }
+                            }
                         }
 
                         // Video player
@@ -1868,36 +1880,49 @@ struct FullScreenVideoPlayer: View {
 
         print("🎬 [VIDEO PLAYER] Setting up player for: \(url.lastPathComponent)")
 
-        // Check cache first, then stream
-        let playbackURL: URL
-        let isCached: Bool
+        // Check cache first - if not cached, download first then play
+        // Firebase Storage URLs don't stream reliably with AVPlayer
         if let cachedURL = VideoCache.shared.getCachedVideoURL(for: videoURL) {
-            playbackURL = cachedURL
-            isCached = true
-            print("🎬 [VIDEO PLAYER] Playing from cache: \(cachedURL.lastPathComponent)")
+            print("🎬 [VIDEO PLAYER] Playing from cache")
+            createAndStartPlayer(with: cachedURL)
         } else {
-            playbackURL = url
-            isCached = false
-            print("🎬 [VIDEO PLAYER] Streaming from remote URL")
-        }
+            // Download video first, then play
+            print("🎬 [VIDEO PLAYER] Downloading video first...")
+            downloadStatus = "Downloading..."
 
-        // Create player with optimized settings for streaming
-        let asset = AVURLAsset(url: playbackURL, options: [
+            Task {
+                if let downloadedURL = await VideoCache.shared.downloadForPlayback(from: url) {
+                    await MainActor.run {
+                        print("🎬 [VIDEO PLAYER] Download complete, starting playback")
+                        downloadStatus = nil
+                        createAndStartPlayer(with: downloadedURL)
+                    }
+                } else {
+                    await MainActor.run {
+                        isLoading = false
+                        downloadStatus = nil
+                        playbackError = "Failed to download video"
+                    }
+                }
+            }
+        }
+    }
+
+    @State private var downloadStatus: String?
+
+    private func createAndStartPlayer(with fileURL: URL) {
+        let asset = AVURLAsset(url: fileURL, options: [
             AVURLAssetPreferPreciseDurationAndTimingKey: false
         ])
 
         let playerItem = AVPlayerItem(asset: asset)
-
-        // Optimize buffering - give more buffer time for streaming
-        playerItem.preferredForwardBufferDuration = isCached ? 0 : 10 // 10 seconds buffer for streaming
-        playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused = true
+        playerItem.preferredForwardBufferDuration = 0 // Local file, no buffering needed
 
         let newPlayer = AVPlayer(playerItem: playerItem)
         newPlayer.actionAtItemEnd = AVPlayer.ActionAtItemEnd.pause
-        // Let AVPlayer manage stalling - prevents premature playback that stalls
-        newPlayer.automaticallyWaitsToMinimizeStalling = !isCached
+        newPlayer.automaticallyWaitsToMinimizeStalling = false // Local file
 
-        // Use KVO for status observation (more reliable than Combine with @State)
+        // Use KVO for status observation
         statusObservation = playerItem.observe(\.status, options: [.new, .initial]) { (item: AVPlayerItem, _) in
             DispatchQueue.main.async { [self] in
                 switch item.status {
@@ -1925,13 +1950,6 @@ struct FullScreenVideoPlayer: View {
             if !isSeeking {
                 currentTime = time.seconds
             }
-            // Update buffering state
-            if let item = player?.currentItem {
-                let newBuffering = !item.isPlaybackLikelyToKeepUp && isPlaying && item.status == .readyToPlay
-                if newBuffering != isBuffering {
-                    isBuffering = newBuffering
-                }
-            }
         }
 
         // End of video notification
@@ -1943,16 +1961,6 @@ struct FullScreenVideoPlayer: View {
             isPlaying = false
             showControls = true
             hideControlsTimer?.invalidate()
-        }
-
-        // Stall notification
-        stallObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemPlaybackStalled,
-            object: playerItem,
-            queue: .main
-        ) { [self] _ in
-            print("⚠️ [VIDEO PLAYER] Playback stalled")
-            isBuffering = true
         }
 
         // Error notification
@@ -1972,9 +1980,6 @@ struct FullScreenVideoPlayer: View {
         // Auto-play
         newPlayer.play()
         isPlaying = true
-
-        // DON'T start background caching while streaming - it competes for bandwidth
-        // Videos are pre-cached when they appear in the gallery grid instead
     }
 
     @State private var errorObserver: NSObjectProtocol?
