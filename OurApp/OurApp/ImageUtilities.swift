@@ -2130,3 +2130,587 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         uiViewController.player = player
     }
 }
+
+// MARK: - Unified Full Screen Media Viewer
+/// A unified viewer that supports horizontal swiping between all media types (photos and videos)
+struct FullScreenMediaViewer: View {
+    let mediaItems: [Photo]
+    let initialIndex: Int
+    let onDismiss: () -> Void
+    let onDelete: ((Photo) -> Void)?
+    let onToggleFavorite: ((Photo) -> Void)?
+
+    @State private var currentIndex: Int
+    @State private var dragOffset: CGFloat = 0
+    @State private var showControls = true
+
+    init(mediaItems: [Photo], initialIndex: Int, onDismiss: @escaping () -> Void, onDelete: ((Photo) -> Void)? = nil, onToggleFavorite: ((Photo) -> Void)? = nil) {
+        self.mediaItems = mediaItems
+        self.initialIndex = initialIndex
+        self.onDismiss = onDismiss
+        self.onDelete = onDelete
+        self.onToggleFavorite = onToggleFavorite
+        _currentIndex = State(initialValue: max(0, min(initialIndex, mediaItems.count - 1)))
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black
+                .ignoresSafeArea()
+
+            // TabView for horizontal swiping
+            TabView(selection: $currentIndex) {
+                ForEach(Array(mediaItems.enumerated()), id: \.offset) { index, media in
+                    MediaItemView(
+                        media: media,
+                        showControls: $showControls,
+                        onDismiss: onDismiss,
+                        onDelete: onDelete != nil ? { onDelete?(media) } : nil,
+                        onToggleFavorite: onToggleFavorite != nil ? { onToggleFavorite?(media) } : nil,
+                        isCurrentItem: index == currentIndex,
+                        currentPosition: index + 1,
+                        totalCount: mediaItems.count
+                    )
+                    .tag(index)
+                }
+            }
+            .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+            .ignoresSafeArea()
+        }
+        .statusBar(hidden: true)
+        .gesture(
+            DragGesture(minimumDistance: 50)
+                .onChanged { value in
+                    // Vertical drag for dismiss
+                    if abs(value.translation.height) > abs(value.translation.width) * 1.5 {
+                        dragOffset = value.translation.height
+                    }
+                }
+                .onEnded { value in
+                    if abs(dragOffset) > 100 {
+                        onDismiss()
+                    }
+                    dragOffset = 0
+                }
+        )
+    }
+}
+
+// MARK: - Individual Media Item View (for use within FullScreenMediaViewer)
+private struct MediaItemView: View {
+    let media: Photo
+    @Binding var showControls: Bool
+    let onDismiss: () -> Void
+    let onDelete: (() -> Void)?
+    let onToggleFavorite: (() -> Void)?
+    let isCurrentItem: Bool
+    let currentPosition: Int
+    let totalCount: Int
+
+    @State private var player: AVPlayer?
+    @State private var isPlaying = false
+    @State private var currentTime: TimeInterval = 0
+    @State private var isLoading = true
+    @State private var isBuffering = false
+    @State private var playbackError: String?
+    @State private var downloadStatus: String?
+    @State private var timeObserver: Any?
+    @State private var statusObservation: NSKeyValueObservation?
+    @State private var endObserver: NSObjectProtocol?
+    @State private var isZoomed = false
+    @State private var showingDeleteAlert = false
+    @State private var showingSaveSuccess = false
+    @State private var showingSaveError = false
+    @State private var saveErrorMessage = ""
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                if media.isVideo {
+                    videoContent(geometry: geometry)
+                } else {
+                    photoContent(geometry: geometry)
+                }
+
+                // Controls overlay
+                VStack {
+                    // Top bar
+                    if showControls {
+                        topBar
+                            .transition(.opacity)
+                    }
+
+                    Spacer()
+
+                    // Video controls at bottom (only for videos)
+                    if media.isVideo && showControls && player != nil {
+                        videoControlsBar
+                            .transition(.opacity)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            if media.isVideo && isCurrentItem {
+                setupVideoPlayer()
+            }
+        }
+        .onDisappear {
+            cleanupPlayer()
+        }
+        .onChange(of: isCurrentItem) { _, isCurrent in
+            if media.isVideo {
+                if isCurrent {
+                    setupVideoPlayer()
+                } else {
+                    cleanupPlayer()
+                }
+            }
+        }
+        .alert("Delete \(media.isVideo ? "Video" : "Photo")?", isPresented: $showingDeleteAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                cleanupPlayer()
+                onDelete?()
+                onDismiss()
+            }
+        }
+        .overlay {
+            if showingSaveSuccess {
+                saveSuccessToast
+            }
+        }
+        .alert("Save Failed", isPresented: $showingSaveError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(saveErrorMessage)
+        }
+    }
+
+    // MARK: - Photo Content
+    @ViewBuilder
+    private func photoContent(geometry: GeometryProxy) -> some View {
+        SinglePhotoView(
+            photoURL: media.imageURL,
+            isZoomed: $isZoomed,
+            onImageLoaded: { _ in }
+        )
+        .frame(width: geometry.size.width, height: geometry.size.height)
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showControls.toggle()
+            }
+        }
+    }
+
+    // MARK: - Video Content
+    @ViewBuilder
+    private func videoContent(geometry: GeometryProxy) -> some View {
+        ZStack {
+            // Thumbnail while loading
+            if isLoading || downloadStatus != nil {
+                CachedAsyncImage(url: URL(string: media.imageURL)) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                } placeholder: {
+                    Color.black
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .tint(.white)
+                        .scaleEffect(1.5)
+
+                    if let status = downloadStatus {
+                        Text(status)
+                            .font(.subheadline)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(8)
+                    }
+                }
+            }
+
+            // Video player
+            if let player = player {
+                VideoPlayerView(player: player)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showControls.toggle()
+                        }
+                    }
+            }
+
+            // Buffering indicator
+            if isBuffering && !isLoading && playbackError == nil {
+                ProgressView()
+                    .tint(.white)
+                    .scaleEffect(1.2)
+            }
+
+            // Error display
+            if let error = playbackError {
+                VStack(spacing: 16) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 50))
+                        .foregroundColor(.orange)
+
+                    Text("Unable to play video")
+                        .font(.headline)
+                        .foregroundColor(.white)
+
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.7))
+
+                    Button("Retry") {
+                        playbackError = nil
+                        setupVideoPlayer()
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color.white.opacity(0.2))
+                    .cornerRadius(8)
+                }
+            }
+
+            // Play button overlay when paused
+            if !isLoading && !isPlaying && player != nil && playbackError == nil {
+                Button(action: togglePlayPause) {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 70))
+                        .foregroundColor(.white.opacity(0.9))
+                        .shadow(radius: 10)
+                }
+            }
+        }
+    }
+
+    // MARK: - Top Bar
+    private var topBar: some View {
+        HStack {
+            Button(action: {
+                cleanupPlayer()
+                onDismiss()
+            }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title)
+                    .foregroundColor(.white)
+                    .shadow(radius: 3)
+            }
+
+            Spacer()
+
+            Text("\(currentPosition) / \(totalCount)")
+                .foregroundColor(.white)
+                .font(.subheadline)
+                .shadow(radius: 3)
+
+            Spacer()
+
+            Menu {
+                Button(action: saveMedia) {
+                    Label("Save to Photos", systemImage: "square.and.arrow.down")
+                }
+
+                if let onToggleFavorite = onToggleFavorite {
+                    Button(action: onToggleFavorite) {
+                        Label(media.isFavorite == true ? "Remove from Favorites" : "Add to Favorites",
+                              systemImage: media.isFavorite == true ? "heart.slash" : "heart")
+                    }
+                }
+
+                if onDelete != nil {
+                    Button(role: .destructive, action: { showingDeleteAlert = true }) {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle.fill")
+                    .font(.title)
+                    .foregroundColor(.white)
+                    .shadow(radius: 3)
+            }
+        }
+        .padding()
+    }
+
+    // MARK: - Video Controls Bar
+    private var videoControlsBar: some View {
+        VStack(spacing: 8) {
+            // Progress slider
+            Slider(
+                value: Binding(
+                    get: { currentTime },
+                    set: { newValue in
+                        currentTime = newValue
+                        seekToTime(newValue)
+                    }
+                ),
+                in: 0...(media.duration ?? 1)
+            )
+            .tint(.white)
+            .padding(.horizontal)
+
+            HStack {
+                // Current time
+                Text(formatDuration(currentTime))
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .monospacedDigit()
+
+                Spacer()
+
+                // Play/Pause button
+                Button(action: togglePlayPause) {
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .font(.title2)
+                        .foregroundColor(.white)
+                }
+
+                Spacer()
+
+                // Duration
+                Text(formatDuration(media.duration ?? 0))
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .monospacedDigit()
+            }
+            .padding(.horizontal)
+        }
+        .padding(.vertical, 12)
+        .background(
+            LinearGradient(
+                gradient: Gradient(colors: [.clear, .black.opacity(0.6)]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+    }
+
+    // MARK: - Save Success Toast
+    private var saveSuccessToast: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                Text("Saved to Photos")
+                    .foregroundColor(.white)
+            }
+            .padding()
+            .background(.ultraThinMaterial)
+            .cornerRadius(10)
+            .padding(.bottom, 100)
+        }
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                withAnimation { showingSaveSuccess = false }
+            }
+        }
+    }
+
+    // MARK: - Video Player Setup
+    private func setupVideoPlayer() {
+        guard let videoURLString = media.videoURL,
+              let url = URL(string: videoURLString) else {
+            playbackError = "Invalid video URL"
+            return
+        }
+
+        isLoading = true
+        playbackError = nil
+
+        // Check cache first
+        if let cachedURL = VideoCache.shared.getCachedVideoURL(for: videoURLString) {
+            createAndStartPlayer(with: cachedURL)
+        } else {
+            // Download first
+            downloadStatus = "Downloading..."
+            Task {
+                if let downloadedURL = await VideoCache.shared.downloadForPlayback(from: url) {
+                    await MainActor.run {
+                        downloadStatus = nil
+                        createAndStartPlayer(with: downloadedURL)
+                    }
+                } else {
+                    await MainActor.run {
+                        isLoading = false
+                        downloadStatus = nil
+                        playbackError = "Failed to download video"
+                    }
+                }
+            }
+        }
+    }
+
+    private func createAndStartPlayer(with url: URL) {
+        let playerItem = AVPlayerItem(url: url)
+        let newPlayer = AVPlayer(playerItem: playerItem)
+
+        // Observe status
+        statusObservation = playerItem.observe(\.status) { [self] item, _ in
+            DispatchQueue.main.async {
+                switch item.status {
+                case .readyToPlay:
+                    isLoading = false
+                    isBuffering = false
+                case .failed:
+                    isLoading = false
+                    playbackError = item.error?.localizedDescription ?? "Playback failed"
+                default:
+                    break
+                }
+            }
+        }
+
+        // Time observer
+        let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
+        timeObserver = newPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [self] time in
+            if !isLoading {
+                currentTime = CMTimeGetSeconds(time)
+            }
+        }
+
+        // End observer
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: playerItem,
+            queue: .main
+        ) { _ in
+            isPlaying = false
+            currentTime = media.duration ?? 0
+        }
+
+        player = newPlayer
+        newPlayer.play()
+        isPlaying = true
+        isLoading = false
+    }
+
+    private func cleanupPlayer() {
+        player?.pause()
+
+        if let observer = timeObserver {
+            player?.removeTimeObserver(observer)
+            timeObserver = nil
+        }
+
+        statusObservation?.invalidate()
+        statusObservation = nil
+
+        if let observer = endObserver {
+            NotificationCenter.default.removeObserver(observer)
+            endObserver = nil
+        }
+
+        player?.replaceCurrentItem(with: nil)
+        player = nil
+        isPlaying = false
+        currentTime = 0
+    }
+
+    private func togglePlayPause() {
+        if isPlaying {
+            player?.pause()
+        } else {
+            if currentTime >= (media.duration ?? 0) - 0.5 {
+                player?.seek(to: .zero)
+                currentTime = 0
+            }
+            player?.play()
+        }
+        isPlaying.toggle()
+    }
+
+    private func seekToTime(_ seconds: TimeInterval) {
+        let time = CMTime(seconds: seconds, preferredTimescale: 600)
+        player?.seek(to: time)
+    }
+
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+
+    // MARK: - Save Media
+    private func saveMedia() {
+        if media.isVideo {
+            saveVideo()
+        } else {
+            savePhoto()
+        }
+    }
+
+    private func savePhoto() {
+        Task {
+            guard let url = URL(string: media.imageURL),
+                  let data = try? await URLSession.shared.data(from: url).0,
+                  let image = UIImage(data: data) else {
+                await MainActor.run {
+                    saveErrorMessage = "Failed to download image"
+                    showingSaveError = true
+                }
+                return
+            }
+
+            await MainActor.run {
+                let imageSaver = ImageSaver()
+                imageSaver.successHandler = {
+                    withAnimation { showingSaveSuccess = true }
+                }
+                imageSaver.errorHandler = { error in
+                    saveErrorMessage = error.localizedDescription
+                    showingSaveError = true
+                }
+                imageSaver.writeToPhotoAlbum(image: image)
+            }
+        }
+    }
+
+    private func saveVideo() {
+        guard let videoURLString = media.videoURL,
+              let url = URL(string: videoURLString) else {
+            saveErrorMessage = "Invalid video URL"
+            showingSaveError = true
+            return
+        }
+
+        Task {
+            let localURL: URL
+            if let cachedURL = VideoCache.shared.getCachedVideoURL(for: videoURLString) {
+                localURL = cachedURL
+            } else if let downloadedURL = await VideoCache.shared.downloadAndCache(from: url) {
+                localURL = downloadedURL
+            } else {
+                await MainActor.run {
+                    saveErrorMessage = "Failed to download video"
+                    showingSaveError = true
+                }
+                return
+            }
+
+            let videoSaver = VideoSaver()
+            videoSaver.successHandler = {
+                Task { @MainActor in
+                    withAnimation { showingSaveSuccess = true }
+                }
+            }
+            videoSaver.errorHandler = { error in
+                Task { @MainActor in
+                    saveErrorMessage = error.localizedDescription
+                    showingSaveError = true
+                }
+            }
+            videoSaver.saveVideoToPhotoLibrary(from: localURL)
+        }
+    }
+}

@@ -1973,67 +1973,33 @@ struct PhotoGalleryView: View {
                 Text(saveErrorMessage)
             }
             .fullScreenCover(item: $selectedPhotoIndex) { photoIndex in
-                // Check if this is a video or photo
+                // Use unified media viewer for both photos and videos with swipe navigation
                 if photoIndex.value < photosInDisplayOrder.count {
-                    let selectedMedia = photosInDisplayOrder[photoIndex.value]
+                    FullScreenMediaViewer(
+                        mediaItems: photosInDisplayOrder,
+                        initialIndex: photoIndex.value,
+                        onDismiss: { selectedPhotoIndex = nil },
+                        onDelete: { mediaToDelete in
+                            Task {
+                                try? await viewModel.deletePhoto(mediaToDelete)
+                            }
+                        },
+                        onToggleFavorite: { mediaToToggle in
+                            if let photoId = mediaToToggle.id {
+                                let newFavoriteState = !(mediaToToggle.isFavorite ?? false)
 
-                    if selectedMedia.isVideo, let videoURL = selectedMedia.videoURL {
-                        // Show video player for videos
-                        FullScreenVideoPlayer(
-                            videoURL: videoURL,
-                            thumbnailURL: selectedMedia.imageURL,
-                            duration: selectedMedia.duration ?? 0,
-                            onDismiss: { selectedPhotoIndex = nil },
-                            onDelete: {
+                                // If we're in the Favorites folder and unfavoriting,
+                                // dismiss the viewer to avoid index out of range crash
+                                if currentFolderView == .favorites && !newFavoriteState {
+                                    selectedPhotoIndex = nil
+                                }
+
                                 Task {
-                                    try? await viewModel.deletePhoto(selectedMedia)
+                                    try? await FirebaseManager.shared.togglePhotoFavorite(photoId, isFavorite: newFavoriteState)
                                 }
-                            },
-                            uploadedBy: selectedMedia.uploadedBy,
-                            captureDate: selectedMedia.capturedAt ?? selectedMedia.createdAt
-                        )
-                    } else {
-                        // Show photo viewer for photos (filter out videos for photo-only viewer)
-                        let photoOnlyMedia = photosInDisplayOrder.filter { !$0.isVideo }
-                        let adjustedIndex = photoOnlyMedia.firstIndex(where: { $0.id == selectedMedia.id }) ?? 0
-                        let displayPositions = (1...photoOnlyMedia.count).map { $0 }
-
-                        FullScreenPhotoViewer(
-                            photoURLs: photoOnlyMedia.map { $0.imageURL },
-                            initialIndex: adjustedIndex,
-                            onDismiss: { selectedPhotoIndex = nil },
-                            onDelete: { indexToDelete in
-                                if indexToDelete < photoOnlyMedia.count {
-                                    let photoToDelete = photoOnlyMedia[indexToDelete]
-                                    Task {
-                                        try? await viewModel.deletePhoto(photoToDelete)
-                                    }
-                                }
-                            },
-                            captureDates: photoOnlyMedia.map { $0.capturedAt ?? $0.createdAt },
-                            chronologicalPositions: displayPositions,
-                            favoriteStates: photoOnlyMedia.map { $0.isFavorite ?? false },
-                            onToggleFavorite: { indexToToggle in
-                                if indexToToggle < photoOnlyMedia.count {
-                                    let photo = photoOnlyMedia[indexToToggle]
-                                    if let photoId = photo.id {
-                                        let newFavoriteState = !(photo.isFavorite ?? false)
-
-                                        // If we're in the Favorites folder and unfavoriting,
-                                        // dismiss the viewer to avoid index out of range crash
-                                        if currentFolderView == .favorites && !newFavoriteState {
-                                            selectedPhotoIndex = nil
-                                        }
-
-                                        Task {
-                                            try? await FirebaseManager.shared.togglePhotoFavorite(photoId, isFavorite: newFavoriteState)
-                                        }
-                                    }
-                                }
-                            },
-                            uploadedByNames: photoOnlyMedia.map { $0.uploadedBy }
-                        )
-                    }
+                            }
+                        }
+                    )
                 }
             }
             }
