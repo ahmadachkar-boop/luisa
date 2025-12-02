@@ -279,7 +279,7 @@ struct PhotoGalleryView: View {
     @State private var errorMessage = ""
     @State private var selectedPhotoIndex: PhotoIndex?
     @State private var selectionMode = false
-    @State private var selectedPhotoIndices: Set<Int> = []
+    @State private var selectedPhotoIds: Set<String> = []
     @State private var showingSaveSuccess = false
     @State private var showingSaveError = false
     @State private var saveErrorMessage = ""
@@ -1283,30 +1283,32 @@ struct PhotoGalleryView: View {
                             .padding(.top, dateGroup.key == dateGroups.first?.key ? 4 : 14)
 
                             LazyVGrid(columns: columns, spacing: 8) {
-                                ForEach(Array(dateGroup.photos.enumerated()), id: \.element.id) { _, photo in
-                                    let displayIndex = photosInDisplayOrder.firstIndex(where: { $0.id == photo.id }) ?? 0
+                                ForEach(dateGroup.photos, id: \.id) { photo in
+                                    let photoId = photo.id ?? ""
 
                                     PhotoGridCell(
                                         photo: photo,
-                                        index: displayIndex,
+                                        index: 0, // Index no longer used for selection
                                         selectionMode: selectionMode,
-                                        isSelected: selectedPhotoIndices.contains(displayIndex),
+                                        isSelected: selectedPhotoIds.contains(photoId),
                                         columnCount: columnCount,
                                         onTap: {
                                             if selectionMode {
-                                                if selectedPhotoIndices.contains(displayIndex) {
-                                                    selectedPhotoIndices.remove(displayIndex)
+                                                if selectedPhotoIds.contains(photoId) {
+                                                    selectedPhotoIds.remove(photoId)
                                                 } else {
-                                                    selectedPhotoIndices.insert(displayIndex)
+                                                    selectedPhotoIds.insert(photoId)
                                                 }
                                             } else {
-                                                selectedPhotoIndex = PhotoIndex(value: displayIndex)
+                                                if let displayIndex = photosInDisplayOrder.firstIndex(where: { $0.id == photo.id }) {
+                                                    selectedPhotoIndex = PhotoIndex(value: displayIndex)
+                                                }
                                             }
                                         },
                                         onLongPress: {
                                             if !selectionMode {
                                                 selectionMode = true
-                                                selectedPhotoIndices.insert(displayIndex)
+                                                selectedPhotoIds.insert(photoId)
                                             }
                                         }
                                     )
@@ -1392,30 +1394,32 @@ struct PhotoGalleryView: View {
 
             // Photo grid
             LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(Array(undatedPhotos.enumerated()), id: \.element.id) { _, photo in
-                    let displayIndex = photosInDisplayOrder.firstIndex(where: { $0.id == photo.id }) ?? 0
+                ForEach(undatedPhotos, id: \.id) { photo in
+                    let photoId = photo.id ?? ""
 
                     PhotoGridCell(
                         photo: photo,
-                        index: displayIndex,
+                        index: 0, // Index no longer used for selection
                         selectionMode: selectionMode,
-                        isSelected: selectedPhotoIndices.contains(displayIndex),
+                        isSelected: selectedPhotoIds.contains(photoId),
                         columnCount: columnCount,
                         onTap: {
                             if selectionMode {
-                                if selectedPhotoIndices.contains(displayIndex) {
-                                    selectedPhotoIndices.remove(displayIndex)
+                                if selectedPhotoIds.contains(photoId) {
+                                    selectedPhotoIds.remove(photoId)
                                 } else {
-                                    selectedPhotoIndices.insert(displayIndex)
+                                    selectedPhotoIds.insert(photoId)
                                 }
                             } else {
-                                selectedPhotoIndex = PhotoIndex(value: displayIndex)
+                                if let displayIndex = photosInDisplayOrder.firstIndex(where: { $0.id == photo.id }) {
+                                    selectedPhotoIndex = PhotoIndex(value: displayIndex)
+                                }
                             }
                         },
                         onLongPress: {
                             if !selectionMode {
                                 selectionMode = true
-                                selectedPhotoIndices.insert(displayIndex)
+                                selectedPhotoIds.insert(photoId)
                             }
                         }
                     )
@@ -1581,13 +1585,13 @@ struct PhotoGalleryView: View {
                             Button("Cancel") {
                                 HapticManager.light()
                                 selectionMode = false
-                                selectedPhotoIndices.removeAll()
+                                selectedPhotoIds.removeAll()
                             }
                             .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
                         }
 
                         ToolbarItem(placement: .principal) {
-                            Text("\(selectedPhotoIndices.count) selected")
+                            Text("\(selectedPhotoIds.count) selected")
                                 .font(.headline)
                                 .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
                         }
@@ -1602,7 +1606,7 @@ struct PhotoGalleryView: View {
                                     Image(systemName: "heart.fill")
                                         .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
                                 }
-                                .disabled(selectedPhotoIndices.isEmpty)
+                                .disabled(selectedPhotoIds.isEmpty)
 
                                 // Move to folder button
                                 Button(action: {
@@ -1612,7 +1616,7 @@ struct PhotoGalleryView: View {
                                     Image(systemName: "folder.badge.plus")
                                         .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
                                 }
-                                .disabled(selectedPhotoIndices.isEmpty)
+                                .disabled(selectedPhotoIds.isEmpty)
 
                                 // Add to event button
                                 Button(action: {
@@ -1622,7 +1626,7 @@ struct PhotoGalleryView: View {
                                     Image(systemName: "calendar.badge.plus")
                                         .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
                                 }
-                                .disabled(selectedPhotoIndices.isEmpty)
+                                .disabled(selectedPhotoIds.isEmpty)
 
                                 // Save button
                                 Button(action: {
@@ -1632,7 +1636,7 @@ struct PhotoGalleryView: View {
                                     Image(systemName: "square.and.arrow.down")
                                         .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
                                 }
-                                .disabled(selectedPhotoIndices.isEmpty)
+                                .disabled(selectedPhotoIds.isEmpty)
 
                                 // Delete button
                                 Button(action: {
@@ -1642,7 +1646,7 @@ struct PhotoGalleryView: View {
                                     Image(systemName: "trash")
                                         .foregroundColor(.red)
                                 }
-                                .disabled(selectedPhotoIndices.isEmpty)
+                                .disabled(selectedPhotoIds.isEmpty)
                             }
                         }
                     }
@@ -2130,16 +2134,15 @@ struct PhotoGalleryView: View {
     }
 
     private func saveSelectedPhotos() {
-        guard !selectedPhotoIndices.isEmpty else { return }
+        guard !selectedPhotoIds.isEmpty else { return }
 
         Task {
             var savedCount = 0
             var errorOccurred = false
 
-            for index in selectedPhotoIndices.sorted() {
-                guard index < photosInDisplayOrder.count else { continue }
-                let photo = photosInDisplayOrder[index]
+            let selectedPhotos = photosInDisplayOrder.filter { selectedPhotoIds.contains($0.id ?? "") }
 
+            for photo in selectedPhotos {
                 // Load image - try cache first, then async download
                 var imageToSave: UIImage?
 
@@ -2189,37 +2192,33 @@ struct PhotoGalleryView: View {
                     HapticManager.success()
                 }
                 selectionMode = false
-                selectedPhotoIndices.removeAll()
+                selectedPhotoIds.removeAll()
             }
         }
     }
 
     private func deleteSelectedPhotos() {
-        guard !selectedPhotoIndices.isEmpty else { return }
+        guard !selectedPhotoIds.isEmpty else { return }
 
         Task {
-            for index in selectedPhotoIndices.sorted().reversed() {
-                guard index < photosInDisplayOrder.count else { continue }
-                let photo = photosInDisplayOrder[index]
+            let selectedPhotos = photosInDisplayOrder.filter { selectedPhotoIds.contains($0.id ?? "") }
+
+            for photo in selectedPhotos {
                 try? await viewModel.deletePhoto(photo)
             }
 
             await MainActor.run {
                 selectionMode = false
-                selectedPhotoIndices.removeAll()
+                selectedPhotoIds.removeAll()
             }
         }
     }
 
     private func toggleFavoritesForSelected() {
-        guard !selectedPhotoIndices.isEmpty else { return }
+        guard !selectedPhotoIds.isEmpty else { return }
 
         Task {
-            let selectedPhotos = selectedPhotoIndices.sorted().compactMap { index -> Photo? in
-                guard index < photosInDisplayOrder.count else { return nil }
-                return photosInDisplayOrder[index]
-            }
-
+            let selectedPhotos = photosInDisplayOrder.filter { selectedPhotoIds.contains($0.id ?? "") }
             let photoIds = selectedPhotos.compactMap { $0.id }
 
             // Check if all selected photos are already favorited
@@ -2235,19 +2234,17 @@ struct PhotoGalleryView: View {
             await MainActor.run {
                 HapticManager.success()
                 selectionMode = false
-                selectedPhotoIndices.removeAll()
+                selectedPhotoIds.removeAll()
             }
         }
     }
 
     private func moveSelectedPhotosToFolder(_ folderId: String?) {
-        guard !selectedPhotoIndices.isEmpty else { return }
+        guard !selectedPhotoIds.isEmpty else { return }
 
         Task {
-            let photoIds = selectedPhotoIndices.sorted().compactMap { index -> String? in
-                guard index < photosInDisplayOrder.count else { return nil }
-                return photosInDisplayOrder[index].id
-            }
+            let selectedPhotos = photosInDisplayOrder.filter { selectedPhotoIds.contains($0.id ?? "") }
+            let photoIds = selectedPhotos.compactMap { $0.id }
 
             try? await viewModel.movePhotosToFolder(photoIds, folderId: folderId) { current, total in
                 // Could show progress here if needed
@@ -2256,21 +2253,17 @@ struct PhotoGalleryView: View {
             await MainActor.run {
                 HapticManager.success()
                 selectionMode = false
-                selectedPhotoIndices.removeAll()
+                selectedPhotoIds.removeAll()
             }
         }
     }
 
     private func assignSelectedPhotosToEvent(_ eventId: String?) {
-        guard !selectedPhotoIndices.isEmpty else { return }
+        guard !selectedPhotoIds.isEmpty else { return }
 
         Task {
             // Get both photo IDs and URLs for the selected photos
-            let selectedPhotos = selectedPhotoIndices.sorted().compactMap { index -> Photo? in
-                guard index < photosInDisplayOrder.count else { return nil }
-                return photosInDisplayOrder[index]
-            }
-
+            let selectedPhotos = photosInDisplayOrder.filter { selectedPhotoIds.contains($0.id ?? "") }
             let photoIds = selectedPhotos.compactMap { $0.id }
             let photoURLs = selectedPhotos.map { $0.imageURL }
 
@@ -2306,7 +2299,7 @@ struct PhotoGalleryView: View {
             await MainActor.run {
                 HapticManager.success()
                 selectionMode = false
-                selectedPhotoIndices.removeAll()
+                selectedPhotoIds.removeAll()
             }
         }
     }

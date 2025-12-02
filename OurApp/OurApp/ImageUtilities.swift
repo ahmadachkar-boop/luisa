@@ -2259,11 +2259,13 @@ struct FullScreenMediaViewer: View {
                 VStack {
                     // Top bar
                     topBar
+                        .padding(.top, geometry.safeAreaInsets.top)
 
                     Spacer()
 
                     // Bottom info area
                     bottomArea
+                        .padding(.bottom, geometry.safeAreaInsets.bottom)
                 }
                 .opacity(showControls && dragOffset == 0 ? 1 : 0)
 
