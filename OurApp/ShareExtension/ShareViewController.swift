@@ -3,13 +3,14 @@ import Social
 import UniformTypeIdentifiers
 import MobileCoreServices
 import AVFoundation
+import ImageIO
 
 /// Share Extension that uploads directly to Firebase with progress
 /// Uses background URLSession to continue uploads even after extension closes
 class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionDataDelegate {
 
     // MARK: - Properties
-    private var sharedItems: [(url: URL, isVideo: Bool, data: Data?, thumbnailData: Data?, duration: TimeInterval?)] = []
+    private var sharedItems: [(url: URL, isVideo: Bool, data: Data?, thumbnailData: Data?, duration: TimeInterval?, capturedAt: Date?)] = []
     private var processingCount = 0
     private var totalItems = 0
     private var successCount = 0
@@ -213,18 +214,38 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
     // MARK: - Firebase Config
     private func loadFirebaseConfig() {
         guard let sharedURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ourapp") else {
+            print("[SHARE] Could not access shared container")
             return
         }
 
         let configURL = sharedURL.appendingPathComponent("firebase_share_config.json")
-        guard let data = try? Data(contentsOf: configURL),
-              let config = try? JSONDecoder().decode(FirebaseConfig.self, from: data) else {
-            print("[SHARE] No Firebase config found - will queue for main app")
+
+        guard let data = try? Data(contentsOf: configURL) else {
+            print("[SHARE] No Firebase config file found at: \(configURL.path)")
+            print("[SHARE] Please open the main app while signed in to enable direct uploads")
             return
         }
 
-        firebaseConfig = config
-        print("[SHARE] Firebase config loaded - direct upload enabled")
+        // Try JSONDecoder first
+        if let config = try? JSONDecoder().decode(FirebaseConfig.self, from: data) {
+            firebaseConfig = config
+            print("[SHARE] Firebase config loaded via JSONDecoder - direct upload enabled")
+            return
+        }
+
+        // Fallback: Try manual JSON parsing (in case main app uses JSONSerialization)
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let storageBucket = json["storageBucket"] as? String,
+           let projectId = json["projectId"] as? String,
+           let apiKey = json["apiKey"] as? String {
+            // Manually construct the config
+            let idToken = json["idToken"] as? String
+            firebaseConfig = FirebaseConfig(storageBucket: storageBucket, projectId: projectId, apiKey: apiKey, idToken: idToken)
+            print("[SHARE] Firebase config loaded via manual parsing - direct upload enabled")
+            return
+        }
+
+        print("[SHARE] Failed to parse Firebase config - will queue for main app")
     }
 
     // MARK: - Process Shared Items
@@ -263,35 +284,87 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
         } else if attachment.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
             loadImage(from: attachment)
         } else {
-            itemProcessed(success: false, url: nil, isVideo: false, data: nil, thumbnailData: nil, duration: nil)
+            itemProcessed(success: false, url: nil, isVideo: false, data: nil, thumbnailData: nil, duration: nil, capturedAt: nil)
         }
     }
 
     private func loadImage(from attachment: NSItemProvider) {
         attachment.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { [weak self] item, error in
             guard error == nil else {
-                self?.itemProcessed(success: false, url: nil, isVideo: false, data: nil, thumbnailData: nil, duration: nil)
+                self?.itemProcessed(success: false, url: nil, isVideo: false, data: nil, thumbnailData: nil, duration: nil, capturedAt: nil)
                 return
             }
 
             var imageData: Data?
             var fileURL: URL?
+            var capturedAt: Date?
 
             if let url = item as? URL {
                 fileURL = url
                 imageData = try? Data(contentsOf: url)
+                // Extract EXIF date from file
+                capturedAt = self?.extractImageDate(from: url)
             } else if let image = item as? UIImage {
                 imageData = self?.compressImage(image)
             } else if let data = item as? Data, let image = UIImage(data: data) {
                 imageData = self?.compressImage(image)
+                // Try to extract date from data
+                capturedAt = self?.extractImageDate(from: data)
             }
 
             if let data = imageData {
-                self?.itemProcessed(success: true, url: fileURL, isVideo: false, data: data, thumbnailData: nil, duration: nil)
+                self?.itemProcessed(success: true, url: fileURL, isVideo: false, data: data, thumbnailData: nil, duration: nil, capturedAt: capturedAt)
             } else {
-                self?.itemProcessed(success: false, url: nil, isVideo: false, data: nil, thumbnailData: nil, duration: nil)
+                self?.itemProcessed(success: false, url: nil, isVideo: false, data: nil, thumbnailData: nil, duration: nil, capturedAt: nil)
             }
         }
+    }
+
+    /// Extract capture date from image EXIF metadata
+    private func extractImageDate(from url: URL) -> Date? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let exif = properties[kCGImagePropertyExifDictionary as String] as? [String: Any] else {
+            return nil
+        }
+
+        // Try DateTimeOriginal first (when photo was taken)
+        if let dateString = exif[kCGImagePropertyExifDateTimeOriginal as String] as? String {
+            return parseExifDate(dateString)
+        }
+
+        // Fallback to DateTimeDigitized
+        if let dateString = exif[kCGImagePropertyExifDateTimeDigitized as String] as? String {
+            return parseExifDate(dateString)
+        }
+
+        return nil
+    }
+
+    /// Extract capture date from image data
+    private func extractImageDate(from data: Data) -> Date? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let exif = properties[kCGImagePropertyExifDictionary as String] as? [String: Any] else {
+            return nil
+        }
+
+        if let dateString = exif[kCGImagePropertyExifDateTimeOriginal as String] as? String {
+            return parseExifDate(dateString)
+        }
+
+        if let dateString = exif[kCGImagePropertyExifDateTimeDigitized as String] as? String {
+            return parseExifDate(dateString)
+        }
+
+        return nil
+    }
+
+    /// Parse EXIF date string (format: "yyyy:MM:dd HH:mm:ss")
+    private func parseExifDate(_ dateString: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        return formatter.date(from: dateString)
     }
 
     private func loadVideo(from attachment: NSItemProvider) {
@@ -300,7 +373,7 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
 
         attachment.loadItem(forTypeIdentifier: videoType, options: nil) { [weak self] item, error in
             guard error == nil, let url = item as? URL else {
-                self?.itemProcessed(success: false, url: nil, isVideo: true, data: nil, thumbnailData: nil, duration: nil)
+                self?.itemProcessed(success: false, url: nil, isVideo: true, data: nil, thumbnailData: nil, duration: nil, capturedAt: nil)
                 return
             }
 
@@ -311,6 +384,7 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
 
             var thumbnailData: Data?
             var duration: TimeInterval = 0
+            var capturedAt: Date?
 
             do {
                 let cgImage = try generator.copyCGImage(at: .zero, actualTime: nil)
@@ -321,11 +395,42 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
                 print("[SHARE] Failed to generate thumbnail: \(error)")
             }
 
+            // Extract video creation date
+            capturedAt = self?.extractVideoDate(from: asset)
+
             // Read video data
             let videoData = try? Data(contentsOf: url)
 
-            self?.itemProcessed(success: videoData != nil, url: url, isVideo: true, data: videoData, thumbnailData: thumbnailData, duration: duration)
+            self?.itemProcessed(success: videoData != nil, url: url, isVideo: true, data: videoData, thumbnailData: thumbnailData, duration: duration, capturedAt: capturedAt)
         }
+    }
+
+    /// Extract creation date from video metadata
+    private func extractVideoDate(from asset: AVAsset) -> Date? {
+        // Try creationDate metadata
+        if let creationDate = asset.creationDate?.dateValue {
+            return creationDate
+        }
+
+        // Try common metadata keys
+        let metadataItems = asset.metadata
+        for item in metadataItems {
+            if let key = item.commonKey?.rawValue, key == "creationDate",
+               let dateValue = item.dateValue {
+                return dateValue
+            }
+        }
+
+        // Try file modification date as fallback
+        if let urlAsset = asset as? AVURLAsset {
+            let url = urlAsset.url
+            if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+               let creationDate = attributes[.creationDate] as? Date {
+                return creationDate
+            }
+        }
+
+        return nil
     }
 
     private func compressImage(_ image: UIImage, maxBytes: Int = 1_000_000) -> Data? {
@@ -351,14 +456,14 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
         return data
     }
 
-    private func itemProcessed(success: Bool, url: URL?, isVideo: Bool, data: Data?, thumbnailData: Data?, duration: TimeInterval?) {
+    private func itemProcessed(success: Bool, url: URL?, isVideo: Bool, data: Data?, thumbnailData: Data?, duration: TimeInterval?, capturedAt: Date?) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
 
             self.processingCount += 1
             if success, let data = data {
                 self.successCount += 1
-                self.sharedItems.append((url: url ?? URL(fileURLWithPath: ""), isVideo: isVideo, data: data, thumbnailData: thumbnailData, duration: duration))
+                self.sharedItems.append((url: url ?? URL(fileURLWithPath: ""), isVideo: isVideo, data: data, thumbnailData: thumbnailData, duration: duration, capturedAt: capturedAt))
             }
 
             let progress = Float(self.processingCount) / Float(self.totalItems) * 0.3 // Processing is 30% of total
@@ -406,7 +511,7 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
         }
     }
 
-    private func uploadImage(_ item: (url: URL, isVideo: Bool, data: Data?, thumbnailData: Data?, duration: TimeInterval?)) {
+    private func uploadImage(_ item: (url: URL, isVideo: Bool, data: Data?, thumbnailData: Data?, duration: TimeInterval?, capturedAt: Date?)) {
         guard let config = firebaseConfig, let imageData = item.data else {
             uploadFailed()
             return
@@ -420,7 +525,7 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
             }
 
             // Create Firestore document
-            self?.createPhotoDocument(imageURL: downloadURL, isVideo: false, videoURL: nil, duration: nil) { success in
+            self?.createPhotoDocument(imageURL: downloadURL, isVideo: false, videoURL: nil, duration: nil, capturedAt: item.capturedAt) { success in
                 if success {
                     self?.uploadedCount += 1
                     self?.currentUploadIndex += 1
@@ -433,7 +538,7 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
         }
     }
 
-    private func uploadVideo(_ item: (url: URL, isVideo: Bool, data: Data?, thumbnailData: Data?, duration: TimeInterval?)) {
+    private func uploadVideo(_ item: (url: URL, isVideo: Bool, data: Data?, thumbnailData: Data?, duration: TimeInterval?, capturedAt: Date?)) {
         guard let config = firebaseConfig,
               let videoData = item.data,
               let thumbnailData = item.thumbnailData else {
@@ -459,7 +564,7 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
                 }
 
                 // Create Firestore document
-                self?.createPhotoDocument(imageURL: thumbURL, isVideo: true, videoURL: videoURL, duration: item.duration) { success in
+                self?.createPhotoDocument(imageURL: thumbURL, isVideo: true, videoURL: videoURL, duration: item.duration, capturedAt: item.capturedAt) { success in
                     if success {
                         self?.uploadedCount += 1
                         self?.currentUploadIndex += 1
@@ -569,7 +674,7 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
         responseData[dataTask]?.append(data)
     }
 
-    private func createPhotoDocument(imageURL: String, isVideo: Bool, videoURL: String?, duration: TimeInterval?, completion: @escaping (Bool) -> Void) {
+    private func createPhotoDocument(imageURL: String, isVideo: Bool, videoURL: String?, duration: TimeInterval?, capturedAt: Date?, completion: @escaping (Bool) -> Void) {
         guard let config = firebaseConfig else {
             completion(false)
             return
@@ -582,12 +687,23 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
             return
         }
 
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
         var fields: [String: Any] = [
             "imageURL": ["stringValue": imageURL],
             "caption": ["stringValue": ""],
             "uploadedBy": ["stringValue": "You"],
-            "createdAt": ["timestampValue": ISO8601DateFormatter().string(from: Date())]
+            "createdAt": ["timestampValue": isoFormatter.string(from: Date())]
         ]
+
+        // Add capturedAt if available (this is the original photo/video creation date)
+        if let capturedAt = capturedAt {
+            fields["capturedAt"] = ["timestampValue": isoFormatter.string(from: capturedAt)]
+            print("[SHARE] Setting capturedAt: \(capturedAt)")
+        } else {
+            print("[SHARE] No capturedAt date found for media")
+        }
 
         if isVideo {
             fields["mediaType"] = ["stringValue": "video"]
@@ -614,7 +730,11 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         URLSession.shared.dataTask(with: request) { data, response, error in
-            let success = error == nil && (response as? HTTPURLResponse)?.statusCode == 200
+            let httpResponse = response as? HTTPURLResponse
+            let success = error == nil && httpResponse?.statusCode == 200
+            if !success {
+                print("[SHARE] Document creation failed: \(error?.localizedDescription ?? "Unknown"), status: \(httpResponse?.statusCode ?? 0)")
+            }
             DispatchQueue.main.async { completion(success) }
         }.resume()
     }
