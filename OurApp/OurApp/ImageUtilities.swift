@@ -2207,7 +2207,7 @@ struct FullScreenMediaViewer: View {
                 if currentIndex >= 0 && currentIndex < mediaItems.count {
                     mediaContentView(geometry: geometry)
                         .id("\(currentIndex)-\(viewID)")
-                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .offset(y: dragOffset)
                         .ignoresSafeArea()
                         .gesture(
@@ -2455,7 +2455,7 @@ struct FullScreenMediaViewer: View {
                 }
             }
         }
-        .frame(width: geometry.size.width, height: geometry.size.height)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Top Bar
