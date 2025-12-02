@@ -2362,6 +2362,9 @@ struct FullScreenMediaViewer: View {
     @ViewBuilder
     private func videoContentView(media: Photo, geometry: GeometryProxy) -> some View {
         ZStack {
+            // Black background to fill space
+            Color.black
+
             // Thumbnail while loading
             if videoIsLoading || videoDownloadStatus != nil {
                 CachedAsyncImage(url: URL(string: media.imageURL)) { image in
@@ -2371,7 +2374,6 @@ struct FullScreenMediaViewer: View {
                 } placeholder: {
                     Color.black
                 }
-                .frame(width: geometry.size.width, height: geometry.size.height)
 
                 VStack(spacing: 12) {
                     ProgressView()
@@ -2393,7 +2395,7 @@ struct FullScreenMediaViewer: View {
             // Video player
             if let player = videoPlayer {
                 VideoPlayerView(player: player)
-                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .ignoresSafeArea()
             }
 
             // Error display
@@ -2432,6 +2434,7 @@ struct FullScreenMediaViewer: View {
                 }
             }
         }
+        .frame(width: geometry.size.width, height: geometry.size.height)
     }
 
     // MARK: - Top Bar
