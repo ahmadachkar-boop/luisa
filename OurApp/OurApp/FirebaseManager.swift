@@ -242,13 +242,17 @@ class FirebaseManager: ObservableObject {
     }
 
     // MARK: - Videos
-    func uploadVideo(videoData: Data, thumbnailData: Data, duration: TimeInterval, caption: String = "", uploadedBy: String = "You", capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws -> String {
+
+    /// Optimized video upload using file streaming (avoids loading into memory)
+    func uploadVideoFromFile(videoURL: URL, thumbnailData: Data, duration: TimeInterval, caption: String = "", uploadedBy: String = "You", capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws -> String {
         let videoFileName = "\(UUID().uuidString).mp4"
         let thumbnailFileName = "\(UUID().uuidString)_thumb.jpg"
 
-        // Upload video file
+        // Upload video using file streaming (much faster for large files)
         let videoRef = storage.reference().child("videos/\(videoFileName)")
-        let _ = try await videoRef.putDataAsync(videoData)
+        let metadata = StorageMetadata()
+        metadata.contentType = "video/mp4"
+        let _ = try await videoRef.putFileAsync(from: videoURL, metadata: metadata)
         let videoDownloadURL = try await videoRef.downloadURL()
 
         // Upload thumbnail image
@@ -257,7 +261,7 @@ class FirebaseManager: ObservableObject {
         let thumbnailDownloadURL = try await thumbnailRef.downloadURL()
 
         let photo = Photo(
-            imageURL: thumbnailDownloadURL.absoluteString, // Thumbnail for grid display
+            imageURL: thumbnailDownloadURL.absoluteString,
             caption: caption,
             uploadedBy: uploadedBy,
             createdAt: Date(),
@@ -271,6 +275,25 @@ class FirebaseManager: ObservableObject {
 
         try db.collection("photos").addDocument(from: photo)
         return videoDownloadURL.absoluteString
+    }
+
+    /// Legacy method for compatibility
+    func uploadVideo(videoData: Data, thumbnailData: Data, duration: TimeInterval, caption: String = "", uploadedBy: String = "You", capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws -> String {
+        // Write data to temp file for streaming upload
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        try videoData.write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        return try await uploadVideoFromFile(
+            videoURL: tempURL,
+            thumbnailData: thumbnailData,
+            duration: duration,
+            caption: caption,
+            uploadedBy: uploadedBy,
+            capturedAt: capturedAt,
+            eventId: eventId,
+            folderId: folderId
+        )
     }
 
     func getPhotos() -> AsyncThrowingStream<[Photo], Error> {

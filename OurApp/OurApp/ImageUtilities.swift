@@ -768,71 +768,113 @@ class VideoCompressor {
     /// Maximum file size for uploaded videos (100MB for high quality)
     private let maxUploadSizeBytes: Int64 = 100_000_000
 
-    /// Compress video with adaptive quality based on file size
-    /// Uses highest quality possible while keeping file size reasonable
-    func compressVideo(from inputURL: URL, maxFileSizeBytes: Int = 100_000_000) async throws -> (data: Data, duration: TimeInterval) {
-        let asset = AVURLAsset(url: inputURL)
+    /// Result type for video processing - returns URL for streaming upload
+    struct ProcessedVideo {
+        let fileURL: URL
+        let duration: TimeInterval
+        let needsCleanup: Bool  // Whether we created a temp file that needs deletion
+    }
+
+    /// Process video for upload - skips re-encoding when possible for speed
+    /// Returns file URL for streaming upload (avoids loading into memory)
+    func processVideo(from inputURL: URL, maxFileSizeBytes: Int64 = 100_000_000) async throws -> ProcessedVideo {
+        let asset = AVURLAsset(url: inputURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
         let duration = try await asset.load(.duration).seconds
 
-        // Get original file size to determine compression strategy
+        // Get original file size
         let fileAttributes = try FileManager.default.attributesOfItem(atPath: inputURL.path)
         let originalSize = fileAttributes[.size] as? Int64 ?? 0
 
+        print("🎬 [VIDEO] Original size: \(originalSize / 1_000_000)MB, duration: \(String(format: "%.1f", duration))s")
+
+        // OPTIMIZATION 1: Skip re-encoding for small, already-optimized videos
+        if originalSize < maxFileSizeBytes {
+            // Check if video is already in a compatible format (H.264/HEVC MP4)
+            if await isVideoAlreadyOptimized(asset: asset) {
+                print("🎬 [VIDEO] Skipping compression - already optimized")
+                return ProcessedVideo(fileURL: inputURL, duration: duration, needsCleanup: false)
+            }
+        }
+
         // Choose quality preset based on original size
-        // For small videos, use highest quality; for large videos, use adaptive compression
         let presetName: String
-        if originalSize < 20_000_000 { // Under 20MB - use highest quality
-            presetName = AVAssetExportPresetHighestQuality
-        } else if originalSize < 50_000_000 { // 20-50MB - use 1080p
-            presetName = AVAssetExportPreset1920x1080
-        } else if originalSize < 150_000_000 { // 50-150MB - use 720p for reasonable size
+        if originalSize < 30_000_000 { // Under 30MB - use HEVC for speed + quality
+            presetName = AVAssetExportPresetHEVCHighestQuality
+        } else if originalSize < 80_000_000 { // 30-80MB - use 1080p HEVC
+            presetName = AVAssetExportPresetHEVC1920x1080
+        } else if originalSize < 200_000_000 { // 80-200MB - use 720p
             presetName = AVAssetExportPreset1280x720
         } else { // Very large files - use medium quality
             presetName = AVAssetExportPresetMediumQuality
         }
 
-        print("🎬 [VIDEO COMPRESS] Original size: \(originalSize / 1_000_000)MB, using preset: \(presetName)")
+        print("🎬 [VIDEO] Compressing with preset: \(presetName)")
 
-        // Create export session
-        guard let exportSession = AVAssetExportSession(asset: asset, presetName: presetName) else {
-            // Fallback to passthrough if preferred preset not available
-            guard let fallbackSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
-                throw VideoError.exportSessionCreationFailed
-            }
-            return try await exportWithSession(fallbackSession, duration: duration)
+        // Try HEVC first (hardware accelerated), fall back to H.264
+        if let exportSession = AVAssetExportSession(asset: asset, presetName: presetName) {
+            return try await exportWithSession(exportSession, duration: duration)
+        } else if let h264Session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset1920x1080) {
+            print("🎬 [VIDEO] HEVC not available, using H.264")
+            return try await exportWithSession(h264Session, duration: duration)
+        } else if let passthroughSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) {
+            print("🎬 [VIDEO] Using passthrough")
+            return try await exportWithSession(passthroughSession, duration: duration)
+        } else {
+            throw VideoError.exportSessionCreationFailed
         }
-
-        return try await exportWithSession(exportSession, duration: duration)
     }
 
-    private func exportWithSession(_ exportSession: AVAssetExportSession, duration: TimeInterval) async throws -> (data: Data, duration: TimeInterval) {
-        // Create temp output URL
+    /// Check if video is already in an upload-ready format
+    private func isVideoAlreadyOptimized(asset: AVURLAsset) async -> Bool {
+        do {
+            let tracks = try await asset.load(.tracks)
+            guard let videoTrack = tracks.first(where: { $0.mediaType == .video }) else {
+                return false
+            }
+
+            // Check format - we want H.264 or HEVC
+            let formatDescriptions = try await videoTrack.load(.formatDescriptions)
+            guard let formatDesc = formatDescriptions.first else { return false }
+
+            let mediaSubType = CMFormatDescriptionGetMediaSubType(formatDesc)
+            let codecType = FourCharCode(mediaSubType)
+
+            // H.264 = 'avc1', HEVC = 'hvc1' or 'hev1'
+            let isCompatibleCodec = codecType == 0x61766331 || // avc1
+                                    codecType == 0x68766331 || // hvc1
+                                    codecType == 0x68657631    // hev1
+
+            return isCompatibleCodec
+        } catch {
+            return false
+        }
+    }
+
+    private func exportWithSession(_ exportSession: AVAssetExportSession, duration: TimeInterval) async throws -> ProcessedVideo {
         let tempDir = FileManager.default.temporaryDirectory
         let outputURL = tempDir.appendingPathComponent("\(UUID().uuidString).mp4")
 
-        // Clean up any existing file
         try? FileManager.default.removeItem(at: outputURL)
 
         exportSession.outputURL = outputURL
         exportSession.outputFileType = .mp4
         exportSession.shouldOptimizeForNetworkUse = true
 
-        // Export with progress monitoring
+        let startTime = Date()
         await exportSession.export()
+        let elapsed = Date().timeIntervalSince(startTime)
 
         switch exportSession.status {
         case .completed:
-            let data = try Data(contentsOf: outputURL)
-            print("🎬 [VIDEO COMPRESS] Compressed size: \(data.count / 1_000_000)MB")
-
-            // Clean up temp file
-            try? FileManager.default.removeItem(at: outputURL)
-            return (data, duration)
+            let attrs = try FileManager.default.attributesOfItem(atPath: outputURL.path)
+            let compressedSize = attrs[.size] as? Int64 ?? 0
+            print("🎬 [VIDEO] Compressed to \(compressedSize / 1_000_000)MB in \(String(format: "%.1f", elapsed))s")
+            return ProcessedVideo(fileURL: outputURL, duration: duration, needsCleanup: true)
 
         case .failed:
             try? FileManager.default.removeItem(at: outputURL)
             if let error = exportSession.error {
-                print("🔴 [VIDEO COMPRESS] Export failed: \(error)")
+                print("🔴 [VIDEO] Export failed: \(error)")
                 throw error
             }
             throw VideoError.exportFailed
@@ -845,6 +887,16 @@ class VideoCompressor {
             try? FileManager.default.removeItem(at: outputURL)
             throw VideoError.exportFailed
         }
+    }
+
+    /// Legacy method for compatibility - loads into memory (slower)
+    func compressVideo(from inputURL: URL, maxFileSizeBytes: Int = 100_000_000) async throws -> (data: Data, duration: TimeInterval) {
+        let processed = try await processVideo(from: inputURL, maxFileSizeBytes: Int64(maxFileSizeBytes))
+        let data = try Data(contentsOf: processed.fileURL)
+        if processed.needsCleanup {
+            try? FileManager.default.removeItem(at: processed.fileURL)
+        }
+        return (data, processed.duration)
     }
 
     /// Generate a high-quality thumbnail from video

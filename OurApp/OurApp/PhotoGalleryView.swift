@@ -1674,11 +1674,17 @@ struct PhotoGalleryView: View {
                                         continue
                                     }
 
-                                    // Generate thumbnail first (faster, validates video is readable)
-                                    print("🎬 [GALLERY UPLOAD] Generating thumbnail for video \(index + 1)...")
+                                    // Process video and generate thumbnail in parallel for speed
+                                    print("🎬 [GALLERY UPLOAD] Processing video \(index + 1)...")
+
+                                    // Start both operations concurrently
+                                    async let thumbnailTask = VideoCompressor.shared.generateThumbnail(from: tempVideoURL)
+                                    async let processTask = VideoCompressor.shared.processVideo(from: tempVideoURL)
+
+                                    // Wait for thumbnail first (faster, validates video)
                                     let thumbnail: UIImage
                                     do {
-                                        thumbnail = try await VideoCompressor.shared.generateThumbnail(from: tempVideoURL)
+                                        thumbnail = try await thumbnailTask
                                     } catch {
                                         print("🔴 [GALLERY UPLOAD] Failed to generate thumbnail \(index + 1): \(error)")
                                         UploadProgressManager.shared.failTask(
@@ -1708,37 +1714,42 @@ struct PhotoGalleryView: View {
                                         progress: 0.3
                                     )
 
-                                    // Compress video with progress
-                                    print("🎬 [GALLERY UPLOAD] Compressing video \(index + 1)...")
-                                    let compressedVideoData: Data
-                                    let duration: TimeInterval
+                                    // Wait for video processing (may have already completed in parallel)
+                                    let processedVideo: VideoCompressor.ProcessedVideo
                                     do {
-                                        (compressedVideoData, duration) = try await VideoCompressor.shared.compressVideo(from: tempVideoURL)
+                                        processedVideo = try await processTask
                                     } catch {
-                                        print("🔴 [GALLERY UPLOAD] Failed to compress video \(index + 1): \(error)")
+                                        print("🔴 [GALLERY UPLOAD] Failed to process video \(index + 1): \(error)")
                                         UploadProgressManager.shared.failTask(
                                             batchId: batchId,
                                             taskIndex: index,
-                                            error: "Video compression failed: \(error.localizedDescription)"
+                                            error: "Video processing failed: \(error.localizedDescription)"
                                         )
-                                        uploadErrors.append("Failed to compress video \(index + 1)")
+                                        uploadErrors.append("Failed to process video \(index + 1)")
                                         continue
                                     }
 
-                                    print("🎬 [GALLERY UPLOAD] Compressed video \(index + 1): \(compressedVideoData.count / 1_000_000)MB, duration: \(String(format: "%.1f", duration))s")
+                                    // Ensure cleanup of temp file after upload
+                                    defer {
+                                        if processedVideo.needsCleanup {
+                                            try? FileManager.default.removeItem(at: processedVideo.fileURL)
+                                        }
+                                    }
+
+                                    print("🎬 [GALLERY UPLOAD] Video \(index + 1) ready, duration: \(String(format: "%.1f", processedVideo.duration))s")
 
                                     UploadProgressManager.shared.updateTaskProgress(
                                         batchId: batchId,
                                         taskIndex: index,
-                                        progress: 0.6
+                                        progress: 0.5
                                     )
 
-                                    // Upload video
+                                    // Upload video using file streaming (faster than loading into memory)
                                     print("🎬 [GALLERY UPLOAD] Uploading video \(index + 1)...")
-                                    try await viewModel.uploadVideo(
-                                        videoData: compressedVideoData,
+                                    try await viewModel.uploadVideoFromFile(
+                                        videoURL: processedVideo.fileURL,
                                         thumbnailData: thumbnailData,
-                                        duration: duration,
+                                        duration: processedVideo.duration,
                                         capturedAt: nil
                                     )
 
@@ -2779,6 +2790,20 @@ class PhotoGalleryViewModel: ObservableObject {
     func uploadVideo(videoData: Data, thumbnailData: Data, duration: TimeInterval, capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws {
         _ = try await firebaseManager.uploadVideo(
             videoData: videoData,
+            thumbnailData: thumbnailData,
+            duration: duration,
+            caption: "",
+            uploadedBy: UserIdentityManager.shared.currentUserName,
+            capturedAt: capturedAt,
+            eventId: eventId,
+            folderId: folderId
+        )
+    }
+
+    /// Optimized video upload using file streaming
+    func uploadVideoFromFile(videoURL: URL, thumbnailData: Data, duration: TimeInterval, capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws {
+        _ = try await firebaseManager.uploadVideoFromFile(
+            videoURL: videoURL,
             thumbnailData: thumbnailData,
             duration: duration,
             caption: "",
