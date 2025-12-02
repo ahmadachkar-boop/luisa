@@ -1438,7 +1438,7 @@ struct EventDetailView: View {
     let event: CalendarEvent
     let onDelete: () -> Void
     @Environment(\.dismiss) var dismiss
-    @EnvironmentObject var viewModel: SharedViewModel
+    @EnvironmentObject var viewModel: CalendarViewModel
     @ObservedObject private var uploadManager = UploadProgressManager.shared
     @State private var showingDeleteAlert = false
     @State private var showingEditView = false
@@ -2959,6 +2959,12 @@ class CalendarViewModel: ObservableObject {
 
     func deleteEvent(_ event: CalendarEvent) async throws {
         try await firebaseManager.deleteCalendarEvent(event)
+    }
+
+    func toggleFavorite(for photo: Photo) async throws {
+        guard let photoId = photo.id else { return }
+        let newFavoriteState = !(photo.isFavorite ?? false)
+        try await firebaseManager.togglePhotoFavorite(photoId, isFavorite: newFavoriteState)
     }
 
     func fetchWeatherForEvents() async {

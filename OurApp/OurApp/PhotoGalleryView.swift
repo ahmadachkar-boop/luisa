@@ -3234,6 +3234,7 @@ struct MoveToFolderSheet: View {
             .background(Color(red: 0.96, green: 0.94, blue: 0.98).ignoresSafeArea())
             .navigationTitle("Move to Folder")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.light, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Cancel") {
@@ -3278,6 +3279,7 @@ struct AddToEventSheet: View {
                             .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
                         TextField("Search events...", text: $searchText)
                             .textFieldStyle(.plain)
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
                     }
                     .padding(12)
                     .background(
@@ -3400,6 +3402,7 @@ struct AddToEventSheet: View {
             .background(Color(red: 0.96, green: 0.94, blue: 0.98).ignoresSafeArea())
             .navigationTitle("Add to Event")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.light, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Cancel") {
