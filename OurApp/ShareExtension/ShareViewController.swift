@@ -666,11 +666,14 @@ class ShareViewController: UIViewController {
                 return
             }
 
-            // Construct download URL
-            let encodedName = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name
+            // Construct download URL - Firebase requires slashes to be encoded as %2F
+            var allowedCharacters = CharacterSet.urlQueryAllowed
+            allowedCharacters.remove(charactersIn: "/")
+            let encodedName = name.addingPercentEncoding(withAllowedCharacters: allowedCharacters) ?? name
             let downloadURL = "https://firebasestorage.googleapis.com/v0/b/\(config.storageBucket)/o/\(encodedName)?alt=media"
 
             self?.logDiagnostic("✅ Upload completed: \(name)")
+            self?.logDiagnostic("   Download URL: \(downloadURL)")
             DispatchQueue.main.async { completion(downloadURL) }
         }
 
