@@ -734,13 +734,34 @@ class ShareViewController: UIViewController {
 
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             let httpResponse = response as? HTTPURLResponse
-            let success = error == nil && httpResponse?.statusCode == 200
-            if !success {
-                print("[SHARE] Document creation failed: \(error?.localizedDescription ?? "Unknown"), status: \(httpResponse?.statusCode ?? 0)")
+            let statusCode = httpResponse?.statusCode ?? 0
+
+            self?.logDiagnostic("📝 Document creation response: HTTP \(statusCode)")
+
+            if let error = error {
+                self?.logDiagnostic("❌ Document creation error: \(error.localizedDescription)")
+                DispatchQueue.main.async { completion(false) }
+                return
             }
-            DispatchQueue.main.async { completion(success) }
+
+            // Firestore REST API returns 200 for successful document creation
+            if statusCode == 200 {
+                if let data = data, let responseStr = String(data: data, encoding: .utf8) {
+                    self?.logDiagnostic("✅ Document created successfully")
+                    // Log first part of response to see the document ID
+                    self?.logDiagnostic("   Response: \(String(responseStr.prefix(300)))...")
+                }
+                DispatchQueue.main.async { completion(true) }
+            } else {
+                if let data = data, let errorStr = String(data: data, encoding: .utf8) {
+                    self?.logDiagnostic("❌ Document creation failed (HTTP \(statusCode)): \(String(errorStr.prefix(500)))")
+                } else {
+                    self?.logDiagnostic("❌ Document creation failed with HTTP \(statusCode)")
+                }
+                DispatchQueue.main.async { completion(false) }
+            }
         }.resume()
     }
 
