@@ -1990,7 +1990,7 @@ struct FullScreenVideoPlayer: View {
         player?.pause()
 
         // Cache video in background after playback ends (if not already cached)
-        if let urlString = videoURLForCaching ?? videoURL.isEmpty ? nil : videoURL,
+        if let urlString = videoURLForCaching ?? (videoURL.isEmpty ? nil : videoURL),
            let url = URL(string: urlString),
            VideoCache.shared.getCachedVideoURL(for: urlString) == nil {
             Task.detached(priority: .background) {

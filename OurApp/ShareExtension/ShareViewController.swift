@@ -5,7 +5,7 @@ import MobileCoreServices
 import AVFoundation
 
 /// Share Extension that uploads directly to Firebase with progress
-/// Falls back to queue if upload times out
+/// Uses background URLSession to continue uploads even after extension closes
 class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionDataDelegate {
 
     // MARK: - Properties
@@ -18,6 +18,11 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
     private var isUploading = false
     private var uploadSession: URLSession?
     private var currentUploadTask: URLSessionUploadTask?
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+
+    // For tracking upload progress
+    private var uploadTasks: [URLSessionTask: UploadTaskInfo] = [:]
+    private var pendingDocumentCreations: Int = 0
 
     // Firebase configuration - loaded from shared container
     private var firebaseConfig: FirebaseConfig?
@@ -27,6 +32,16 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
         let projectId: String
         let apiKey: String
         let idToken: String? // Auth token if user is signed in
+    }
+
+    private struct UploadTaskInfo {
+        let itemIndex: Int
+        let isVideo: Bool
+        let isThumbnail: Bool
+        let data: Data
+        var thumbnailURL: String?
+        var videoURL: String?
+        var duration: TimeInterval?
     }
 
     private lazy var containerView: UIView = {
@@ -104,8 +119,51 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
     override func viewDidLoad() {
         super.viewDidLoad()
         setupUI()
+
+        // Request extended execution time for the upload
+        beginBackgroundTask()
+
         loadFirebaseConfig()
+        setupUploadSession()
         processSharedItems()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // Don't end background task here - let it continue
+    }
+
+    deinit {
+        endBackgroundTask()
+    }
+
+    // MARK: - Background Task
+    private func beginBackgroundTask() {
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "ShareUpload") { [weak self] in
+            // Called when time is about to expire
+            print("[SHARE] Background time expiring, falling back to queue")
+            self?.queueRemainingItemsForMainApp()
+            self?.endBackgroundTask()
+        }
+        print("[SHARE] Started background task: \(backgroundTaskID.rawValue)")
+    }
+
+    private func endBackgroundTask() {
+        if backgroundTaskID != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTaskID)
+            backgroundTaskID = .invalid
+            print("[SHARE] Ended background task")
+        }
+    }
+
+    // MARK: - URL Session Setup
+    private func setupUploadSession() {
+        // Use a session with delegate for progress tracking
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 120
+        config.timeoutIntervalForResource = 300
+        config.waitsForConnectivity = true
+        uploadSession = URLSession(configuration: config, delegate: self, delegateQueue: .main)
     }
 
     // MARK: - UI Setup
@@ -415,8 +473,10 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
         }
     }
 
+    private var uploadCompletions: [URLSessionTask: (String?) -> Void] = [:]
+
     private func uploadToStorage(data: Data, path: String, contentType: String, completion: @escaping (String?) -> Void) {
-        guard let config = firebaseConfig else {
+        guard let config = firebaseConfig, let session = uploadSession else {
             completion(nil)
             return
         }
@@ -437,25 +497,76 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
-        let task = URLSession.shared.uploadTask(with: request, from: data) { responseData, response, error in
-            guard error == nil,
-                  let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200,
-                  let responseData = responseData,
-                  let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
-                  let name = json["name"] as? String else {
-                print("[SHARE] Upload failed: \(error?.localizedDescription ?? "Unknown")")
-                DispatchQueue.main.async { completion(nil) }
-                return
-            }
-
-            // Construct download URL
-            let encodedName = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name
-            let downloadURL = "https://firebasestorage.googleapis.com/v0/b/\(config.storageBucket)/o/\(encodedName)?alt=media"
-
-            DispatchQueue.main.async { completion(downloadURL) }
+        // Write data to temp file for upload task
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        do {
+            try data.write(to: tempURL)
+        } catch {
+            print("[SHARE] Failed to write temp file: \(error)")
+            completion(nil)
+            return
         }
+
+        let task = session.uploadTask(with: request, fromFile: tempURL)
+        uploadCompletions[task] = completion
+        currentUploadTask = task
         task.resume()
+
+        print("[SHARE] Started upload task for: \(path)")
+    }
+
+    // MARK: - URLSessionTaskDelegate
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        // Update progress for current item
+        let itemProgress = Float(totalBytesSent) / Float(totalBytesExpectedToSend)
+        let baseProgress: Float = 0.3 // Processing is 30%
+        let perItemProgress: Float = 0.7 / Float(max(sharedItems.count, 1))
+        let overallProgress = baseProgress + (Float(uploadedCount) * perItemProgress) + (itemProgress * perItemProgress)
+
+        DispatchQueue.main.async { [weak self] in
+            self?.progressView.setProgress(min(overallProgress, 1.0), animated: true)
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard let completion = uploadCompletions.removeValue(forKey: task) else { return }
+
+        if let error = error {
+            print("[SHARE] Upload task failed: \(error.localizedDescription)")
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
+
+        // Success - process response data
+        guard let config = firebaseConfig,
+              let data = responseData.removeValue(forKey: task),
+              let httpResponse = task.response as? HTTPURLResponse,
+              httpResponse.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let name = json["name"] as? String else {
+            print("[SHARE] Upload response invalid or failed")
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
+
+        // Construct download URL
+        let encodedName = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name
+        let downloadURL = "https://firebasestorage.googleapis.com/v0/b/\(config.storageBucket)/o/\(encodedName)?alt=media"
+
+        print("[SHARE] Upload completed: \(name)")
+        DispatchQueue.main.async { completion(downloadURL) }
+    }
+
+    // MARK: - URLSessionDataDelegate
+
+    private var responseData: [URLSessionTask: Data] = [:]
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        if responseData[dataTask] == nil {
+            responseData[dataTask] = Data()
+        }
+        responseData[dataTask]?.append(data)
     }
 
     private func createPhotoDocument(imageURL: String, isVideo: Bool, videoURL: String?, duration: TimeInterval?, completion: @escaping (Bool) -> Void) {
@@ -522,11 +633,25 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
 
     private func finishUploading() {
         isUploading = false
+        endBackgroundTask()
         showSuccess(message: "\(uploadedCount) item\(uploadedCount == 1 ? "" : "s") uploaded!")
     }
 
     // MARK: - Queue Fallback
+
+    /// Queue only remaining (not yet uploaded) items for main app processing
+    private func queueRemainingItemsForMainApp() {
+        guard currentUploadIndex < sharedItems.count else { return }
+
+        let remainingItems = Array(sharedItems[currentUploadIndex...])
+        queueItems(remainingItems)
+    }
+
     private func queueForMainApp() {
+        queueItems(sharedItems)
+    }
+
+    private func queueItems(_ items: [(url: URL, isVideo: Bool, data: Data?, thumbnailData: Data?, duration: TimeInterval?)]) {
         // Save files to shared container for main app
         guard let sharedURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ourapp") else {
             showError("Failed to access shared storage")
@@ -545,7 +670,7 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
             manifest = existing
         }
 
-        for item in sharedItems {
+        for item in items {
             guard let data = item.data else { continue }
 
             let ext = item.isVideo ? "mov" : "jpg"
@@ -569,7 +694,8 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
             try? manifestData.write(to: manifestURL)
         }
 
-        showSuccess(message: "\(sharedItems.count) item\(sharedItems.count == 1 ? "" : "s") queued")
+        endBackgroundTask()
+        showSuccess(message: "\(items.count) item\(items.count == 1 ? "" : "s") queued")
     }
 
     // MARK: - UI Updates
