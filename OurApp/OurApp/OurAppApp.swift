@@ -148,6 +148,15 @@ class PendingShareImportManager: ObservableObject {
             return
         }
 
+        // Read and display share extension diagnostic log
+        let logURL = containerURL.appendingPathComponent("share_extension_log.txt")
+        if let logContent = try? String(contentsOf: logURL, encoding: .utf8) {
+            print("📜 [SHARE EXTENSION LOG]:")
+            print(logContent)
+            // Clear the log after reading
+            try? FileManager.default.removeItem(at: logURL)
+        }
+
         let manifestURL = containerURL.appendingPathComponent("pending_uploads.json")
 
         guard FileManager.default.fileExists(atPath: manifestURL.path) else {

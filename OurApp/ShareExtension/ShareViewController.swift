@@ -189,29 +189,53 @@ class ShareViewController: UIViewController {
         activityIndicator.startAnimating()
     }
 
+    // MARK: - Diagnostic Logging
+    private func logDiagnostic(_ message: String) {
+        print("[SHARE] \(message)")
+
+        // Also write to a file the main app can read
+        guard let sharedURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ourapp") else { return }
+        let logURL = sharedURL.appendingPathComponent("share_extension_log.txt")
+
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let logLine = "[\(timestamp)] \(message)\n"
+
+        if FileManager.default.fileExists(atPath: logURL.path) {
+            if let handle = try? FileHandle(forWritingTo: logURL) {
+                handle.seekToEndOfFile()
+                if let data = logLine.data(using: .utf8) {
+                    handle.write(data)
+                }
+                handle.closeFile()
+            }
+        } else {
+            try? logLine.write(to: logURL, atomically: true, encoding: .utf8)
+        }
+    }
+
     // MARK: - Firebase Config
     private func loadFirebaseConfig() {
         guard let sharedURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ourapp") else {
-            print("[SHARE] ❌ Could not access shared container - app group may not be configured")
+            logDiagnostic("❌ Could not access shared container - app group may not be configured")
             return
         }
 
-        print("[SHARE] 📁 Shared container: \(sharedURL.path)")
+        logDiagnostic("📁 Shared container: \(sharedURL.path)")
 
         let configURL = sharedURL.appendingPathComponent("firebase_share_config.json")
 
         guard FileManager.default.fileExists(atPath: configURL.path) else {
-            print("[SHARE] ❌ Config file does not exist at: \(configURL.path)")
-            print("[SHARE] Please open the main app while signed in to enable direct uploads")
+            logDiagnostic("❌ Config file does not exist at: \(configURL.path)")
+            logDiagnostic("Please open the main app while signed in to enable direct uploads")
             return
         }
 
         guard let data = try? Data(contentsOf: configURL) else {
-            print("[SHARE] ❌ Could not read config file")
+            logDiagnostic("❌ Could not read config file")
             return
         }
 
-        print("[SHARE] 📄 Config file size: \(data.count) bytes")
+        logDiagnostic("📄 Config file size: \(data.count) bytes")
 
         // Try manual JSON parsing first (more flexible)
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -222,12 +246,12 @@ class ShareViewController: UIViewController {
             let idToken = json["idToken"] as? String
             firebaseConfig = FirebaseConfig(storageBucket: storageBucket, projectId: projectId, apiKey: apiKey, idToken: idToken)
 
-            print("[SHARE] ✅ Firebase config loaded successfully")
-            print("[SHARE]    - Storage bucket: \(storageBucket)")
-            print("[SHARE]    - Project ID: \(projectId)")
-            print("[SHARE]    - Has auth token: \(idToken != nil ? "YES" : "NO")")
+            logDiagnostic("✅ Firebase config loaded successfully")
+            logDiagnostic("   - Storage bucket: \(storageBucket)")
+            logDiagnostic("   - Project ID: \(projectId)")
+            logDiagnostic("   - Has auth token: \(idToken != nil ? "YES" : "NO")")
             if let token = idToken {
-                print("[SHARE]    - Token length: \(token.count) chars")
+                logDiagnostic("   - Token length: \(token.count) chars")
             }
             return
         }
@@ -235,14 +259,14 @@ class ShareViewController: UIViewController {
         // Try JSONDecoder as fallback
         if let config = try? JSONDecoder().decode(FirebaseConfig.self, from: data) {
             firebaseConfig = config
-            print("[SHARE] ✅ Firebase config loaded via JSONDecoder")
-            print("[SHARE]    - Has auth token: \(config.idToken != nil ? "YES" : "NO")")
+            logDiagnostic("✅ Firebase config loaded via JSONDecoder")
+            logDiagnostic("   - Has auth token: \(config.idToken != nil ? "YES" : "NO")")
             return
         }
 
-        print("[SHARE] ❌ Failed to parse Firebase config - will queue for main app")
+        logDiagnostic("❌ Failed to parse Firebase config - will queue for main app")
         if let jsonStr = String(data: data, encoding: .utf8) {
-            print("[SHARE]    Raw config: \(jsonStr.prefix(200))...")
+            logDiagnostic("   Raw config: \(String(jsonStr.prefix(200)))...")
         }
     }
 
@@ -480,13 +504,13 @@ class ShareViewController: UIViewController {
             return
         }
 
-        print("[SHARE] 🚀 Starting upload process for \(sharedItems.count) items")
+        logDiagnostic("🚀 Starting upload process for \(sharedItems.count) items")
 
         // If we have Firebase config, try direct upload
         if let config = firebaseConfig {
-            print("[SHARE] ✅ Firebase config available - attempting direct upload")
-            print("[SHARE]    Bucket: \(config.storageBucket)")
-            print("[SHARE]    Has token: \(config.idToken != nil)")
+            logDiagnostic("✅ Firebase config available - attempting direct upload")
+            logDiagnostic("   Bucket: \(config.storageBucket)")
+            logDiagnostic("   Has token: \(config.idToken != nil)")
 
             isUploading = true
             titleLabel.text = "Uploading..."
@@ -494,7 +518,7 @@ class ShareViewController: UIViewController {
             uploadNextItem()
         } else {
             // Fall back to queue for main app
-            print("[SHARE] ❌ No Firebase config - falling back to queue")
+            logDiagnostic("❌ No Firebase config - falling back to queue")
             queueForMainApp()
         }
     }
@@ -610,30 +634,32 @@ class ShareViewController: UIViewController {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
-        print("[SHARE] Starting upload for: \(path) (\(data.count) bytes)")
+        logDiagnostic("📤 Starting upload for: \(path) (\(data.count) bytes)")
 
         // Use completion handler-based upload for reliability
         let task = URLSession.shared.uploadTask(with: request, from: data) { [weak self] responseData, response, error in
             if let error = error {
-                print("[SHARE] Upload failed: \(error.localizedDescription)")
+                self?.logDiagnostic("❌ Upload network error: \(error.localizedDescription)")
                 DispatchQueue.main.async { completion(nil) }
                 return
             }
 
             guard let httpResponse = response as? HTTPURLResponse else {
-                print("[SHARE] No HTTP response")
+                self?.logDiagnostic("❌ No HTTP response received")
                 DispatchQueue.main.async { completion(nil) }
                 return
             }
 
-            print("[SHARE] Upload response status: \(httpResponse.statusCode)")
+            self?.logDiagnostic("📥 Upload response status: \(httpResponse.statusCode)")
 
             guard httpResponse.statusCode == 200,
                   let data = responseData,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let name = json["name"] as? String else {
                 if let data = responseData, let errorStr = String(data: data, encoding: .utf8) {
-                    print("[SHARE] Upload error response: \(errorStr)")
+                    self?.logDiagnostic("❌ Upload error (HTTP \(httpResponse.statusCode)): \(String(errorStr.prefix(500)))")
+                } else {
+                    self?.logDiagnostic("❌ Upload failed with HTTP \(httpResponse.statusCode)")
                 }
                 DispatchQueue.main.async { completion(nil) }
                 return
@@ -643,7 +669,7 @@ class ShareViewController: UIViewController {
             let encodedName = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name
             let downloadURL = "https://firebasestorage.googleapis.com/v0/b/\(config.storageBucket)/o/\(encodedName)?alt=media"
 
-            print("[SHARE] Upload completed: \(name)")
+            self?.logDiagnostic("✅ Upload completed: \(name)")
             DispatchQueue.main.async { completion(downloadURL) }
         }
 
