@@ -2555,6 +2555,17 @@ struct PhotoGridCell: View {
             .frame(width: cellSize, height: cellSize)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .shadow(color: Color.black.opacity(0.12), radius: columnCount == 2 ? 6 : 3, x: 0, y: 2)
+            // Pre-cache video when cell appears
+            .onAppear {
+                if photo.isVideo, let videoURLString = photo.videoURL, let videoURL = URL(string: videoURLString) {
+                    // Check if not already cached, then start background caching
+                    if VideoCache.shared.getCachedVideoURL(for: videoURLString) == nil {
+                        Task.detached(priority: .background) {
+                            _ = await VideoCache.shared.downloadAndCache(from: videoURL)
+                        }
+                    }
+                }
+            }
             // Video overlay - play button and gradient
             .overlay(
                 Group {

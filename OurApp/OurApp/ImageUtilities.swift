@@ -645,6 +645,10 @@ class VideoCache {
     static let shared = VideoCache()
     private let diskCacheURL: URL
     private let maxDiskBytes = 1_000 * 1024 * 1024 // 1GB for video cache
+    private let maxConcurrentDownloads = 2
+    private var activeDownloads = Set<String>()
+    private var pendingDownloads = [URL]()
+    private let downloadQueue = DispatchQueue(label: "VideoCache.downloadQueue")
 
     private init() {
         let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
@@ -667,29 +671,88 @@ class VideoCache {
         return nil
     }
 
+    /// Check if video is cached without updating access date
+    func isCached(url: String) -> Bool {
+        let fileURL = diskCacheURL.appendingPathComponent(url.sha256Hash + ".mp4")
+        return FileManager.default.fileExists(atPath: fileURL.path)
+    }
+
     func cacheVideo(data: Data, for remoteURL: String) async -> URL? {
         let fileURL = diskCacheURL.appendingPathComponent(remoteURL.sha256Hash + ".mp4")
         do {
             try data.write(to: fileURL)
+            print("🎬 [VIDEO CACHE] Cached: \(fileURL.lastPathComponent) (\(data.count / 1_000_000)MB)")
             return fileURL
         } catch {
-            print("Failed to cache video: \(error)")
+            print("🔴 [VIDEO CACHE] Failed to cache: \(error)")
             return nil
         }
     }
 
     func downloadAndCache(from url: URL) async -> URL? {
+        let urlString = url.absoluteString
+
         // Check if already cached
-        if let cachedURL = getCachedVideoURL(for: url.absoluteString) {
+        if let cachedURL = getCachedVideoURL(for: urlString) {
             return cachedURL
+        }
+
+        // Check if already downloading
+        let shouldStart = downloadQueue.sync { () -> Bool in
+            if activeDownloads.contains(urlString) {
+                return false // Already downloading
+            }
+            if activeDownloads.count >= maxConcurrentDownloads {
+                // Queue for later if not already pending
+                if !pendingDownloads.contains(url) {
+                    pendingDownloads.append(url)
+                }
+                return false
+            }
+            activeDownloads.insert(urlString)
+            return true
+        }
+
+        guard shouldStart else { return nil }
+
+        defer {
+            downloadQueue.sync {
+                activeDownloads.remove(urlString)
+                // Start next pending download
+                if let nextURL = pendingDownloads.first {
+                    pendingDownloads.removeFirst()
+                    Task.detached(priority: .background) {
+                        _ = await self.downloadAndCache(from: nextURL)
+                    }
+                }
+            }
         }
 
         // Download video
         do {
+            print("🎬 [VIDEO CACHE] Downloading: \(url.lastPathComponent)")
+            let (data, _) = try await URLSession.shared.data(from: url)
+            return await cacheVideo(data: data, for: urlString)
+        } catch {
+            print("🔴 [VIDEO CACHE] Download failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Priority download - skips queue for immediate playback
+    func downloadForPlayback(from url: URL) async -> URL? {
+        // Check cache first
+        if let cachedURL = getCachedVideoURL(for: url.absoluteString) {
+            return cachedURL
+        }
+
+        // Download immediately, bypassing queue limit for playback
+        do {
+            print("🎬 [VIDEO CACHE] Priority download: \(url.lastPathComponent)")
             let (data, _) = try await URLSession.shared.data(from: url)
             return await cacheVideo(data: data, for: url.absoluteString)
         } catch {
-            print("Failed to download video: \(error)")
+            print("🔴 [VIDEO CACHE] Priority download failed: \(error)")
             return nil
         }
     }
