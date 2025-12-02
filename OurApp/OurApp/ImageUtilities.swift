@@ -2197,104 +2197,108 @@ struct FullScreenMediaViewer: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.black
-                .ignoresSafeArea()
-                .opacity(1.0 - abs(dragOffset) / 400.0)
+        GeometryReader { geometry in
+            ZStack {
+                Color.black
+                    .ignoresSafeArea()
+                    .opacity(1.0 - abs(dragOffset) / 400.0)
 
-            VStack(spacing: 0) {
-                // Top bar
-                topBar
-                    .opacity(showControls && dragOffset == 0 ? 1 : 0)
-
-                // Media display area - manual gesture-based navigation
-                GeometryReader { geometry in
-                    if currentIndex >= 0 && currentIndex < mediaItems.count {
-                        mediaContentView(geometry: geometry)
-                            .id("\(currentIndex)-\(viewID)")
-                            .frame(width: geometry.size.width, height: geometry.size.height)
-                            .offset(y: dragOffset)
-                            .gesture(
-                                DragGesture(minimumDistance: 20)
-                                    .onChanged { value in
-                                        if !isZoomed {
-                                            // Track vertical drag for dismiss gesture
-                                            if abs(value.translation.height) > abs(value.translation.width) {
-                                                dragOffset = value.translation.height
-                                            }
+                // Full screen media content (behind controls)
+                if currentIndex >= 0 && currentIndex < mediaItems.count {
+                    mediaContentView(geometry: geometry)
+                        .id("\(currentIndex)-\(viewID)")
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .offset(y: dragOffset)
+                        .ignoresSafeArea()
+                        .gesture(
+                            DragGesture(minimumDistance: 20)
+                                .onChanged { value in
+                                    if !isZoomed {
+                                        // Track vertical drag for dismiss gesture
+                                        if abs(value.translation.height) > abs(value.translation.width) {
+                                            dragOffset = value.translation.height
                                         }
                                     }
-                                    .onEnded { value in
-                                        if !isZoomed {
-                                            let horizontal = value.translation.width
-                                            let vertical = value.translation.height
-
-                                            // Vertical dismiss
-                                            if abs(dragOffset) > 100 {
-                                                cleanupVideoPlayer()
-                                                onDismiss()
-                                                return
-                                            }
-
-                                            // Horizontal swipe navigation
-                                            if abs(horizontal) > abs(vertical) && abs(horizontal) > 50 {
-                                                if horizontal > 0 && currentIndex > 0 {
-                                                    goToPrevious()
-                                                } else if horizontal < 0 && currentIndex < mediaItems.count - 1 {
-                                                    goToNext()
-                                                }
-                                            }
-
-                                            // Reset vertical offset
-                                            withAnimation(.spring(response: 0.3)) {
-                                                dragOffset = 0
-                                            }
-                                        }
-                                    }
-                            )
-                            .onTapGesture {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    showControls.toggle()
                                 }
+                                .onEnded { value in
+                                    if !isZoomed {
+                                        let horizontal = value.translation.width
+                                        let vertical = value.translation.height
+
+                                        // Vertical dismiss
+                                        if abs(dragOffset) > 100 {
+                                            cleanupVideoPlayer()
+                                            onDismiss()
+                                            return
+                                        }
+
+                                        // Horizontal swipe navigation
+                                        if abs(horizontal) > abs(vertical) && abs(horizontal) > 50 {
+                                            if horizontal > 0 && currentIndex > 0 {
+                                                goToPrevious()
+                                            } else if horizontal < 0 && currentIndex < mediaItems.count - 1 {
+                                                goToNext()
+                                            }
+                                        }
+
+                                        // Reset vertical offset
+                                        withAnimation(.spring(response: 0.3)) {
+                                            dragOffset = 0
+                                        }
+                                    }
+                                }
+                        )
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showControls.toggle()
                             }
-                    }
+                        }
                 }
 
-                // Bottom info area
-                bottomArea
-                    .opacity(showControls && dragOffset == 0 ? 1 : 0)
-            }
-
-            // Heart button overlay in bottom right
-            if onToggleFavorite != nil {
+                // Controls overlay (on top of media)
                 VStack {
+                    // Top bar
+                    topBar
+
                     Spacer()
-                    HStack {
-                        Spacer()
-                        Button(action: {
-                            if currentIndex < localFavoriteStates.count {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                                    localFavoriteStates[currentIndex].toggle()
-                                }
-                            }
-                            if let media = currentMedia {
-                                onToggleFavorite?(media)
-                            }
-                        }) {
-                            let isFavorite = currentIndex < localFavoriteStates.count ? localFavoriteStates[currentIndex] : false
-                            Image(systemName: isFavorite ? "heart.fill" : "heart")
-                                .font(.system(size: 28))
-                                .foregroundColor(isFavorite ? .red : .white)
-                                .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
-                                .scaleEffect(isFavorite ? 1.1 : 1.0)
-                        }
-                        .padding(.trailing, 24)
-                        .padding(.bottom, 80)
-                    }
+
+                    // Bottom info area
+                    bottomArea
                 }
                 .opacity(showControls && dragOffset == 0 ? 1 : 0)
+
+                // Heart button overlay in bottom right
+                if onToggleFavorite != nil {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            Button(action: {
+                                if currentIndex < localFavoriteStates.count {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                        localFavoriteStates[currentIndex].toggle()
+                                    }
+                                }
+                                if let media = currentMedia {
+                                    onToggleFavorite?(media)
+                                }
+                            }) {
+                                let isFavorite = currentIndex < localFavoriteStates.count ? localFavoriteStates[currentIndex] : false
+                                Image(systemName: isFavorite ? "heart.fill" : "heart")
+                                    .font(.system(size: 28))
+                                    .foregroundColor(isFavorite ? .red : .white)
+                                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 2)
+                                    .scaleEffect(isFavorite ? 1.1 : 1.0)
+                            }
+                            .padding(.trailing, 24)
+                            .padding(.bottom, 80)
+                        }
+                    }
+                    .opacity(showControls && dragOffset == 0 ? 1 : 0)
+                }
             }
         }
+        .ignoresSafeArea()
         .statusBar(hidden: true)
         .onAppear {
             currentIndex = max(0, min(initialIndex, mediaItems.count - 1))
