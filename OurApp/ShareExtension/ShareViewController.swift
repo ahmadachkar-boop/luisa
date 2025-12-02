@@ -4,12 +4,14 @@ import UniformTypeIdentifiers
 import MobileCoreServices
 
 /// Share Extension view controller for handling shared photos and videos from other apps
+/// Uploads are queued and processed by the main app - no app switch required
 class ShareViewController: UIViewController {
 
     // MARK: - Properties
     private var sharedItems: [(url: URL, isVideo: Bool)] = []
     private var processingCount = 0
     private var totalItems = 0
+    private var successCount = 0
 
     private lazy var containerView: UIView = {
         let view = UIView()
@@ -71,6 +73,17 @@ class ShareViewController: UIViewController {
         return indicator
     }()
 
+    private lazy var successImageView: UIImageView = {
+        let config = UIImage.SymbolConfiguration(pointSize: 50, weight: .medium)
+        let image = UIImage(systemName: "checkmark.circle.fill", withConfiguration: config)
+        let imageView = UIImageView(image: image)
+        imageView.tintColor = UIColor(red: 0.4, green: 0.8, blue: 0.5, alpha: 1.0)
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.alpha = 0
+        imageView.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
+        return imageView
+    }()
+
     // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -87,6 +100,7 @@ class ShareViewController: UIViewController {
         containerView.addSubview(statusLabel)
         containerView.addSubview(progressView)
         containerView.addSubview(activityIndicator)
+        containerView.addSubview(successImageView)
         containerView.addSubview(cancelButton)
 
         NSLayoutConstraint.activate([
@@ -101,6 +115,9 @@ class ShareViewController: UIViewController {
 
             activityIndicator.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
             activityIndicator.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 20),
+
+            successImageView.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
+            successImageView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
 
             statusLabel.topAnchor.constraint(equalTo: activityIndicator.bottomAnchor, constant: 12),
             statusLabel.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 20),
@@ -265,6 +282,10 @@ class ShareViewController: UIViewController {
             guard let self = self else { return }
 
             self.processingCount += 1
+            if success {
+                self.successCount += 1
+            }
+
             let progress = Float(self.processingCount) / Float(self.totalItems)
             self.progressView.setProgress(progress, animated: true)
 
@@ -283,26 +304,43 @@ class ShareViewController: UIViewController {
         // Write manifest file for main app to read
         writePendingUploadManifest()
 
-        statusLabel.text = "Opening OurApp..."
-        activityIndicator.stopAnimating()
+        // Show success UI without opening the app
+        showSuccess()
+    }
 
-        // Open main app via URL scheme
-        let urlString = "ourapp://import-media"
-        if let url = URL(string: urlString) {
-            // Use openURL to launch main app
-            var responder: UIResponder? = self
-            while responder != nil {
-                if let application = responder as? UIApplication {
-                    application.open(url, options: [:], completionHandler: nil)
-                    break
-                }
-                responder = responder?.next
-            }
+    private func showSuccess() {
+        activityIndicator.stopAnimating()
+        progressView.isHidden = true
+        cancelButton.isHidden = true
+
+        let itemText = successCount == 1 ? "item" : "items"
+        statusLabel.text = "\(successCount) \(itemText) added to queue"
+        titleLabel.text = "Added!"
+        titleLabel.textColor = UIColor(red: 0.3, green: 0.7, blue: 0.4, alpha: 1.0)
+
+        // Animate success checkmark
+        UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.6, initialSpringVelocity: 0.5) {
+            self.successImageView.alpha = 1
+            self.successImageView.transform = .identity
         }
 
-        // Complete extension after brief delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
+        // Haptic feedback
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.success)
+
+        // Auto-dismiss after showing success
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.dismissExtension()
+        }
+    }
+
+    private func dismissExtension() {
+        UIView.animate(withDuration: 0.25, animations: {
+            self.containerView.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
+            self.containerView.alpha = 0
+            self.view.backgroundColor = UIColor.black.withAlphaComponent(0)
+        }) { _ in
+            self.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
         }
     }
 
@@ -311,7 +349,17 @@ class ShareViewController: UIViewController {
             return
         }
 
-        let manifest: [[String: Any]] = sharedItems.map { item in
+        // Read existing manifest if any
+        let manifestURL = sharedContainerURL.appendingPathComponent("pending_uploads.json")
+        var existingItems: [[String: Any]] = []
+
+        if let existingData = try? Data(contentsOf: manifestURL),
+           let existing = try? JSONSerialization.jsonObject(with: existingData) as? [[String: Any]] {
+            existingItems = existing
+        }
+
+        // Add new items
+        let newItems: [[String: Any]] = sharedItems.map { item in
             return [
                 "path": item.url.path,
                 "isVideo": item.isVideo,
@@ -319,10 +367,10 @@ class ShareViewController: UIViewController {
             ]
         }
 
-        let manifestURL = sharedContainerURL.appendingPathComponent("pending_uploads.json")
+        let allItems = existingItems + newItems
 
         do {
-            let data = try JSONSerialization.data(withJSONObject: manifest, options: .prettyPrinted)
+            let data = try JSONSerialization.data(withJSONObject: allItems, options: .prettyPrinted)
             try data.write(to: manifestURL)
         } catch {
             print("Failed to write manifest: \(error)")
@@ -335,6 +383,10 @@ class ShareViewController: UIViewController {
             self?.statusLabel.text = message
             self?.statusLabel.textColor = UIColor(red: 0.9, green: 0.4, blue: 0.4, alpha: 1.0)
 
+            // Haptic feedback
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.error)
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 self?.extensionContext?.cancelRequest(withError: NSError(domain: "ShareExtension", code: -1))
             }
@@ -346,6 +398,12 @@ class ShareViewController: UIViewController {
         for item in sharedItems {
             try? FileManager.default.removeItem(at: item.url)
         }
-        extensionContext?.cancelRequest(withError: NSError(domain: "ShareExtension", code: 0, userInfo: [NSLocalizedDescriptionKey: "User cancelled"]))
+
+        UIView.animate(withDuration: 0.2, animations: {
+            self.containerView.transform = CGAffineTransform(scaleX: 0.95, y: 0.95)
+            self.containerView.alpha = 0
+        }) { _ in
+            self.extensionContext?.cancelRequest(withError: NSError(domain: "ShareExtension", code: 0, userInfo: [NSLocalizedDescriptionKey: "User cancelled"]))
+        }
     }
 }

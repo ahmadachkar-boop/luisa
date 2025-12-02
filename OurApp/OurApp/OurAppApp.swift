@@ -236,24 +236,70 @@ class PendingShareImportManager: ObservableObject {
     }
 
     private func uploadVideo(from url: URL) async throws {
-        // Generate thumbnail
-        let thumbnail = try await VideoCompressor.shared.generateThumbnail(from: url)
+        // Process video, generate thumbnail, and extract metadata in parallel
+        async let thumbnailTask = VideoCompressor.shared.generateThumbnail(from: url)
+        async let processTask = VideoCompressor.shared.processVideo(from: url)
+        async let metadataTask = extractVideoCreationDate(from: url)
+
+        // Wait for thumbnail
+        let thumbnail = try await thumbnailTask
         let thumbnailResized = thumbnail.resized(toMaxDimension: 1920)
         guard let thumbnailData = thumbnailResized.compressed(toMaxBytes: 500_000) else {
             throw NSError(domain: "ShareImport", code: -3, userInfo: [NSLocalizedDescriptionKey: "Failed to compress thumbnail"])
         }
 
-        // Compress video
-        let (videoData, duration) = try await VideoCompressor.shared.compressVideo(from: url)
+        // Wait for video processing
+        let processedVideo = try await processTask
+        defer {
+            if processedVideo.needsCleanup {
+                try? FileManager.default.removeItem(at: processedVideo.fileURL)
+            }
+        }
 
-        // Upload
-        _ = try await FirebaseManager.shared.uploadVideo(
-            videoData: videoData,
+        // Get metadata
+        let capturedAt = await metadataTask
+
+        // Upload using file streaming (faster)
+        _ = try await FirebaseManager.shared.uploadVideoFromFile(
+            videoURL: processedVideo.fileURL,
             thumbnailData: thumbnailData,
-            duration: duration,
+            duration: processedVideo.duration,
             caption: "",
-            uploadedBy: UserIdentityManager.shared.currentUserName
+            uploadedBy: UserIdentityManager.shared.currentUserName,
+            capturedAt: capturedAt
         )
+    }
+
+    /// Extract creation date from video metadata
+    private func extractVideoCreationDate(from videoURL: URL) async -> Date? {
+        let asset = AVURLAsset(url: videoURL)
+
+        do {
+            let metadata = try await asset.load(.commonMetadata)
+
+            for item in metadata {
+                if let key = item.commonKey, key == .commonKeyCreationDate {
+                    if let dateValue = try await item.load(.dateValue) {
+                        return dateValue
+                    }
+                    if let stringValue = try await item.load(.stringValue) {
+                        let formatter = ISO8601DateFormatter()
+                        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                        if let date = formatter.date(from: stringValue) {
+                            return date
+                        }
+                        formatter.formatOptions = [.withInternetDateTime]
+                        if let date = formatter.date(from: stringValue) {
+                            return date
+                        }
+                    }
+                }
+            }
+        } catch {
+            print("⚠️ [SHARE IMPORT] Failed to load video metadata: \(error)")
+        }
+
+        return nil
     }
 
     @MainActor
@@ -279,6 +325,7 @@ class PendingShareImportManager: ObservableObject {
 struct RootView: View {
     @StateObject private var authManager = AuthenticationManager.shared
     @StateObject private var shareImportManager = PendingShareImportManager.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showingImportProgress = false
 
     var body: some View {
@@ -317,6 +364,12 @@ struct RootView: View {
                         // Check for pending uploads when app appears
                         shareImportManager.checkAndProcessPendingUploads()
                     }
+                    .onChange(of: scenePhase) { oldPhase, newPhase in
+                        // Check for pending uploads when app becomes active
+                        if newPhase == .active && oldPhase != .active {
+                            shareImportManager.checkAndProcessPendingUploads()
+                        }
+                    }
                     .overlay {
                         // Import progress overlay
                         if shareImportManager.showImportAlert && shareImportManager.isProcessing {
@@ -337,14 +390,6 @@ struct RootView: View {
         // Handle Google Sign-In URLs
         if GIDSignIn.sharedInstance.handle(url) {
             return
-        }
-
-        // Handle our custom URL scheme
-        if url.scheme == "ourapp" {
-            if url.host == "import-media" {
-                print("📱 [URL] Received import-media request")
-                shareImportManager.checkAndProcessPendingUploads()
-            }
         }
     }
 }
