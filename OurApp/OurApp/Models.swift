@@ -45,10 +45,16 @@ struct VoiceMemoFolder: Identifiable, Codable {
     }
 }
 
-// MARK: - Photo Model
+// MARK: - Media Type
+enum MediaType: String, Codable {
+    case photo = "photo"
+    case video = "video"
+}
+
+// MARK: - Photo Model (supports both photos and videos)
 struct Photo: Identifiable, Codable {
     @DocumentID var id: String?
-    var imageURL: String
+    var imageURL: String // For photos: the image URL, for videos: the thumbnail URL
     var caption: String
     var uploadedBy: String
     var createdAt: Date // When uploaded
@@ -56,6 +62,14 @@ struct Photo: Identifiable, Codable {
     var eventId: String? // Reference to calendar event if photo is linked to an event
     var folderId: String? // Reference to custom folder if photo is in a folder
     var isFavorite: Bool? // Whether the photo is marked as favorite
+    var mediaType: MediaType? // Type of media (photo or video), defaults to photo for backwards compatibility
+    var videoURL: String? // URL to the video file (only for videos)
+    var duration: TimeInterval? // Duration in seconds (only for videos)
+
+    // Computed property for backwards compatibility
+    var isVideo: Bool {
+        return mediaType == .video
+    }
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -67,6 +81,9 @@ struct Photo: Identifiable, Codable {
         case eventId
         case folderId
         case isFavorite
+        case mediaType
+        case videoURL
+        case duration
     }
 }
 

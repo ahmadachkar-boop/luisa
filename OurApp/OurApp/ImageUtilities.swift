@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import CommonCrypto
+import AVKit
 
 // MARK: - Array Extension for Safe Subscripting
 extension Array {
@@ -638,6 +639,288 @@ struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
+// MARK: - Video Cache Manager
+class VideoCache {
+    static let shared = VideoCache()
+    private let diskCacheURL: URL
+    private let maxDiskBytes = 1_000 * 1024 * 1024 // 1GB for video cache
+
+    private init() {
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        diskCacheURL = cacheDir.appendingPathComponent("VideoCache", isDirectory: true)
+        try? FileManager.default.createDirectory(at: diskCacheURL, withIntermediateDirectories: true)
+
+        // Clean up disk cache on init if too large
+        Task {
+            await cleanupDiskCacheIfNeeded()
+        }
+    }
+
+    func getCachedVideoURL(for remoteURL: String) -> URL? {
+        let fileURL = diskCacheURL.appendingPathComponent(remoteURL.sha256Hash + ".mp4")
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            // Update access date
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: fileURL.path)
+            return fileURL
+        }
+        return nil
+    }
+
+    func cacheVideo(data: Data, for remoteURL: String) async -> URL? {
+        let fileURL = diskCacheURL.appendingPathComponent(remoteURL.sha256Hash + ".mp4")
+        do {
+            try data.write(to: fileURL)
+            return fileURL
+        } catch {
+            print("Failed to cache video: \(error)")
+            return nil
+        }
+    }
+
+    func downloadAndCache(from url: URL) async -> URL? {
+        // Check if already cached
+        if let cachedURL = getCachedVideoURL(for: url.absoluteString) {
+            return cachedURL
+        }
+
+        // Download video
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            return await cacheVideo(data: data, for: url.absoluteString)
+        } catch {
+            print("Failed to download video: \(error)")
+            return nil
+        }
+    }
+
+    private func cleanupDiskCacheIfNeeded() async {
+        let fileManager = FileManager.default
+
+        guard let files = try? fileManager.contentsOfDirectory(at: diskCacheURL, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else {
+            return
+        }
+
+        var totalSize: Int64 = 0
+        var fileInfos: [(url: URL, size: Int64, date: Date)] = []
+
+        for file in files {
+            guard let attrs = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                  let size = attrs.fileSize,
+                  let date = attrs.contentModificationDate else {
+                continue
+            }
+            totalSize += Int64(size)
+            fileInfos.append((url: file, size: Int64(size), date: date))
+        }
+
+        // If over limit, delete oldest files
+        if totalSize > maxDiskBytes {
+            fileInfos.sort { $0.date < $1.date }
+
+            for fileInfo in fileInfos {
+                try? fileManager.removeItem(at: fileInfo.url)
+                totalSize -= fileInfo.size
+                if totalSize <= Int64(Double(maxDiskBytes) * 0.8) {
+                    break
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Video Transferable for PhotosPicker
+import AVFoundation
+import Photos
+import UniformTypeIdentifiers
+
+struct VideoTransferable: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { video in
+            SentTransferredFile(video.url)
+        } importing: { received in
+            // Copy to temporary directory to ensure we have access
+            let tempDir = FileManager.default.temporaryDirectory
+            let tempURL = tempDir.appendingPathComponent("\(UUID().uuidString).mov")
+
+            do {
+                // Remove existing file if any
+                if FileManager.default.fileExists(atPath: tempURL.path) {
+                    try FileManager.default.removeItem(at: tempURL)
+                }
+                try FileManager.default.copyItem(at: received.file, to: tempURL)
+                return VideoTransferable(url: tempURL)
+            } catch {
+                print("Failed to copy video: \(error)")
+                throw error
+            }
+        }
+    }
+}
+
+// MARK: - Video Compression Utilities
+
+class VideoCompressor {
+    static let shared = VideoCompressor()
+    private init() {}
+
+    /// Compress video to a target quality while maintaining good visual quality
+    /// - Parameters:
+    ///   - inputURL: URL to the source video
+    ///   - maxFileSizeBytes: Target maximum file size (default 50MB for good quality)
+    ///   - completion: Callback with compressed video data and duration
+    func compressVideo(from inputURL: URL, maxFileSizeBytes: Int = 50_000_000) async throws -> (data: Data, duration: TimeInterval) {
+        let asset = AVURLAsset(url: inputURL)
+        let duration = try await asset.load(.duration).seconds
+
+        // Create export session with high quality preset
+        guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetMediumQuality) else {
+            throw VideoError.exportSessionCreationFailed
+        }
+
+        // Create temp output URL
+        let tempDir = FileManager.default.temporaryDirectory
+        let outputURL = tempDir.appendingPathComponent("\(UUID().uuidString).mp4")
+
+        exportSession.outputURL = outputURL
+        exportSession.outputFileType = .mp4
+        exportSession.shouldOptimizeForNetworkUse = true
+
+        // Export
+        await exportSession.export()
+
+        guard exportSession.status == .completed else {
+            if let error = exportSession.error {
+                throw error
+            }
+            throw VideoError.exportFailed
+        }
+
+        // Read the compressed data
+        let data = try Data(contentsOf: outputURL)
+
+        // Clean up temp file
+        try? FileManager.default.removeItem(at: outputURL)
+
+        return (data, duration)
+    }
+
+    /// Generate a thumbnail image from video at a specific time
+    func generateThumbnail(from url: URL, at time: CMTime = .zero) async throws -> UIImage {
+        let asset = AVURLAsset(url: url)
+        let imageGenerator = AVAssetImageGenerator(asset: asset)
+        imageGenerator.appliesPreferredTrackTransform = true
+        imageGenerator.maximumSize = CGSize(width: 1920, height: 1920) // High quality thumbnail
+
+        let cgImage = try await imageGenerator.image(at: time).image
+        return UIImage(cgImage: cgImage)
+    }
+
+    /// Extract video metadata including duration
+    func getVideoDuration(from url: URL) async throws -> TimeInterval {
+        let asset = AVURLAsset(url: url)
+        let duration = try await asset.load(.duration)
+        return duration.seconds
+    }
+}
+
+enum VideoError: LocalizedError {
+    case exportSessionCreationFailed
+    case exportFailed
+    case thumbnailGenerationFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .exportSessionCreationFailed:
+            return "Failed to create video export session"
+        case .exportFailed:
+            return "Video export failed"
+        case .thumbnailGenerationFailed:
+            return "Failed to generate video thumbnail"
+        }
+    }
+}
+
+// MARK: - Video Saver
+class VideoSaver: NSObject {
+    var successHandler: (() -> Void)?
+    var errorHandler: ((Error) -> Void)?
+    private var tempFileURL: URL?
+
+    func saveVideoToPhotoLibrary(from url: URL) {
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
+            guard status == .authorized || status == .limited else {
+                DispatchQueue.main.async {
+                    self?.errorHandler?(NSError(domain: "VideoSaver", code: -1, userInfo: [NSLocalizedDescriptionKey: "Photo library access denied"]))
+                }
+                return
+            }
+
+            PHPhotoLibrary.shared().performChanges({
+                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+            }) { success, error in
+                DispatchQueue.main.async {
+                    if success {
+                        self?.successHandler?()
+                    } else if let error = error {
+                        self?.errorHandler?(error)
+                    }
+                }
+            }
+        }
+    }
+
+    func saveVideoDataToPhotoLibrary(data: Data) {
+        // Write to temp file first
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        self.tempFileURL = tempURL
+
+        do {
+            try data.write(to: tempURL)
+            saveVideoToPhotoLibrary(from: tempURL)
+        } catch {
+            errorHandler?(error)
+        }
+    }
+
+    deinit {
+        // Clean up temp file
+        if let tempURL = tempFileURL {
+            try? FileManager.default.removeItem(at: tempURL)
+        }
+    }
+}
+
+// MARK: - Photo Library Permission Helper
+class PhotoLibraryPermission {
+    static func requestAddOnlyPermission() async -> Bool {
+        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+        return status == .authorized || status == .limited
+    }
+
+    static func checkAddOnlyPermission() -> Bool {
+        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        return status == .authorized || status == .limited
+    }
+}
+
+// MARK: - Updated Image Saver with Permission Check
+extension ImageSaver {
+    func writeToPhotoAlbumWithPermission(image: UIImage) {
+        Task {
+            let hasPermission = await PhotoLibraryPermission.requestAddOnlyPermission()
+            await MainActor.run {
+                if hasPermission {
+                    self.writeToPhotoAlbum(image: image)
+                } else {
+                    self.errorHandler?(NSError(domain: "ImageSaver", code: -1, userInfo: [NSLocalizedDescriptionKey: "Photo library access denied. Please enable in Settings."]))
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Full Screen Photo Viewer (Completely Rewritten)
 struct FullScreenPhotoViewer: View {
     let photoURLs: [String]
@@ -1091,5 +1374,376 @@ struct SinglePhotoView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Full Screen Video Player
+struct FullScreenVideoPlayer: View {
+    let videoURL: String
+    let thumbnailURL: String
+    let duration: TimeInterval
+    let onDismiss: () -> Void
+    let onDelete: (() -> Void)?
+    let uploadedBy: String?
+    let captureDate: Date?
+
+    @State private var player: AVPlayer?
+    @State private var isPlaying = false
+    @State private var currentTime: TimeInterval = 0
+    @State private var isLoading = true
+    @State private var dragOffset: CGFloat = 0
+    @State private var showingDeleteAlert = false
+    @State private var showingSaveSuccess = false
+    @State private var showingSaveError = false
+    @State private var saveErrorMessage = ""
+    @State private var showingShareSheet = false
+    @State private var isSeeking = false
+    @State private var showControls = true
+    @State private var hideControlsTimer: Timer?
+
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black
+                .ignoresSafeArea()
+                .opacity(1.0 - abs(dragOffset) / 400.0)
+
+            VStack(spacing: 0) {
+                // Top bar
+                if showControls {
+                    HStack {
+                        Button(action: {
+                            player?.pause()
+                            onDismiss()
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title)
+                                .foregroundColor(.white)
+                                .shadow(radius: 3)
+                        }
+
+                        Spacer()
+
+                        Menu {
+                            Button(action: saveVideo) {
+                                Label("Save to Photos", systemImage: "square.and.arrow.down")
+                            }
+
+                            Button(action: { showingShareSheet = true }) {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                            }
+
+                            if onDelete != nil {
+                                Button(role: .destructive, action: { showingDeleteAlert = true }) {
+                                    Label("Delete Video", systemImage: "trash")
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle.fill")
+                                .font(.title)
+                                .foregroundColor(.white)
+                                .shadow(radius: 3)
+                        }
+                    }
+                    .padding()
+                    .transition(.opacity)
+                }
+
+                // Video player area
+                GeometryReader { geometry in
+                    ZStack {
+                        // Thumbnail placeholder while loading
+                        if isLoading {
+                            CachedAsyncImage(url: URL(string: thumbnailURL)) { image in
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                            } placeholder: {
+                                Color.black
+                            }
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+
+                            ProgressView()
+                                .tint(.white)
+                                .scaleEffect(1.5)
+                        }
+
+                        // Video player
+                        if let player = player {
+                            VideoPlayerView(player: player)
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                                .onTapGesture {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        showControls.toggle()
+                                    }
+                                    resetHideControlsTimer()
+                                }
+                        }
+
+                        // Center play/pause button
+                        if showControls && !isLoading {
+                            Button(action: togglePlayPause) {
+                                Circle()
+                                    .fill(.ultraThinMaterial)
+                                    .frame(width: 70, height: 70)
+                                    .overlay(
+                                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                                            .font(.title)
+                                            .foregroundColor(.white)
+                                            .offset(x: isPlaying ? 0 : 3)
+                                    )
+                                    .shadow(color: Color.black.opacity(0.3), radius: 8, x: 0, y: 4)
+                            }
+                            .transition(.opacity)
+                        }
+                    }
+                    .offset(y: dragOffset)
+                    .gesture(
+                        DragGesture(minimumDistance: 50)
+                            .onChanged { value in
+                                if abs(value.translation.height) > abs(value.translation.width) {
+                                    dragOffset = value.translation.height
+                                }
+                            }
+                            .onEnded { value in
+                                if abs(dragOffset) > 100 {
+                                    player?.pause()
+                                    onDismiss()
+                                    return
+                                }
+                                withAnimation(.spring(response: 0.3)) {
+                                    dragOffset = 0
+                                }
+                            }
+                    )
+                }
+
+                // Bottom controls
+                if showControls {
+                    VStack(spacing: 12) {
+                        // Progress bar
+                        HStack(spacing: 12) {
+                            Text(formatDuration(currentTime))
+                                .font(.caption.monospacedDigit())
+                                .foregroundColor(.white)
+                                .frame(width: 40, alignment: .leading)
+
+                            Slider(
+                                value: Binding(
+                                    get: { currentTime },
+                                    set: { newValue in
+                                        currentTime = newValue
+                                        isSeeking = true
+                                        let time = CMTime(seconds: newValue, preferredTimescale: 600)
+                                        player?.seek(to: time) { _ in
+                                            isSeeking = false
+                                        }
+                                    }
+                                ),
+                                in: 0...max(duration, 1)
+                            )
+                            .tint(Color(red: 0.7, green: 0.5, blue: 0.95))
+
+                            Text(formatDuration(duration))
+                                .font(.caption.monospacedDigit())
+                                .foregroundColor(.white.opacity(0.7))
+                                .frame(width: 40, alignment: .trailing)
+                        }
+                        .padding(.horizontal)
+
+                        // Info row
+                        if let uploadedBy = uploadedBy {
+                            HStack {
+                                Text("Added by \(uploadedBy)")
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.8))
+
+                                if let date = captureDate {
+                                    Text("•")
+                                        .foregroundColor(.white.opacity(0.5))
+                                    Text(date, style: .date)
+                                        .font(.subheadline)
+                                        .foregroundColor(.white.opacity(0.6))
+                                }
+                            }
+                        }
+                    }
+                    .padding()
+                    .padding(.bottom, 20)
+                    .background(
+                        LinearGradient(
+                            colors: [Color.clear, Color.black.opacity(0.7)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .transition(.opacity)
+                }
+            }
+        }
+        .onAppear {
+            setupPlayer()
+            resetHideControlsTimer()
+        }
+        .onDisappear {
+            player?.pause()
+            hideControlsTimer?.invalidate()
+        }
+        .alert("Delete Video?", isPresented: $showingDeleteAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                player?.pause()
+                onDelete?()
+                onDismiss()
+            }
+        } message: {
+            Text("This video will be permanently deleted")
+        }
+        .alert("Saved!", isPresented: $showingSaveSuccess) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Video saved to your library")
+        }
+        .alert("Error", isPresented: $showingSaveError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(saveErrorMessage)
+        }
+    }
+
+    private func setupPlayer() {
+        guard let url = URL(string: videoURL) else { return }
+
+        // Check cache first
+        Task {
+            let localURL: URL
+            if let cachedURL = VideoCache.shared.getCachedVideoURL(for: videoURL) {
+                localURL = cachedURL
+            } else if let downloadedURL = await VideoCache.shared.downloadAndCache(from: url) {
+                localURL = downloadedURL
+            } else {
+                localURL = url // Fallback to streaming
+            }
+
+            await MainActor.run {
+                let playerItem = AVPlayerItem(url: localURL)
+                player = AVPlayer(playerItem: playerItem)
+                player?.actionAtItemEnd = .pause
+
+                // Observe time updates
+                player?.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { time in
+                    if !isSeeking {
+                        currentTime = time.seconds
+                    }
+                }
+
+                // Observe when video is ready
+                NotificationCenter.default.addObserver(forName: AVPlayerItem.newAccessLogEntryNotification, object: playerItem, queue: .main) { _ in
+                    isLoading = false
+                }
+
+                // Also check if video is already ready
+                if playerItem.status == .readyToPlay {
+                    isLoading = false
+                }
+
+                // Short delay then check loading status
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    isLoading = false
+                }
+
+                // Auto-play
+                player?.play()
+                isPlaying = true
+            }
+        }
+    }
+
+    private func togglePlayPause() {
+        if isPlaying {
+            player?.pause()
+        } else {
+            // If at end, restart
+            if currentTime >= duration - 0.5 {
+                player?.seek(to: .zero)
+                currentTime = 0
+            }
+            player?.play()
+        }
+        isPlaying.toggle()
+        resetHideControlsTimer()
+    }
+
+    private func resetHideControlsTimer() {
+        hideControlsTimer?.invalidate()
+        if isPlaying {
+            hideControlsTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { _ in
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    showControls = false
+                }
+            }
+        }
+    }
+
+    private func saveVideo() {
+        Task {
+            guard let url = URL(string: videoURL) else {
+                await MainActor.run {
+                    saveErrorMessage = "Invalid video URL"
+                    showingSaveError = true
+                }
+                return
+            }
+
+            // Get local URL (cached or download)
+            let localURL: URL
+            if let cachedURL = VideoCache.shared.getCachedVideoURL(for: videoURL) {
+                localURL = cachedURL
+            } else if let downloadedURL = await VideoCache.shared.downloadAndCache(from: url) {
+                localURL = downloadedURL
+            } else {
+                await MainActor.run {
+                    saveErrorMessage = "Failed to download video"
+                    showingSaveError = true
+                }
+                return
+            }
+
+            let videoSaver = VideoSaver()
+            videoSaver.successHandler = {
+                Task { @MainActor in
+                    showingSaveSuccess = true
+                }
+            }
+            videoSaver.errorHandler = { error in
+                Task { @MainActor in
+                    saveErrorMessage = error.localizedDescription
+                    showingSaveError = true
+                }
+            }
+            videoSaver.saveVideoToPhotoLibrary(from: localURL)
+        }
+    }
+}
+
+// MARK: - AVPlayer SwiftUI Wrapper
+struct VideoPlayerView: UIViewControllerRepresentable {
+    let player: AVPlayer
+
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.showsPlaybackControls = false
+        controller.videoGravity = .resizeAspect
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
+        uiViewController.player = player
     }
 }

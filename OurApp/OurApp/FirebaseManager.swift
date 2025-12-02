@@ -233,11 +233,44 @@ class FirebaseManager: ObservableObject {
             createdAt: Date(),
             capturedAt: capturedAt,
             eventId: eventId,
-            folderId: folderId
+            folderId: folderId,
+            mediaType: .photo
         )
 
         try db.collection("photos").addDocument(from: photo)
         return downloadURL.absoluteString
+    }
+
+    // MARK: - Videos
+    func uploadVideo(videoData: Data, thumbnailData: Data, duration: TimeInterval, caption: String = "", uploadedBy: String = "You", capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws -> String {
+        let videoFileName = "\(UUID().uuidString).mp4"
+        let thumbnailFileName = "\(UUID().uuidString)_thumb.jpg"
+
+        // Upload video file
+        let videoRef = storage.reference().child("videos/\(videoFileName)")
+        let _ = try await videoRef.putDataAsync(videoData)
+        let videoDownloadURL = try await videoRef.downloadURL()
+
+        // Upload thumbnail image
+        let thumbnailRef = storage.reference().child("photos/\(thumbnailFileName)")
+        let _ = try await thumbnailRef.putDataAsync(thumbnailData)
+        let thumbnailDownloadURL = try await thumbnailRef.downloadURL()
+
+        let photo = Photo(
+            imageURL: thumbnailDownloadURL.absoluteString, // Thumbnail for grid display
+            caption: caption,
+            uploadedBy: uploadedBy,
+            createdAt: Date(),
+            capturedAt: capturedAt,
+            eventId: eventId,
+            folderId: folderId,
+            mediaType: .video,
+            videoURL: videoDownloadURL.absoluteString,
+            duration: duration
+        )
+
+        try db.collection("photos").addDocument(from: photo)
+        return videoDownloadURL.absoluteString
     }
 
     func getPhotos() -> AsyncThrowingStream<[Photo], Error> {
@@ -274,9 +307,21 @@ class FirebaseManager: ObservableObject {
             return
         }
 
-        // Delete from Storage
-        let storageRef = storage.reference(forURL: photo.imageURL)
-        try await storageRef.delete()
+        // Delete thumbnail/image from Storage
+        let thumbnailRef = storage.reference(forURL: photo.imageURL)
+        try await thumbnailRef.delete()
+
+        // If this is a video, also delete the video file
+        if photo.isVideo, let videoURL = photo.videoURL {
+            do {
+                let videoRef = storage.reference(forURL: videoURL)
+                try await videoRef.delete()
+                print("✅ [FIREBASE] Deleted video file from storage")
+            } catch {
+                print("⚠️ [FIREBASE] Failed to delete video file: \(error.localizedDescription)")
+                // Non-fatal: continue with document deletion
+            }
+        }
 
         // Delete from Firestore photos collection
         try await db.collection("photos").document(id).delete()

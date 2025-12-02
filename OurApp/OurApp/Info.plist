@@ -26,6 +26,10 @@
 	<string>We use your location to show weather forecasts for your upcoming events</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>We need access to your microphone to record voice memos for your partner</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>We need access to your photo library to let you share photos and videos with your partner</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>We need permission to save photos and videos to your photo library</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>CFBundleURLTypes</key>
