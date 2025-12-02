@@ -616,8 +616,9 @@ class ShareViewController: UIViewController {
             return
         }
 
-        let encodedPath = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
-        let urlString = "https://firebasestorage.googleapis.com/v0/b/\(config.storageBucket)/o/\(encodedPath)?uploadType=media"
+        // Firebase Storage REST API requires the path in the 'name' query parameter
+        let encodedPath = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? path
+        let urlString = "https://firebasestorage.googleapis.com/v0/b/\(config.storageBucket)/o?uploadType=media&name=\(encodedPath)"
 
         guard let url = URL(string: urlString) else {
             print("[SHARE] Invalid upload URL")
