@@ -1540,6 +1540,8 @@ struct FullScreenVideoPlayer: View {
     @State private var timeObserver: Any?
     @State private var endObserver: NSObjectProtocol?
     @State private var stallObserver: NSObjectProtocol?
+    @State private var playbackError: String?
+    @State private var statusObservation: NSKeyValueObservation?
 
     private func formatDuration(_ duration: TimeInterval) -> String {
         let minutes = Int(duration) / 60
@@ -1626,14 +1628,43 @@ struct FullScreenVideoPlayer: View {
                         }
 
                         // Buffering indicator (shows during playback stalls)
-                        if isBuffering && !isLoading {
+                        if isBuffering && !isLoading && playbackError == nil {
                             ProgressView()
                                 .tint(.white)
                                 .scaleEffect(1.2)
                         }
 
+                        // Error display
+                        if let error = playbackError {
+                            VStack(spacing: 16) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 50))
+                                    .foregroundColor(.orange)
+
+                                Text("Unable to play video")
+                                    .font(.headline)
+                                    .foregroundColor(.white)
+
+                                Text(error)
+                                    .font(.caption)
+                                    .foregroundColor(.white.opacity(0.7))
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal)
+
+                                Button("Retry") {
+                                    playbackError = nil
+                                    isLoading = true
+                                    cleanupPlayer()
+                                    setupPlayer()
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(.white)
+                            }
+                            .padding()
+                        }
+
                         // Center play/pause button
-                        if showControls && !isLoading && !isBuffering {
+                        if showControls && !isLoading && !isBuffering && playbackError == nil {
                             Button(action: togglePlayPause) {
                                 Circle()
                                     .fill(.ultraThinMaterial)
@@ -1767,102 +1798,126 @@ struct FullScreenVideoPlayer: View {
     }
 
     private func setupPlayer() {
-        guard let url = URL(string: videoURL) else { return }
+        guard let url = URL(string: videoURL) else {
+            playbackError = "Invalid video URL"
+            return
+        }
 
-        // Use streaming with cache fallback for faster start
-        Task {
-            // Check if we have it cached (instant playback)
-            let playbackURL: URL
-            if let cachedURL = VideoCache.shared.getCachedVideoURL(for: videoURL) {
-                playbackURL = cachedURL
-                print("🎬 [VIDEO PLAYER] Playing from cache")
-            } else {
-                // Stream directly from URL (faster initial playback)
-                playbackURL = url
-                print("🎬 [VIDEO PLAYER] Streaming from URL")
-                // Start background caching for next time
-                Task.detached(priority: .background) {
-                    _ = await VideoCache.shared.downloadAndCache(from: url)
+        print("🎬 [VIDEO PLAYER] Setting up player for: \(url.lastPathComponent)")
+
+        // Check cache first, then stream
+        let playbackURL: URL
+        if let cachedURL = VideoCache.shared.getCachedVideoURL(for: videoURL) {
+            playbackURL = cachedURL
+            print("🎬 [VIDEO PLAYER] Playing from cache: \(cachedURL.lastPathComponent)")
+        } else {
+            playbackURL = url
+            print("🎬 [VIDEO PLAYER] Streaming from remote URL")
+        }
+
+        // Create player with optimized settings for streaming
+        let asset = AVURLAsset(url: playbackURL, options: [
+            AVURLAssetPreferPreciseDurationAndTimingKey: false,
+            AVURLAssetHTTPHeaderFieldsKey: ["Accept": "*/*"]
+        ])
+
+        let playerItem = AVPlayerItem(asset: asset)
+
+        // Optimize buffering for faster start
+        playerItem.preferredForwardBufferDuration = 3
+        playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused = true
+
+        let newPlayer = AVPlayer(playerItem: playerItem)
+        newPlayer.actionAtItemEnd = .pause
+        newPlayer.automaticallyWaitsToMinimizeStalling = false // Don't wait, start playing ASAP
+
+        // Use KVO for status observation (more reliable than Combine with @State)
+        statusObservation = playerItem.observe(\.status, options: [.new, .initial]) { [self] item, _ in
+            DispatchQueue.main.async {
+                switch item.status {
+                case .readyToPlay:
+                    print("🎬 [VIDEO PLAYER] Ready to play")
+                    isLoading = false
+                    playbackError = nil
+                case .failed:
+                    print("🔴 [VIDEO PLAYER] Failed: \(item.error?.localizedDescription ?? "Unknown error")")
+                    isLoading = false
+                    playbackError = item.error?.localizedDescription ?? "Playback failed"
+                case .unknown:
+                    print("🎬 [VIDEO PLAYER] Status unknown, still loading...")
+                @unknown default:
+                    break
                 }
             }
+        }
 
-            await MainActor.run {
-                // Create player with optimized buffering
-                let asset = AVURLAsset(url: playbackURL, options: [
-                    "AVURLAssetPreferPreciseDurationAndTimingKey": false
-                ])
-                let playerItem = AVPlayerItem(asset: asset)
-
-                // Optimize for streaming - start playing sooner
-                playerItem.preferredForwardBufferDuration = 5 // Buffer 5 seconds ahead
-
-                player = AVPlayer(playerItem: playerItem)
-                player?.actionAtItemEnd = .pause
-                player?.automaticallyWaitsToMinimizeStalling = true
-
-                // Faster time updates for smooth scrubbing
-                timeObserver = player?.addPeriodicTimeObserver(
-                    forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
-                    queue: .main
-                ) { [self] time in
-                    if !isSeeking {
-                        currentTime = time.seconds
-                    }
-                    // Check if we're buffering
-                    if let item = player?.currentItem {
-                        isBuffering = !item.isPlaybackLikelyToKeepUp && isPlaying
-                    }
+        // Time observer for progress tracking
+        timeObserver = newPlayer.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
+            queue: .main
+        ) { [self] time in
+            if !isSeeking {
+                currentTime = time.seconds
+            }
+            // Update buffering state
+            if let item = player?.currentItem {
+                let newBuffering = !item.isPlaybackLikelyToKeepUp && isPlaying && item.status == .readyToPlay
+                if newBuffering != isBuffering {
+                    isBuffering = newBuffering
                 }
+            }
+        }
 
-                // Observe when video ends
-                endObserver = NotificationCenter.default.addObserver(
-                    forName: .AVPlayerItemDidPlayToEndTime,
-                    object: playerItem,
-                    queue: .main
-                ) { _ in
-                    isPlaying = false
-                    showControls = true
-                    hideControlsTimer?.invalidate()
-                }
+        // End of video notification
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: playerItem,
+            queue: .main
+        ) { [self] _ in
+            isPlaying = false
+            showControls = true
+            hideControlsTimer?.invalidate()
+        }
 
-                // Observe playback stalls
-                stallObserver = NotificationCenter.default.addObserver(
-                    forName: .AVPlayerItemPlaybackStalled,
-                    object: playerItem,
-                    queue: .main
-                ) { _ in
-                    isBuffering = true
-                }
+        // Stall notification
+        stallObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemPlaybackStalled,
+            object: playerItem,
+            queue: .main
+        ) { [self] _ in
+            print("⚠️ [VIDEO PLAYER] Playback stalled")
+            isBuffering = true
+        }
 
-                // Observe when ready to play
-                playerItem.publisher(for: \.status)
-                    .receive(on: DispatchQueue.main)
-                    .sink { status in
-                        if status == .readyToPlay {
-                            isLoading = false
-                        }
-                    }
-                    .store(in: &cancellables)
+        // Error notification
+        errorObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime,
+            object: playerItem,
+            queue: .main
+        ) { [self] notification in
+            if let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error {
+                print("🔴 [VIDEO PLAYER] Failed to play: \(error.localizedDescription)")
+                playbackError = error.localizedDescription
+            }
+        }
 
-                // Also observe buffer status
-                playerItem.publisher(for: \.isPlaybackLikelyToKeepUp)
-                    .receive(on: DispatchQueue.main)
-                    .sink { isReady in
-                        if isReady {
-                            isLoading = false
-                            isBuffering = false
-                        }
-                    }
-                    .store(in: &cancellables)
+        player = newPlayer
 
-                // Auto-play
-                player?.play()
-                isPlaying = true
+        // Auto-play
+        newPlayer.play()
+        isPlaying = true
+
+        // Start background caching if not cached
+        if VideoCache.shared.getCachedVideoURL(for: videoURL) == nil {
+            Task.detached(priority: .background) {
+                print("🎬 [VIDEO PLAYER] Starting background cache...")
+                _ = await VideoCache.shared.downloadAndCache(from: url)
+                print("🎬 [VIDEO PLAYER] Background cache complete")
             }
         }
     }
 
-    @State private var cancellables = Set<AnyCancellable>()
+    @State private var errorObserver: NSObjectProtocol?
 
     private func cleanupPlayer() {
         // Stop playback
@@ -1874,6 +1929,10 @@ struct FullScreenVideoPlayer: View {
             timeObserver = nil
         }
 
+        // Invalidate KVO observation
+        statusObservation?.invalidate()
+        statusObservation = nil
+
         // Remove notification observers
         if let observer = endObserver {
             NotificationCenter.default.removeObserver(observer)
@@ -1883,9 +1942,10 @@ struct FullScreenVideoPlayer: View {
             NotificationCenter.default.removeObserver(observer)
             stallObserver = nil
         }
-
-        // Cancel any publishers
-        cancellables.removeAll()
+        if let observer = errorObserver {
+            NotificationCenter.default.removeObserver(observer)
+            errorObserver = nil
+        }
 
         // Release player
         player?.replaceCurrentItem(with: nil)
