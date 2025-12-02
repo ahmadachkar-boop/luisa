@@ -2595,7 +2595,7 @@ struct FullScreenMediaViewer: View {
         )
     }
 
-    // MARK: - Pagination Dots (smart sliding indicator)
+    // MARK: - Pagination Dots (smart sliding indicator with scrubbing)
     private var paginationDots: some View {
         let maxDots = 10
         let showAllDots = mediaItems.count <= maxDots
@@ -2604,6 +2604,8 @@ struct FullScreenMediaViewer: View {
         return Group {
             if showAllDots {
                 // Show all dots if count is <= max
+                let totalWidth = CGFloat(mediaItems.count) * 8 + CGFloat(mediaItems.count - 1) * 8 // dot size + spacing
+
                 HStack(spacing: 8) {
                     ForEach(1...mediaItems.count, id: \.self) { position in
                         Circle()
@@ -2611,8 +2613,25 @@ struct FullScreenMediaViewer: View {
                             .frame(width: 8, height: 8)
                     }
                 }
+                .padding(.vertical, 16) // Larger hit area
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            let dragX = value.location.x
+                            let progress = dragX / totalWidth
+                            let newIndex = Int(progress * CGFloat(mediaItems.count))
+                            let clampedIndex = max(0, min(newIndex, mediaItems.count - 1))
+
+                            if clampedIndex != currentIndex {
+                                navigateToIndex(clampedIndex)
+                            }
+                        }
+                )
             } else {
                 // Show limited dots with scrolling highlighted dot
+                let totalWidth = CGFloat(maxDots) * 6 + CGFloat(maxDots - 1) * 8 // dot size + spacing
+
                 ZStack(alignment: .leading) {
                     // Background dots (always visible, dimmed)
                     HStack(spacing: 8) {
@@ -2632,7 +2651,41 @@ struct FullScreenMediaViewer: View {
                         .frame(width: 10, height: 10)
                         .offset(x: dotOffset)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(width: totalWidth)
+                .padding(.vertical, 16) // Larger hit area
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            let dragX = value.location.x
+                            let progress = max(0, min(dragX / totalWidth, 1.0))
+                            let newIndex = Int(progress * CGFloat(mediaItems.count - 1))
+                            let clampedIndex = max(0, min(newIndex, mediaItems.count - 1))
+
+                            if clampedIndex != currentIndex {
+                                navigateToIndex(clampedIndex)
+                            }
+                        }
+                )
+            }
+        }
+    }
+
+    // Navigate to a specific index, handling video cleanup
+    private func navigateToIndex(_ newIndex: Int) {
+        guard newIndex != currentIndex else { return }
+
+        // Cleanup current video if playing
+        if currentMedia?.isVideo == true {
+            cleanupVideoPlayer()
+        }
+
+        currentIndex = newIndex
+
+        // Setup video if navigating to a video
+        if currentMedia?.isVideo == true {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                setupVideoPlayer()
             }
         }
     }
