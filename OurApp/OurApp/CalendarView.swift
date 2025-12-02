@@ -1725,7 +1725,6 @@ struct EventDetailView: View {
                                                                 Image(systemName: "play.fill")
                                                                     .font(.title3)
                                                                     .foregroundColor(.white)
-                                                                    .offset(x: 2)
                                                             }
                                                             .shadow(radius: 4)
                                                         }
