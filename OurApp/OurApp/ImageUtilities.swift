@@ -1880,8 +1880,7 @@ struct FullScreenVideoPlayer: View {
 
         // Create player with optimized settings for streaming
         let asset = AVURLAsset(url: playbackURL, options: [
-            AVURLAssetPreferPreciseDurationAndTimingKey: false,
-            AVURLAssetHTTPHeaderFieldsKey: ["Accept": "*/*"]
+            AVURLAssetPreferPreciseDurationAndTimingKey: false
         ])
 
         let playerItem = AVPlayerItem(asset: asset)
@@ -1891,12 +1890,12 @@ struct FullScreenVideoPlayer: View {
         playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused = true
 
         let newPlayer = AVPlayer(playerItem: playerItem)
-        newPlayer.actionAtItemEnd = .pause
+        newPlayer.actionAtItemEnd = AVPlayer.ActionAtItemEnd.pause
         newPlayer.automaticallyWaitsToMinimizeStalling = false // Don't wait, start playing ASAP
 
         // Use KVO for status observation (more reliable than Combine with @State)
-        statusObservation = playerItem.observe(\.status, options: [.new, .initial]) { [self] item, _ in
-            DispatchQueue.main.async {
+        statusObservation = playerItem.observe(\.status, options: [.new, .initial]) { (item: AVPlayerItem, _) in
+            DispatchQueue.main.async { [self] in
                 switch item.status {
                 case .readyToPlay:
                     print("🎬 [VIDEO PLAYER] Ready to play")
@@ -1917,8 +1916,8 @@ struct FullScreenVideoPlayer: View {
         // Time observer for progress tracking
         timeObserver = newPlayer.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
-            queue: .main
-        ) { [self] time in
+            queue: DispatchQueue.main
+        ) { [self] (time: CMTime) in
             if !isSeeking {
                 currentTime = time.seconds
             }

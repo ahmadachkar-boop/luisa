@@ -25,6 +25,9 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             // Sync events to widget after Firebase is configured
             print("🔵 [APP INIT] Syncing events to widget...")
             WidgetDataManager.shared.syncFromFirebase()
+
+            // Share Firebase config with Share Extension for direct uploads
+            shareFirebaseConfigWithExtension()
         } else {
             print("🔴 [APP INIT ERROR] Firebase app is nil after configuration!")
         }
@@ -319,6 +322,58 @@ class PendingShareImportManager: ObservableObject {
         let pendingDir = containerURL.appendingPathComponent("PendingUploads", isDirectory: true)
         try? FileManager.default.removeItem(at: pendingDir)
     }
+}
+
+// MARK: - Share Extension Config
+/// Writes Firebase configuration to shared container for Share Extension direct uploads
+func shareFirebaseConfigWithExtension() {
+    guard let sharedURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ourapp") else {
+        print("⚠️ [SHARE CONFIG] Could not access shared container")
+        return
+    }
+
+    guard let app = FirebaseApp.app(),
+          let options = app.options else {
+        print("⚠️ [SHARE CONFIG] Firebase not configured")
+        return
+    }
+
+    // Get current user's ID token if authenticated
+    Task {
+        var idToken: String?
+        if let user = Auth.auth().currentUser {
+            do {
+                idToken = try await user.getIDToken()
+            } catch {
+                print("⚠️ [SHARE CONFIG] Could not get ID token: \(error)")
+            }
+        }
+
+        let config: [String: Any?] = [
+            "storageBucket": options.storageBucket,
+            "projectId": options.projectID,
+            "apiKey": options.apiKey,
+            "idToken": idToken
+        ]
+
+        // Filter out nil values
+        let filteredConfig = config.compactMapValues { $0 }
+
+        let configURL = sharedURL.appendingPathComponent("firebase_share_config.json")
+
+        do {
+            let data = try JSONSerialization.data(withJSONObject: filteredConfig, options: .prettyPrinted)
+            try data.write(to: configURL)
+            print("🟢 [SHARE CONFIG] Firebase config shared with extension")
+        } catch {
+            print("🔴 [SHARE CONFIG] Failed to write config: \(error)")
+        }
+    }
+}
+
+/// Updates the shared Firebase config (call when auth state changes)
+func updateSharedFirebaseConfig() {
+    shareFirebaseConfigWithExtension()
 }
 
 // MARK: - Root View (handles auth flow after Firebase is configured)
