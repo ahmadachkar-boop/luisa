@@ -788,6 +788,7 @@ struct CalendarView: View {
                         }
                     }
                 })
+                .environmentObject(viewModel)
             }
             .fullScreenCover(item: $recapPhotoData) { photoData in
                 if !photoData.photoURLs.isEmpty {

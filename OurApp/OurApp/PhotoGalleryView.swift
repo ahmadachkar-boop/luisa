@@ -3234,7 +3234,9 @@ struct MoveToFolderSheet: View {
             .background(Color(red: 0.96, green: 0.94, blue: 0.98).ignoresSafeArea())
             .navigationTitle("Move to Folder")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.light, for: .navigationBar)
+            .toolbarBackground(Color(red: 0.96, green: 0.94, blue: 0.98), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .tint(Color(red: 0.3, green: 0.2, blue: 0.5))
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Cancel") {
@@ -3244,6 +3246,7 @@ struct MoveToFolderSheet: View {
                 }
             }
         }
+        .tint(Color(red: 0.3, green: 0.2, blue: 0.5))
     }
 }
 
@@ -3402,7 +3405,9 @@ struct AddToEventSheet: View {
             .background(Color(red: 0.96, green: 0.94, blue: 0.98).ignoresSafeArea())
             .navigationTitle("Add to Event")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.light, for: .navigationBar)
+            .toolbarBackground(Color(red: 0.96, green: 0.94, blue: 0.98), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .tint(Color(red: 0.3, green: 0.2, blue: 0.5))
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Cancel") {
@@ -3412,6 +3417,7 @@ struct AddToEventSheet: View {
                 }
             }
         }
+        .tint(Color(red: 0.3, green: 0.2, blue: 0.5))
     }
 }
 
