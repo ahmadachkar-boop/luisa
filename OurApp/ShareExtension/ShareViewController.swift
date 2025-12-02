@@ -19,7 +19,6 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
     private var isUploading = false
     private var uploadSession: URLSession?
     private var currentUploadTask: URLSessionUploadTask?
-    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
 
     // For tracking upload progress
     private var uploadTasks: [URLSessionTask: UploadTaskInfo] = [:]
@@ -139,22 +138,25 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
     }
 
     // MARK: - Background Task
+    // Note: Share extensions have limited execution time (~30 seconds)
+    // UIApplication.shared is not available in extensions, so we use ProcessInfo instead
     private func beginBackgroundTask() {
-        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "ShareUpload") { [weak self] in
-            // Called when time is about to expire
-            print("[SHARE] Background time expiring, falling back to queue")
-            self?.queueRemainingItemsForMainApp()
-            self?.endBackgroundTask()
+        // Use ProcessInfo for expiring activity in extensions
+        ProcessInfo.processInfo.performExpiringActivity(withReason: "ShareUpload") { [weak self] expired in
+            if expired {
+                print("[SHARE] Background time expiring, falling back to queue")
+                DispatchQueue.main.async {
+                    self?.queueRemainingItemsForMainApp()
+                }
+            }
         }
-        print("[SHARE] Started background task: \(backgroundTaskID.rawValue)")
+        print("[SHARE] Started background activity")
     }
 
     private func endBackgroundTask() {
-        if backgroundTaskID != .invalid {
-            UIApplication.shared.endBackgroundTask(backgroundTaskID)
-            backgroundTaskID = .invalid
-            print("[SHARE] Ended background task")
-        }
+        // ProcessInfo.performExpiringActivity manages its own lifecycle
+        // No explicit cleanup needed
+        print("[SHARE] Background activity ending")
     }
 
     // MARK: - URL Session Setup
@@ -771,7 +773,7 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
         queueItems(sharedItems)
     }
 
-    private func queueItems(_ items: [(url: URL, isVideo: Bool, data: Data?, thumbnailData: Data?, duration: TimeInterval?)]) {
+    private func queueItems(_ items: [(url: URL, isVideo: Bool, data: Data?, thumbnailData: Data?, duration: TimeInterval?, capturedAt: Date?)]) {
         // Save files to shared container for main app
         guard let sharedURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ourapp") else {
             showError("Failed to access shared storage")
