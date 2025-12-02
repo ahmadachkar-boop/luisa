@@ -332,11 +332,12 @@ func shareFirebaseConfigWithExtension() {
         return
     }
 
-    guard let app = FirebaseApp.app(),
-          let options = app.options else {
+    guard let app = FirebaseApp.app() else {
         print("⚠️ [SHARE CONFIG] Firebase not configured")
         return
     }
+
+    let options = app.options
 
     // Get current user's ID token if authenticated
     Task {
