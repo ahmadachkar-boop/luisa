@@ -18,6 +18,8 @@ class ShareViewController: UIViewController {
     private var currentUploadIndex = 0
     private var isUploading = false
     private var currentUploadTask: URLSessionTask?
+    private var retryCount = 0
+    private let maxRetries = 2
 
     // Firebase configuration - loaded from shared container
     private var firebaseConfig: FirebaseConfig?
@@ -190,38 +192,58 @@ class ShareViewController: UIViewController {
     // MARK: - Firebase Config
     private func loadFirebaseConfig() {
         guard let sharedURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ourapp") else {
-            print("[SHARE] Could not access shared container")
+            print("[SHARE] ❌ Could not access shared container - app group may not be configured")
             return
         }
 
+        print("[SHARE] 📁 Shared container: \(sharedURL.path)")
+
         let configURL = sharedURL.appendingPathComponent("firebase_share_config.json")
 
-        guard let data = try? Data(contentsOf: configURL) else {
-            print("[SHARE] No Firebase config file found at: \(configURL.path)")
+        guard FileManager.default.fileExists(atPath: configURL.path) else {
+            print("[SHARE] ❌ Config file does not exist at: \(configURL.path)")
             print("[SHARE] Please open the main app while signed in to enable direct uploads")
             return
         }
 
-        // Try JSONDecoder first
-        if let config = try? JSONDecoder().decode(FirebaseConfig.self, from: data) {
-            firebaseConfig = config
-            print("[SHARE] Firebase config loaded via JSONDecoder - direct upload enabled")
+        guard let data = try? Data(contentsOf: configURL) else {
+            print("[SHARE] ❌ Could not read config file")
             return
         }
 
-        // Fallback: Try manual JSON parsing (in case main app uses JSONSerialization)
+        print("[SHARE] 📄 Config file size: \(data.count) bytes")
+
+        // Try manual JSON parsing first (more flexible)
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let storageBucket = json["storageBucket"] as? String,
            let projectId = json["projectId"] as? String,
            let apiKey = json["apiKey"] as? String {
-            // Manually construct the config
+
             let idToken = json["idToken"] as? String
             firebaseConfig = FirebaseConfig(storageBucket: storageBucket, projectId: projectId, apiKey: apiKey, idToken: idToken)
-            print("[SHARE] Firebase config loaded via manual parsing - direct upload enabled")
+
+            print("[SHARE] ✅ Firebase config loaded successfully")
+            print("[SHARE]    - Storage bucket: \(storageBucket)")
+            print("[SHARE]    - Project ID: \(projectId)")
+            print("[SHARE]    - Has auth token: \(idToken != nil ? "YES" : "NO")")
+            if let token = idToken {
+                print("[SHARE]    - Token length: \(token.count) chars")
+            }
             return
         }
 
-        print("[SHARE] Failed to parse Firebase config - will queue for main app")
+        // Try JSONDecoder as fallback
+        if let config = try? JSONDecoder().decode(FirebaseConfig.self, from: data) {
+            firebaseConfig = config
+            print("[SHARE] ✅ Firebase config loaded via JSONDecoder")
+            print("[SHARE]    - Has auth token: \(config.idToken != nil ? "YES" : "NO")")
+            return
+        }
+
+        print("[SHARE] ❌ Failed to parse Firebase config - will queue for main app")
+        if let jsonStr = String(data: data, encoding: .utf8) {
+            print("[SHARE]    Raw config: \(jsonStr.prefix(200))...")
+        }
     }
 
     // MARK: - Process Shared Items
@@ -458,14 +480,21 @@ class ShareViewController: UIViewController {
             return
         }
 
+        print("[SHARE] 🚀 Starting upload process for \(sharedItems.count) items")
+
         // If we have Firebase config, try direct upload
-        if firebaseConfig != nil {
+        if let config = firebaseConfig {
+            print("[SHARE] ✅ Firebase config available - attempting direct upload")
+            print("[SHARE]    Bucket: \(config.storageBucket)")
+            print("[SHARE]    Has token: \(config.idToken != nil)")
+
             isUploading = true
             titleLabel.text = "Uploading..."
             statusLabel.text = "Uploading 1 of \(sharedItems.count)..."
             uploadNextItem()
         } else {
             // Fall back to queue for main app
+            print("[SHARE] ❌ No Firebase config - falling back to queue")
             queueForMainApp()
         }
     }
@@ -503,6 +532,7 @@ class ShareViewController: UIViewController {
             // Create Firestore document
             self?.createPhotoDocument(imageURL: downloadURL, isVideo: false, videoURL: nil, duration: nil, capturedAt: item.capturedAt) { success in
                 if success {
+                    self?.retryCount = 0  // Reset retry count on success
                     self?.uploadedCount += 1
                     self?.currentUploadIndex += 1
                     self?.updateUploadProgress()
@@ -542,6 +572,7 @@ class ShareViewController: UIViewController {
                 // Create Firestore document
                 self?.createPhotoDocument(imageURL: thumbURL, isVideo: true, videoURL: videoURL, duration: item.duration, capturedAt: item.capturedAt) { success in
                     if success {
+                        self?.retryCount = 0  // Reset retry count on success
                         self?.uploadedCount += 1
                         self?.currentUploadIndex += 1
                         self?.updateUploadProgress()
@@ -693,15 +724,56 @@ class ShareViewController: UIViewController {
     }
 
     private func uploadFailed() {
-        print("[SHARE] Upload failed, falling back to queue")
-        // Fall back to queue
-        queueForMainApp()
+        print("[SHARE] Upload failed for item \(currentUploadIndex + 1), retry count: \(retryCount)")
+
+        // Retry current item if we haven't exceeded max retries
+        if retryCount < maxRetries {
+            retryCount += 1
+            print("[SHARE] Retrying upload (attempt \(retryCount + 1) of \(maxRetries + 1))...")
+            statusLabel.text = "Retrying \(currentUploadIndex + 1) of \(sharedItems.count)..."
+
+            // Delay before retry
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.uploadNextItem()
+            }
+            return
+        }
+
+        // Max retries exceeded - skip this item and try next
+        print("[SHARE] Max retries exceeded for item \(currentUploadIndex + 1), skipping to next")
+        retryCount = 0
+        currentUploadIndex += 1
+
+        // Check if there are more items to try
+        if currentUploadIndex < sharedItems.count {
+            uploadNextItem()
+        } else {
+            // All items attempted - check results
+            if uploadedCount > 0 {
+                // Some items uploaded successfully
+                let skipped = sharedItems.count - uploadedCount
+                if skipped > 0 {
+                    // Queue failed items for main app
+                    print("[SHARE] Uploaded \(uploadedCount), queueing \(skipped) failed items")
+                    finishUploading()
+                } else {
+                    finishUploading()
+                }
+            } else {
+                // All items failed - fall back to queue
+                print("[SHARE] All uploads failed, falling back to queue")
+                queueForMainApp()
+            }
+        }
     }
 
     private func finishUploading() {
         isUploading = false
         endBackgroundTask()
-        showSuccess(message: "\(uploadedCount) item\(uploadedCount == 1 ? "" : "s") uploaded!")
+        let message = uploadedCount == sharedItems.count
+            ? "\(uploadedCount) item\(uploadedCount == 1 ? "" : "s") uploaded!"
+            : "\(uploadedCount) of \(sharedItems.count) uploaded"
+        showSuccess(message: message)
     }
 
     // MARK: - Queue Fallback
