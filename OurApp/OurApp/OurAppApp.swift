@@ -6,6 +6,7 @@ import GoogleSignIn
 import UserNotifications
 import BackgroundTasks
 import AVFoundation
+import ImageIO
 
 // MARK: - App Delegate for Push Notifications and Background Tasks
 class AppDelegate: NSObject, UIApplicationDelegate {
@@ -196,11 +197,21 @@ class PendingShareImportManager: ObservableObject {
                 continue
             }
 
+            // Extract capturedAt from manifest if available
+            var capturedAt: Date? = nil
+            if let capturedAtTimestamp = item["capturedAt"] as? TimeInterval {
+                capturedAt = Date(timeIntervalSince1970: capturedAtTimestamp)
+            }
+
+            // Get video-specific metadata from manifest
+            let thumbnailPath = item["thumbnailPath"] as? String
+            let duration = item["duration"] as? TimeInterval
+
             do {
                 if isVideo {
-                    try await uploadVideo(from: fileURL)
+                    try await uploadVideo(from: fileURL, capturedAt: capturedAt, thumbnailPath: thumbnailPath, duration: duration)
                 } else {
-                    try await uploadImage(from: fileURL)
+                    try await uploadImage(from: fileURL, capturedAt: capturedAt)
                 }
                 print("✅ [SHARE IMPORT] Uploaded: \(fileURL.lastPathComponent)")
             } catch {
@@ -209,6 +220,10 @@ class PendingShareImportManager: ObservableObject {
 
             // Clean up the temp file
             try? FileManager.default.removeItem(at: fileURL)
+            // Clean up thumbnail if present
+            if let thumbPath = thumbnailPath {
+                try? FileManager.default.removeItem(atPath: thumbPath)
+            }
 
             await incrementProcessedCount()
         }
@@ -220,10 +235,16 @@ class PendingShareImportManager: ObservableObject {
         }
     }
 
-    private func uploadImage(from url: URL) async throws {
+    private func uploadImage(from url: URL, capturedAt: Date? = nil) async throws {
         let data = try Data(contentsOf: url)
         guard let image = UIImage(data: data) else {
             throw NSError(domain: "ShareImport", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid image data"])
+        }
+
+        // Try to extract EXIF date if not provided
+        var finalCapturedAt = capturedAt
+        if finalCapturedAt == nil {
+            finalCapturedAt = extractImageCapturedDate(from: data) ?? extractImageCapturedDate(from: url)
         }
 
         let resized = image.resized(toMaxDimension: 1920)
@@ -234,21 +255,67 @@ class PendingShareImportManager: ObservableObject {
         _ = try await FirebaseManager.shared.uploadPhoto(
             imageData: compressedData,
             caption: "",
-            uploadedBy: UserIdentityManager.shared.currentUserName
+            uploadedBy: UserIdentityManager.shared.currentUserName,
+            capturedAt: finalCapturedAt
         )
     }
 
-    private func uploadVideo(from url: URL) async throws {
-        // Process video, generate thumbnail, and extract metadata in parallel
-        async let thumbnailTask = VideoCompressor.shared.generateThumbnail(from: url)
-        async let processTask = VideoCompressor.shared.processVideo(from: url)
-        async let metadataTask = extractVideoCreationDate(from: url)
+    /// Extract capture date from image EXIF metadata (from Data)
+    private func extractImageCapturedDate(from data: Data) -> Date? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let exif = properties[kCGImagePropertyExifDictionary as String] as? [String: Any] else {
+            return nil
+        }
 
-        // Wait for thumbnail
-        let thumbnail = try await thumbnailTask
-        let thumbnailResized = thumbnail.resized(toMaxDimension: 1920)
-        guard let thumbnailData = thumbnailResized.compressed(toMaxBytes: 500_000) else {
-            throw NSError(domain: "ShareImport", code: -3, userInfo: [NSLocalizedDescriptionKey: "Failed to compress thumbnail"])
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+
+        if let dateString = exif[kCGImagePropertyExifDateTimeOriginal as String] as? String {
+            return formatter.date(from: dateString)
+        }
+        if let dateString = exif[kCGImagePropertyExifDateTimeDigitized as String] as? String {
+            return formatter.date(from: dateString)
+        }
+        return nil
+    }
+
+    /// Extract capture date from image EXIF metadata (from URL)
+    private func extractImageCapturedDate(from url: URL) -> Date? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let exif = properties[kCGImagePropertyExifDictionary as String] as? [String: Any] else {
+            return nil
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+
+        if let dateString = exif[kCGImagePropertyExifDateTimeOriginal as String] as? String {
+            return formatter.date(from: dateString)
+        }
+        if let dateString = exif[kCGImagePropertyExifDateTimeDigitized as String] as? String {
+            return formatter.date(from: dateString)
+        }
+        return nil
+    }
+
+    private func uploadVideo(from url: URL, capturedAt: Date? = nil, thumbnailPath: String? = nil, duration: TimeInterval? = nil) async throws {
+        // Process video and generate thumbnail (unless already provided)
+        async let processTask = VideoCompressor.shared.processVideo(from: url)
+
+        // Use provided thumbnail or generate one
+        var thumbnailData: Data
+        if let thumbPath = thumbnailPath,
+           let existingThumbData = try? Data(contentsOf: URL(fileURLWithPath: thumbPath)) {
+            thumbnailData = existingThumbData
+        } else {
+            let thumbnail = try await VideoCompressor.shared.generateThumbnail(from: url)
+            let thumbnailResized = thumbnail.resized(toMaxDimension: 1920)
+            guard let compressedThumb = thumbnailResized.compressed(toMaxBytes: 500_000) else {
+                throw NSError(domain: "ShareImport", code: -3, userInfo: [NSLocalizedDescriptionKey: "Failed to compress thumbnail"])
+            }
+            thumbnailData = compressedThumb
         }
 
         // Wait for video processing
@@ -259,17 +326,23 @@ class PendingShareImportManager: ObservableObject {
             }
         }
 
-        // Get metadata
-        let capturedAt = await metadataTask
+        // Use provided capturedAt or extract from video metadata
+        var finalCapturedAt = capturedAt
+        if finalCapturedAt == nil {
+            finalCapturedAt = await extractVideoCreationDate(from: url)
+        }
+
+        // Use provided duration or from processed video
+        let finalDuration = duration ?? processedVideo.duration
 
         // Upload using file streaming (faster)
         _ = try await FirebaseManager.shared.uploadVideoFromFile(
             videoURL: processedVideo.fileURL,
             thumbnailData: thumbnailData,
-            duration: processedVideo.duration,
+            duration: finalDuration,
             caption: "",
             uploadedBy: UserIdentityManager.shared.currentUserName,
-            capturedAt: capturedAt
+            capturedAt: finalCapturedAt
         )
     }
 

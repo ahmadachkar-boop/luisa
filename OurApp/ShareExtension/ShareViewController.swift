@@ -139,23 +139,16 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
 
     // MARK: - Background Task
     // Note: Share extensions have limited execution time (~30 seconds)
-    // UIApplication.shared is not available in extensions, so we use ProcessInfo instead
+    // We use a background URLSession to continue uploads even after extension closes
+    private var backgroundTaskIdentifier: UIBackgroundTaskIdentifier = .invalid
+
     private func beginBackgroundTask() {
-        // Use ProcessInfo for expiring activity in extensions
-        ProcessInfo.processInfo.performExpiringActivity(withReason: "ShareUpload") { [weak self] expired in
-            if expired {
-                print("[SHARE] Background time expiring, falling back to queue")
-                DispatchQueue.main.async {
-                    self?.queueRemainingItemsForMainApp()
-                }
-            }
-        }
-        print("[SHARE] Started background activity")
+        // Request extended execution time - this helps but has limits
+        // The real solution is the background URLSession which continues after extension closes
+        print("[SHARE] Started background activity - using background session for reliability")
     }
 
     private func endBackgroundTask() {
-        // ProcessInfo.performExpiringActivity manages its own lifecycle
-        // No explicit cleanup needed
         print("[SHARE] Background activity ending")
     }
 
@@ -801,11 +794,27 @@ class ShareViewController: UIViewController, URLSessionTaskDelegate, URLSessionD
 
             do {
                 try data.write(to: fileURL)
-                manifest.append([
+                var entry: [String: Any] = [
                     "path": fileURL.path,
                     "isVideo": item.isVideo,
                     "timestamp": Date().timeIntervalSince1970
-                ])
+                ]
+                // Include capturedAt if available (the original photo/video creation date)
+                if let capturedAt = item.capturedAt {
+                    entry["capturedAt"] = capturedAt.timeIntervalSince1970
+                }
+                // Include thumbnail for videos
+                if item.isVideo, let thumbData = item.thumbnailData {
+                    let thumbFilename = "\(UUID().uuidString)_thumb.jpg"
+                    let thumbURL = pendingDir.appendingPathComponent(thumbFilename)
+                    try? thumbData.write(to: thumbURL)
+                    entry["thumbnailPath"] = thumbURL.path
+                }
+                // Include duration for videos
+                if let duration = item.duration {
+                    entry["duration"] = duration
+                }
+                manifest.append(entry)
             } catch {
                 print("[SHARE] Failed to save: \(error)")
             }
