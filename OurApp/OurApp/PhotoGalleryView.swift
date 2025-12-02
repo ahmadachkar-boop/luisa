@@ -1812,18 +1812,54 @@ struct PhotoGalleryView: View {
                                         progress: 0.5
                                     )
 
+                                    // Check for task cancellation before upload
+                                    if Task.isCancelled {
+                                        print("⚠️ [GALLERY UPLOAD] Task cancelled, queuing video \(index + 1) for background upload")
+                                        OfflineManager.shared.queueVideoUpload(
+                                            videoURL: processedVideo.fileURL,
+                                            thumbnailData: thumbnailData,
+                                            duration: processedVideo.duration,
+                                            capturedAt: videoCapturedAt,
+                                            eventId: nil,
+                                            folderId: nil
+                                        )
+                                        uploadErrors.append("Video \(index + 1) queued for background")
+                                        continue
+                                    }
+
                                     // Upload video using file streaming (faster than loading into memory)
                                     print("🎬 [GALLERY UPLOAD] Uploading video \(index + 1)...")
-                                    try await viewModel.uploadVideoFromFile(
-                                        videoURL: processedVideo.fileURL,
-                                        thumbnailData: thumbnailData,
-                                        duration: processedVideo.duration,
-                                        capturedAt: videoCapturedAt
-                                    )
+                                    do {
+                                        try await viewModel.uploadVideoFromFile(
+                                            videoURL: processedVideo.fileURL,
+                                            thumbnailData: thumbnailData,
+                                            duration: processedVideo.duration,
+                                            capturedAt: videoCapturedAt
+                                        )
 
-                                    UploadProgressManager.shared.completeTask(batchId: batchId, taskIndex: index)
-                                    successCount += 1
-                                    print("🟢 [GALLERY UPLOAD] Uploaded video \(index + 1) successfully")
+                                        UploadProgressManager.shared.completeTask(batchId: batchId, taskIndex: index)
+                                        successCount += 1
+                                        print("🟢 [GALLERY UPLOAD] Uploaded video \(index + 1) successfully")
+                                    } catch {
+                                        print("🔴 [GALLERY UPLOAD] Failed to upload video \(index + 1): \(error)")
+                                        UploadProgressManager.shared.failTask(
+                                            batchId: batchId,
+                                            taskIndex: index,
+                                            error: "Upload failed: \(error.localizedDescription)"
+                                        )
+
+                                        // Queue for background retry
+                                        OfflineManager.shared.queueVideoUpload(
+                                            videoURL: processedVideo.fileURL,
+                                            thumbnailData: thumbnailData,
+                                            duration: processedVideo.duration,
+                                            capturedAt: videoCapturedAt,
+                                            eventId: nil,
+                                            folderId: nil
+                                        )
+                                        print("📹 [GALLERY UPLOAD] Queued video \(index + 1) for background retry")
+                                        uploadErrors.append("Video \(index + 1) queued for retry")
+                                    }
 
                                 } else {
                                     // MARK: - Photo Upload Flow
