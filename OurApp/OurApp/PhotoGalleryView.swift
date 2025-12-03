@@ -307,6 +307,7 @@ struct PhotoGalleryView: View {
     @State private var totalUploadCount: Int = 0
     @State private var showingBatchProgress = false
     @State private var batchProgress: Double = 0.0
+    @State private var scrollToTopTrigger: Int = 0 // Triggers scroll to top when incremented
     @State private var batchOperationMessage = ""
     @State private var isInitialLoad = true
     @State private var folderTransitionId = UUID() // For folder transition animations
@@ -562,6 +563,12 @@ struct PhotoGalleryView: View {
                             isResettingScroll = false
                         }
                     }
+                }
+            }
+            .onChange(of: scrollToTopTrigger) { _, _ in
+                // Scroll to top when tab is tapped while viewing a photo grid
+                withAnimation(.easeOut(duration: 0.3)) {
+                    scrollProxy.scrollTo("photos-top-anchor", anchor: .top)
                 }
             }
             .safeAreaInset(edge: .top) {
@@ -2125,11 +2132,17 @@ struct PhotoGalleryView: View {
             }
         }
         .onChange(of: resetTrigger) { _, _ in
-            // Return to All Photos when same tab is tapped
-            if currentFolderView != .allPhotos {
+            // Smart tab tap behavior:
+            // - If viewing folder list (events/specialEvents), go back to All Photos
+            // - If viewing any photo grid, scroll to top
+            if currentFolderView == .events || currentFolderView == .specialEvents {
                 withAnimation {
                     currentFolderView = .allPhotos
+                    folderNavStack.removeAll()
                 }
+            } else {
+                // In a photo grid - trigger scroll to top
+                scrollToTopTrigger += 1
             }
         }
     }
