@@ -2133,12 +2133,13 @@ struct PhotoGalleryView: View {
         }
         .onChange(of: resetTrigger) { _, _ in
             // Smart tab tap behavior:
-            // - If viewing folder list (events/specialEvents), go back to All Photos
+            // - If viewing folder overview or folder list, go back to All Photos
             // - If viewing any photo grid, scroll to top
-            if currentFolderView == .events || currentFolderView == .specialEvents {
+            if showingFoldersOverview || currentFolderView == .events || currentFolderView == .specialEvents {
                 withAnimation {
                     currentFolderView = .allPhotos
                     folderNavStack.removeAll()
+                    showingFoldersOverview = false
                 }
             } else {
                 // In a photo grid - trigger scroll to top
