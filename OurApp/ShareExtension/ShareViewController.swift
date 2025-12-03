@@ -323,15 +323,20 @@ class ShareViewController: UIViewController {
 
             if let url = item as? URL {
                 fileURL = url
-                imageData = try? Data(contentsOf: url)
-                // Extract EXIF date from file
+                // Extract EXIF date BEFORE compression (compression loses metadata)
                 capturedAt = self?.extractImageDate(from: url)
+                // Load and compress the image (don't use raw file data)
+                if let image = UIImage(contentsOfFile: url.path) {
+                    imageData = self?.compressImage(image)
+                }
             } else if let image = item as? UIImage {
                 imageData = self?.compressImage(image)
-            } else if let data = item as? Data, let image = UIImage(data: data) {
-                imageData = self?.compressImage(image)
-                // Try to extract date from data
+            } else if let data = item as? Data {
+                // Try to extract date from data BEFORE compression
                 capturedAt = self?.extractImageDate(from: data)
+                if let image = UIImage(data: data) {
+                    imageData = self?.compressImage(image)
+                }
             }
 
             if let data = imageData {
@@ -456,22 +461,31 @@ class ShareViewController: UIViewController {
     }
 
     private func compressImage(_ image: UIImage, maxBytes: Int = 1_000_000) -> Data? {
-        // Resize if too large
+        // Resize if too large (match main app's resized(toMaxDimension:) logic)
         let maxDimension: CGFloat = 1920
         var resized = image
+
+        // Only resize if larger than max dimension
         if image.size.width > maxDimension || image.size.height > maxDimension {
-            let scale = maxDimension / max(image.size.width, image.size.height)
-            let newSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+            let aspectRatio = image.size.width / image.size.height
+            var newSize: CGSize
+
+            if image.size.width > image.size.height {
+                newSize = CGSize(width: maxDimension, height: maxDimension / aspectRatio)
+            } else {
+                newSize = CGSize(width: maxDimension * aspectRatio, height: maxDimension)
+            }
+
             UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
             image.draw(in: CGRect(origin: .zero, size: newSize))
             resized = UIGraphicsGetImageFromCurrentImageContext() ?? image
             UIGraphicsEndImageContext()
         }
 
-        // Compress
-        var quality: CGFloat = 0.85
+        // Compress (match main app's compressed(toMaxBytes:) logic)
+        var quality: CGFloat = 0.9
         var data = resized.jpegData(compressionQuality: quality)
-        while let d = data, d.count > maxBytes && quality > 0.3 {
+        while let d = data, d.count > maxBytes && quality > 0.1 {
             quality -= 0.1
             data = resized.jpegData(compressionQuality: quality)
         }
