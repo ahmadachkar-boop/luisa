@@ -311,8 +311,24 @@ class FirebaseManager: ObservableObject {
                         return
                     }
 
+                    var successCount = 0
+                    var failedCount = 0
                     let photos = documents.compactMap { doc -> Photo? in
-                        try? doc.data(as: Photo.self)
+                        do {
+                            let photo = try doc.data(as: Photo.self)
+                            successCount += 1
+                            return photo
+                        } catch {
+                            failedCount += 1
+                            print("❌ [DECODE FAILURE] Document ID: \(doc.documentID)")
+                            print("   Error: \(error)")
+                            print("   Raw data: \(doc.data())")
+                            return nil
+                        }
+                    }
+
+                    if failedCount > 0 {
+                        print("⚠️ [PHOTOS] Decoded \(successCount) photos, FAILED \(failedCount) documents")
                     }
 
                     continuation.yield(photos)
