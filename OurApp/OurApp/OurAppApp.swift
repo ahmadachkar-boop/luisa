@@ -88,6 +88,9 @@ struct OurAppApp: App {
                 switch newPhase {
                 case .active:
                     print("🟢 [APP LIFECYCLE] App became active")
+                    // Refresh Firebase config for share extension (tokens expire after 1 hour)
+                    updateSharedFirebaseConfig()
+
                     // Sync events to widget when app becomes active
                     WidgetDataManager.shared.syncFromFirebase()
 
