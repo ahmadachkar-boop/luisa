@@ -402,6 +402,15 @@ class FirebaseManager: ObservableObject {
         }
     }
 
+    /// Extracts the base URL path without query parameters for comparison
+    /// e.g., "https://example.com/path?query=1" -> "https://example.com/path"
+    private func extractBaseURL(_ urlString: String) -> String {
+        if let questionIndex = urlString.firstIndex(of: "?") {
+            return String(urlString[..<questionIndex])
+        }
+        return urlString
+    }
+
     func cleanupOrphanedPhotos() async throws -> Int {
         print("🧹 [CLEANUP] Starting orphaned photos cleanup...")
         var deletedCount = 0
@@ -409,16 +418,17 @@ class FirebaseManager: ObservableObject {
         // Step 1: List all files in Storage photos folder
         print("🔍 [CLEANUP] Listing storage files...")
         let photosRef = storage.reference().child("photos")
-        var storageURLs = Set<String>()
+        var storageBasePaths = Set<String>()
 
         do {
             let result = try await photosRef.listAll()
             for item in result.items {
                 if let url = try? await item.downloadURL() {
-                    storageURLs.insert(url.absoluteString)
+                    // Store only the base path (without query params like &token=)
+                    storageBasePaths.insert(extractBaseURL(url.absoluteString))
                 }
             }
-            print("📊 [CLEANUP] Found \(storageURLs.count) files in storage")
+            print("📊 [CLEANUP] Found \(storageBasePaths.count) files in storage")
         } catch {
             print("⚠️ [CLEANUP] Could not list storage files: \(error.localizedDescription)")
             // Fall back to individual checks if listing fails
@@ -434,8 +444,9 @@ class FirebaseManager: ObservableObject {
         for doc in photosSnapshot.documents {
             guard let photo = try? doc.data(as: Photo.self) else { continue }
 
-            // Check if the photo URL exists in our storage URL set
-            if !storageURLs.contains(photo.imageURL) {
+            // Compare base paths only (ignore query params like ?alt=media&token=)
+            let photoBasePath = extractBaseURL(photo.imageURL)
+            if !storageBasePaths.contains(photoBasePath) {
                 orphanedDocIds.append(doc.documentID)
                 print("🗑️ [CLEANUP] Found orphaned photo: \(photo.imageURL.suffix(40))...")
             }
