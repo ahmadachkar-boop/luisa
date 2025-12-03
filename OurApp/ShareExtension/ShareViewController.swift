@@ -29,6 +29,7 @@ class ShareViewController: UIViewController {
         let projectId: String
         let apiKey: String
         let idToken: String? // Auth token if user is signed in
+        let userName: String? // Current user name for uploadedBy field
     }
 
     private lazy var containerView: UIView = {
@@ -244,12 +245,14 @@ class ShareViewController: UIViewController {
            let apiKey = json["apiKey"] as? String {
 
             let idToken = json["idToken"] as? String
-            firebaseConfig = FirebaseConfig(storageBucket: storageBucket, projectId: projectId, apiKey: apiKey, idToken: idToken)
+            let userName = json["userName"] as? String
+            firebaseConfig = FirebaseConfig(storageBucket: storageBucket, projectId: projectId, apiKey: apiKey, idToken: idToken, userName: userName)
 
             logDiagnostic("✅ Firebase config loaded successfully")
             logDiagnostic("   - Storage bucket: \(storageBucket)")
             logDiagnostic("   - Project ID: \(projectId)")
             logDiagnostic("   - Has auth token: \(idToken != nil ? "YES" : "NO")")
+            logDiagnostic("   - User name: \(userName ?? "unknown")")
             if let token = idToken {
                 logDiagnostic("   - Token length: \(token.count) chars")
             }
@@ -712,10 +715,13 @@ class ShareViewController: UIViewController {
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
+        // Use actual user name from config, fallback to "You" if not available
+        let uploadedBy = config.userName ?? "You"
+
         var fields: [String: Any] = [
             "imageURL": ["stringValue": imageURL],
             "caption": ["stringValue": ""],
-            "uploadedBy": ["stringValue": "You"],
+            "uploadedBy": ["stringValue": uploadedBy],
             "createdAt": ["timestampValue": isoFormatter.string(from: Date())]
         ]
 

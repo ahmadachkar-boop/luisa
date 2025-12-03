@@ -435,11 +435,15 @@ func shareFirebaseConfigWithExtension() {
             }
         }
 
+        // Get current user name for uploadedBy field
+        let currentUserName = await MainActor.run { UserIdentityManager.shared.currentUserName }
+
         let config: [String: Any?] = [
             "storageBucket": options.storageBucket,
             "projectId": options.projectID,
             "apiKey": options.apiKey,
-            "idToken": idToken
+            "idToken": idToken,
+            "userName": currentUserName
         ]
 
         // Filter out nil values
