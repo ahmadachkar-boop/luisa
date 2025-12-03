@@ -1004,9 +1004,7 @@ struct CalendarView: View {
             }
         }
 
-        // Reload local events
-        viewModel.loadEvents()
-
+        // Events are automatically synced via SharedDataStore listener
         // Fetch weather for events
         await viewModel.fetchWeatherForEvents()
     }
