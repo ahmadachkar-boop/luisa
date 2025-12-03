@@ -23,6 +23,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                 print("🟢 [APP INIT] Bundle ID: \(bundleID)")
             }
 
+            // Start shared data store listeners (single source of truth for photos/events)
+            print("🔵 [APP INIT] Starting shared data store...")
+            SharedDataStore.shared.startListening()
+
             // Sync events to widget after Firebase is configured
             print("🔵 [APP INIT] Syncing events to widget...")
             WidgetDataManager.shared.syncFromFirebase()

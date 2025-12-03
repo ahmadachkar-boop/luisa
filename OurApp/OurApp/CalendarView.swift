@@ -2886,6 +2886,10 @@ struct EditEventView: View {
 
 // MARK: - View Models
 class CalendarViewModel: ObservableObject {
+    // Use shared data store instead of duplicate listeners
+    private let sharedStore = SharedDataStore.shared
+    private var cancellables = Set<AnyCancellable>()
+
     @Published var events: [CalendarEvent] = []
     @Published var photos: [Photo] = []
 
@@ -2909,32 +2913,11 @@ class CalendarViewModel: ObservableObject {
     }
 
     init() {
-        loadEvents()
-        loadPhotos()
-    }
-
-    func loadEvents() {
-        Task {
-            for try await events in firebaseManager.getCalendarEvents() {
-                await MainActor.run {
-                    self.events = events
-                    // Sync to widget
-                    WidgetDataManager.shared.syncEvents(events)
-                    // Schedule local notifications for all future events
-                    NotificationManager.shared.scheduleRemindersForAllEvents(events)
-                }
-            }
-        }
-    }
-
-    func loadPhotos() {
-        Task {
-            for try await photos in firebaseManager.getPhotos() {
-                await MainActor.run {
-                    self.photos = photos
-                }
-            }
-        }
+        // Subscribe to shared store changes - no duplicate Firestore listeners
+        sharedStore.$events
+            .assign(to: &$events)
+        sharedStore.$photos
+            .assign(to: &$photos)
     }
 
     func addEvent(_ event: CalendarEvent) async throws {

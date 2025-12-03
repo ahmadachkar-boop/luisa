@@ -2,6 +2,7 @@ import SwiftUI
 import PhotosUI
 import ImageIO
 import AVFoundation
+import Combine
 
 // MARK: - Shimmer Effect for Loading Placeholders
 struct ShimmerEffect: ViewModifier {
@@ -2800,6 +2801,9 @@ struct FolderCardButtonStyle: ButtonStyle {
 }
 
 class PhotoGalleryViewModel: ObservableObject {
+    // Use shared data store instead of duplicate listeners
+    private let sharedStore = SharedDataStore.shared
+
     @Published var photos: [Photo] = []
     @Published var folders: [PhotoFolder] = []
     @Published var events: [CalendarEvent] = []
@@ -2807,39 +2811,13 @@ class PhotoGalleryViewModel: ObservableObject {
     private let firebaseManager = FirebaseManager.shared
 
     init() {
-        loadPhotos()
-        loadFolders()
-        loadEvents()
-    }
-
-    func loadPhotos() {
-        Task {
-            for try await photos in firebaseManager.getPhotos() {
-                await MainActor.run {
-                    self.photos = photos
-                }
-            }
-        }
-    }
-
-    func loadFolders() {
-        Task {
-            for try await folders in firebaseManager.getFolders() {
-                await MainActor.run {
-                    self.folders = folders
-                }
-            }
-        }
-    }
-
-    func loadEvents() {
-        Task {
-            for try await events in firebaseManager.getCalendarEvents() {
-                await MainActor.run {
-                    self.events = events
-                }
-            }
-        }
+        // Subscribe to shared store changes - no duplicate Firestore listeners
+        sharedStore.$photos
+            .assign(to: &$photos)
+        sharedStore.$folders
+            .assign(to: &$folders)
+        sharedStore.$events
+            .assign(to: &$events)
     }
 
     func uploadPhoto(imageData: Data, capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws {

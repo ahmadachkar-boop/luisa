@@ -2,6 +2,80 @@ import Foundation
 import FirebaseFirestore
 import FirebaseStorage
 
+// MARK: - Shared Data Store
+/// Single source of truth for photos and events - eliminates duplicate Firestore listeners
+class SharedDataStore: ObservableObject {
+    static let shared = SharedDataStore()
+
+    @Published var photos: [Photo] = []
+    @Published var events: [CalendarEvent] = []
+    @Published var folders: [PhotoFolder] = []
+
+    private let firebaseManager = FirebaseManager.shared
+    private var photosListener: Task<Void, Never>?
+    private var eventsListener: Task<Void, Never>?
+    private var foldersListener: Task<Void, Never>?
+    private var isListening = false
+
+    private init() {}
+
+    /// Start all listeners - call once from app initialization
+    func startListening() {
+        guard !isListening else { return }
+        isListening = true
+        print("📡 [SHARED STORE] Starting shared data listeners")
+
+        photosListener = Task {
+            do {
+                for try await photos in firebaseManager.getPhotos() {
+                    await MainActor.run {
+                        self.photos = photos
+                    }
+                }
+            } catch {
+                print("❌ [SHARED STORE] Photos listener error: \(error)")
+            }
+        }
+
+        eventsListener = Task {
+            do {
+                for try await events in firebaseManager.getCalendarEvents() {
+                    await MainActor.run {
+                        self.events = events
+                        // Sync to widget
+                        WidgetDataManager.shared.syncEvents(events)
+                        // Schedule local notifications for all future events
+                        NotificationManager.shared.scheduleRemindersForAllEvents(events)
+                    }
+                }
+            } catch {
+                print("❌ [SHARED STORE] Events listener error: \(error)")
+            }
+        }
+
+        foldersListener = Task {
+            do {
+                for try await folders in firebaseManager.getFolders() {
+                    await MainActor.run {
+                        self.folders = folders
+                    }
+                }
+            } catch {
+                print("❌ [SHARED STORE] Folders listener error: \(error)")
+            }
+        }
+    }
+
+    /// Stop all listeners - call when app terminates
+    func stopListening() {
+        photosListener?.cancel()
+        eventsListener?.cancel()
+        foldersListener?.cancel()
+        isListening = false
+        print("📡 [SHARED STORE] Stopped shared data listeners")
+    }
+}
+
 // MARK: - Firebase Operation Errors
 /// Custom errors for Firebase operations to replace silent failures
 enum FirebaseOperationError: LocalizedError {
