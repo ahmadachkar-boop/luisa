@@ -2,6 +2,80 @@ import Foundation
 import FirebaseFirestore
 import FirebaseStorage
 
+// MARK: - Shared Data Store
+/// Single source of truth for photos and events - eliminates duplicate Firestore listeners
+class SharedDataStore: ObservableObject {
+    static let shared = SharedDataStore()
+
+    @Published var photos: [Photo] = []
+    @Published var events: [CalendarEvent] = []
+    @Published var folders: [PhotoFolder] = []
+
+    private let firebaseManager = FirebaseManager.shared
+    private var photosListener: Task<Void, Never>?
+    private var eventsListener: Task<Void, Never>?
+    private var foldersListener: Task<Void, Never>?
+    private var isListening = false
+
+    private init() {}
+
+    /// Start all listeners - call once from app initialization
+    func startListening() {
+        guard !isListening else { return }
+        isListening = true
+        print("📡 [SHARED STORE] Starting shared data listeners")
+
+        photosListener = Task {
+            do {
+                for try await photos in firebaseManager.getPhotos() {
+                    await MainActor.run {
+                        self.photos = photos
+                    }
+                }
+            } catch {
+                print("❌ [SHARED STORE] Photos listener error: \(error)")
+            }
+        }
+
+        eventsListener = Task {
+            do {
+                for try await events in firebaseManager.getCalendarEvents() {
+                    await MainActor.run {
+                        self.events = events
+                        // Sync to widget
+                        WidgetDataManager.shared.syncEvents(events)
+                        // Schedule local notifications for all future events
+                        NotificationManager.shared.scheduleRemindersForAllEvents(events)
+                    }
+                }
+            } catch {
+                print("❌ [SHARED STORE] Events listener error: \(error)")
+            }
+        }
+
+        foldersListener = Task {
+            do {
+                for try await folders in firebaseManager.getFolders() {
+                    await MainActor.run {
+                        self.folders = folders
+                    }
+                }
+            } catch {
+                print("❌ [SHARED STORE] Folders listener error: \(error)")
+            }
+        }
+    }
+
+    /// Stop all listeners - call when app terminates
+    func stopListening() {
+        photosListener?.cancel()
+        eventsListener?.cancel()
+        foldersListener?.cancel()
+        isListening = false
+        print("📡 [SHARED STORE] Stopped shared data listeners")
+    }
+}
+
 // MARK: - Firebase Operation Errors
 /// Custom errors for Firebase operations to replace silent failures
 enum FirebaseOperationError: LocalizedError {
@@ -233,11 +307,67 @@ class FirebaseManager: ObservableObject {
             createdAt: Date(),
             capturedAt: capturedAt,
             eventId: eventId,
-            folderId: folderId
+            folderId: folderId,
+            mediaType: .photo
         )
 
         try db.collection("photos").addDocument(from: photo)
         return downloadURL.absoluteString
+    }
+
+    // MARK: - Videos
+
+    /// Optimized video upload using file streaming (avoids loading into memory)
+    func uploadVideoFromFile(videoURL: URL, thumbnailData: Data, duration: TimeInterval, caption: String = "", uploadedBy: String = "You", capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws -> String {
+        let videoFileName = "\(UUID().uuidString).mp4"
+        let thumbnailFileName = "\(UUID().uuidString)_thumb.jpg"
+
+        // Upload video using file streaming (much faster for large files)
+        let videoRef = storage.reference().child("videos/\(videoFileName)")
+        let metadata = StorageMetadata()
+        metadata.contentType = "video/mp4"
+        let _ = try await videoRef.putFileAsync(from: videoURL, metadata: metadata)
+        let videoDownloadURL = try await videoRef.downloadURL()
+
+        // Upload thumbnail image
+        let thumbnailRef = storage.reference().child("photos/\(thumbnailFileName)")
+        let _ = try await thumbnailRef.putDataAsync(thumbnailData)
+        let thumbnailDownloadURL = try await thumbnailRef.downloadURL()
+
+        let photo = Photo(
+            imageURL: thumbnailDownloadURL.absoluteString,
+            caption: caption,
+            uploadedBy: uploadedBy,
+            createdAt: Date(),
+            capturedAt: capturedAt,
+            eventId: eventId,
+            folderId: folderId,
+            mediaType: .video,
+            videoURL: videoDownloadURL.absoluteString,
+            duration: duration
+        )
+
+        try db.collection("photos").addDocument(from: photo)
+        return videoDownloadURL.absoluteString
+    }
+
+    /// Legacy method for compatibility
+    func uploadVideo(videoData: Data, thumbnailData: Data, duration: TimeInterval, caption: String = "", uploadedBy: String = "You", capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws -> String {
+        // Write data to temp file for streaming upload
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        try videoData.write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        return try await uploadVideoFromFile(
+            videoURL: tempURL,
+            thumbnailData: thumbnailData,
+            duration: duration,
+            caption: caption,
+            uploadedBy: uploadedBy,
+            capturedAt: capturedAt,
+            eventId: eventId,
+            folderId: folderId
+        )
     }
 
     func getPhotos() -> AsyncThrowingStream<[Photo], Error> {
@@ -255,8 +385,24 @@ class FirebaseManager: ObservableObject {
                         return
                     }
 
+                    var successCount = 0
+                    var failedCount = 0
                     let photos = documents.compactMap { doc -> Photo? in
-                        try? doc.data(as: Photo.self)
+                        do {
+                            let photo = try doc.data(as: Photo.self)
+                            successCount += 1
+                            return photo
+                        } catch {
+                            failedCount += 1
+                            print("❌ [DECODE FAILURE] Document ID: \(doc.documentID)")
+                            print("   Error: \(error)")
+                            print("   Raw data: \(doc.data())")
+                            return nil
+                        }
+                    }
+
+                    if failedCount > 0 {
+                        print("⚠️ [PHOTOS] Decoded \(successCount) photos, FAILED \(failedCount) documents")
                     }
 
                     continuation.yield(photos)
@@ -274,9 +420,21 @@ class FirebaseManager: ObservableObject {
             return
         }
 
-        // Delete from Storage
-        let storageRef = storage.reference(forURL: photo.imageURL)
-        try await storageRef.delete()
+        // Delete thumbnail/image from Storage
+        let thumbnailRef = storage.reference(forURL: photo.imageURL)
+        try await thumbnailRef.delete()
+
+        // If this is a video, also delete the video file
+        if photo.isVideo, let videoURL = photo.videoURL {
+            do {
+                let videoRef = storage.reference(forURL: videoURL)
+                try await videoRef.delete()
+                print("✅ [FIREBASE] Deleted video file from storage")
+            } catch {
+                print("⚠️ [FIREBASE] Failed to delete video file: \(error.localizedDescription)")
+                // Non-fatal: continue with document deletion
+            }
+        }
 
         // Delete from Firestore photos collection
         try await db.collection("photos").document(id).delete()
@@ -318,6 +476,15 @@ class FirebaseManager: ObservableObject {
         }
     }
 
+    /// Extracts the base URL path without query parameters for comparison
+    /// e.g., "https://example.com/path?query=1" -> "https://example.com/path"
+    private func extractBaseURL(_ urlString: String) -> String {
+        if let questionIndex = urlString.firstIndex(of: "?") {
+            return String(urlString[..<questionIndex])
+        }
+        return urlString
+    }
+
     func cleanupOrphanedPhotos() async throws -> Int {
         print("🧹 [CLEANUP] Starting orphaned photos cleanup...")
         var deletedCount = 0
@@ -325,16 +492,17 @@ class FirebaseManager: ObservableObject {
         // Step 1: List all files in Storage photos folder
         print("🔍 [CLEANUP] Listing storage files...")
         let photosRef = storage.reference().child("photos")
-        var storageURLs = Set<String>()
+        var storageBasePaths = Set<String>()
 
         do {
             let result = try await photosRef.listAll()
             for item in result.items {
                 if let url = try? await item.downloadURL() {
-                    storageURLs.insert(url.absoluteString)
+                    // Store only the base path (without query params like &token=)
+                    storageBasePaths.insert(extractBaseURL(url.absoluteString))
                 }
             }
-            print("📊 [CLEANUP] Found \(storageURLs.count) files in storage")
+            print("📊 [CLEANUP] Found \(storageBasePaths.count) files in storage")
         } catch {
             print("⚠️ [CLEANUP] Could not list storage files: \(error.localizedDescription)")
             // Fall back to individual checks if listing fails
@@ -350,8 +518,9 @@ class FirebaseManager: ObservableObject {
         for doc in photosSnapshot.documents {
             guard let photo = try? doc.data(as: Photo.self) else { continue }
 
-            // Check if the photo URL exists in our storage URL set
-            if !storageURLs.contains(photo.imageURL) {
+            // Compare base paths only (ignore query params like ?alt=media&token=)
+            let photoBasePath = extractBaseURL(photo.imageURL)
+            if !storageBasePaths.contains(photoBasePath) {
                 orphanedDocIds.append(doc.documentID)
                 print("🗑️ [CLEANUP] Found orphaned photo: \(photo.imageURL.suffix(40))...")
             }

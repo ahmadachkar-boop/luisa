@@ -1,6 +1,8 @@
 import SwiftUI
 import PhotosUI
 import ImageIO
+import AVFoundation
+import Combine
 
 // MARK: - Shimmer Effect for Loading Placeholders
 struct ShimmerEffect: ViewModifier {
@@ -84,7 +86,7 @@ struct AnimatedUploadProgressBar: View {
     var body: some View {
         VStack(spacing: 8) {
             HStack {
-                Text("Uploading photos...")
+                Text("Uploading media...")
                     .font(.subheadline.weight(.medium))
                     .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
                 Spacer()
@@ -188,6 +190,65 @@ func extractCaptureDate(from imageData: Data) -> Date? {
     return formatter.date(from: dateTimeOriginal)
 }
 
+// Helper function to extract creation date from video metadata
+func extractVideoCreationDate(from videoURL: URL) async -> Date? {
+    let asset = AVURLAsset(url: videoURL)
+
+    do {
+        // Try to get creation date from common metadata
+        let metadata = try await asset.load(.commonMetadata)
+
+        // Look for creation date in metadata
+        for item in metadata {
+            if let key = item.commonKey, key == .commonKeyCreationDate {
+                if let dateValue = try await item.load(.dateValue) {
+                    return dateValue
+                }
+                if let stringValue = try await item.load(.stringValue) {
+                    // Try parsing ISO 8601 date
+                    let formatter = ISO8601DateFormatter()
+                    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                    if let date = formatter.date(from: stringValue) {
+                        return date
+                    }
+                    // Try without fractional seconds
+                    formatter.formatOptions = [.withInternetDateTime]
+                    if let date = formatter.date(from: stringValue) {
+                        return date
+                    }
+                }
+            }
+        }
+
+        // Fallback: try creation date metadata key
+        let creationDateItems = AVMetadataItem.metadataItems(from: metadata, filteredByIdentifier: .commonIdentifierCreationDate)
+        if let dateItem = creationDateItems.first {
+            if let dateValue = try await dateItem.load(.dateValue) {
+                return dateValue
+            }
+        }
+
+    } catch {
+        print("⚠️ [VIDEO METADATA] Failed to load metadata: \(error)")
+    }
+
+    // Last resort: check file creation date
+    do {
+        let attrs = try FileManager.default.attributesOfItem(atPath: videoURL.path)
+        if let creationDate = attrs[.creationDate] as? Date {
+            // Only use file date if it seems reasonable (not today, which would indicate a temp file)
+            let calendar = Calendar.current
+            if !calendar.isDateInToday(creationDate) {
+                return creationDate
+            }
+        }
+    } catch {
+        print("⚠️ [VIDEO METADATA] Failed to get file attributes: \(error)")
+    }
+
+    return nil
+}
+
 // Wrapper to make Int work with .fullScreenCover(item:)
 struct PhotoIndex: Identifiable {
     let id = UUID()
@@ -219,7 +280,7 @@ struct PhotoGalleryView: View {
     @State private var errorMessage = ""
     @State private var selectedPhotoIndex: PhotoIndex?
     @State private var selectionMode = false
-    @State private var selectedPhotoIndices: Set<Int> = []
+    @State private var selectedPhotoIds: Set<String> = []
     @State private var showingSaveSuccess = false
     @State private var showingSaveError = false
     @State private var saveErrorMessage = ""
@@ -246,6 +307,7 @@ struct PhotoGalleryView: View {
     @State private var totalUploadCount: Int = 0
     @State private var showingBatchProgress = false
     @State private var batchProgress: Double = 0.0
+    @State private var scrollToTopTrigger: Int = 0 // Triggers scroll to top when incremented
     @State private var batchOperationMessage = ""
     @State private var isInitialLoad = true
     @State private var folderTransitionId = UUID() // For folder transition animations
@@ -285,14 +347,32 @@ struct PhotoGalleryView: View {
         filterStartDate != nil || filterEndDate != nil
     }
 
+    // Separate dated photos (with capturedAt) from undated ones (screenshots, etc.)
+    private var datedPhotos: [Photo] {
+        filteredPhotos.filter { $0.capturedAt != nil }
+    }
+
+    private var undatedPhotos: [Photo] {
+        let undated = filteredPhotos.filter { $0.capturedAt == nil }
+        // Sort by createdAt (upload date) - newest first by default
+        return undated.sorted { photo1, photo2 in
+            switch sortOption {
+            case .newestFirst, .recentlyAdded:
+                return photo1.createdAt > photo2.createdAt
+            case .oldestFirst:
+                return photo1.createdAt < photo2.createdAt
+            }
+        }
+    }
+
     // Group photos by month/year (using original capture date from metadata)
+    // Only includes photos with capturedAt date - undated photos shown separately
     private var photosByMonth: [(key: String, photos: [Photo])] {
-        let grouped = Dictionary(grouping: filteredPhotos) { photo -> String in
+        let grouped = Dictionary(grouping: datedPhotos) { photo -> String in
             let formatter = DateFormatter()
             formatter.dateFormat = "MMMM yyyy"
-            // Use capturedAt if available, otherwise fall back to createdAt
-            let dateToUse = photo.capturedAt ?? photo.createdAt
-            return formatter.string(from: dateToUse)
+            // Use capturedAt (guaranteed to exist due to datedPhotos filter)
+            return formatter.string(from: photo.capturedAt!)
         }
 
         // Sort months based on current sort option
@@ -316,13 +396,9 @@ struct PhotoGalleryView: View {
             let sortedPhotos = month.value.sorted { photo1, photo2 in
                 switch sortOption {
                 case .newestFirst:
-                    let date1 = photo1.capturedAt ?? photo1.createdAt
-                    let date2 = photo2.capturedAt ?? photo2.createdAt
-                    return date1 > date2
+                    return photo1.capturedAt! > photo2.capturedAt!
                 case .oldestFirst:
-                    let date1 = photo1.capturedAt ?? photo1.createdAt
-                    let date2 = photo2.capturedAt ?? photo2.createdAt
-                    return date1 < date2
+                    return photo1.capturedAt! < photo2.capturedAt!
                 case .recentlyAdded:
                     return photo1.createdAt > photo2.createdAt
                 }
@@ -354,19 +430,19 @@ struct PhotoGalleryView: View {
     // Cached photos in display order to avoid recomputation
     @State private var cachedPhotosInDisplayOrder: [Photo] = []
 
-    // Flat array of photos in display order (newest first) - uses cached value
+    // Flat array of photos in display order - dated photos first, then undated at bottom
     private var photosInDisplayOrder: [Photo] {
         // Return cached value; cache is updated via onChange modifiers
         if !cachedPhotosInDisplayOrder.isEmpty {
             return cachedPhotosInDisplayOrder
         }
         // Fallback for initial load before cache is populated
-        return photosByMonth.flatMap { $0.photos }
+        return photosByMonth.flatMap { $0.photos } + undatedPhotos
     }
 
     // Update cache when photos, filters, or sort options change
     private func updatePhotosCache() {
-        cachedPhotosInDisplayOrder = photosByMonth.flatMap { $0.photos }
+        cachedPhotosInDisplayOrder = photosByMonth.flatMap { $0.photos } + undatedPhotos
     }
 
     // Current folder title for display
@@ -487,6 +563,12 @@ struct PhotoGalleryView: View {
                             isResettingScroll = false
                         }
                     }
+                }
+            }
+            .onChange(of: scrollToTopTrigger) { _, _ in
+                // Scroll to top when tab is tapped while viewing a photo grid
+                withAnimation(.easeOut(duration: 0.3)) {
+                    scrollProxy.scrollTo("photos-top-anchor", anchor: .top)
                 }
             }
             .safeAreaInset(edge: .top) {
@@ -709,8 +791,8 @@ struct PhotoGalleryView: View {
                 VStack(spacing: 16) {
                     // Quick actions row
                     HStack(spacing: 12) {
-                        // Add button
-                        PhotosPicker(selection: $selectedItems, matching: .images) {
+                        // Add button (photos & videos)
+                        PhotosPicker(selection: $selectedItems, matching: .any(of: [.images, .videos])) {
                             HStack(spacing: 8) {
                                 Image(systemName: "plus.circle.fill")
                                     .font(.body)
@@ -1209,30 +1291,32 @@ struct PhotoGalleryView: View {
                             .padding(.top, dateGroup.key == dateGroups.first?.key ? 4 : 14)
 
                             LazyVGrid(columns: columns, spacing: 8) {
-                                ForEach(Array(dateGroup.photos.enumerated()), id: \.element.id) { _, photo in
-                                    let displayIndex = photosInDisplayOrder.firstIndex(where: { $0.id == photo.id }) ?? 0
+                                ForEach(dateGroup.photos, id: \.id) { photo in
+                                    let photoId = photo.id ?? ""
 
                                     PhotoGridCell(
                                         photo: photo,
-                                        index: displayIndex,
+                                        index: 0, // Index no longer used for selection
                                         selectionMode: selectionMode,
-                                        isSelected: selectedPhotoIndices.contains(displayIndex),
+                                        isSelected: selectedPhotoIds.contains(photoId),
                                         columnCount: columnCount,
                                         onTap: {
                                             if selectionMode {
-                                                if selectedPhotoIndices.contains(displayIndex) {
-                                                    selectedPhotoIndices.remove(displayIndex)
+                                                if selectedPhotoIds.contains(photoId) {
+                                                    selectedPhotoIds.remove(photoId)
                                                 } else {
-                                                    selectedPhotoIndices.insert(displayIndex)
+                                                    selectedPhotoIds.insert(photoId)
                                                 }
                                             } else {
-                                                selectedPhotoIndex = PhotoIndex(value: displayIndex)
+                                                if let displayIndex = photosInDisplayOrder.firstIndex(where: { $0.id == photo.id }) {
+                                                    selectedPhotoIndex = PhotoIndex(value: displayIndex)
+                                                }
                                             }
                                         },
                                         onLongPress: {
                                             if !selectionMode {
                                                 selectionMode = true
-                                                selectedPhotoIndices.insert(displayIndex)
+                                                selectedPhotoIds.insert(photoId)
                                             }
                                         }
                                     )
@@ -1243,8 +1327,115 @@ struct PhotoGalleryView: View {
                     }
                 }
             }
+
+            // MARK: - Undated Media Section
+            // Shows screenshots, downloads, and other media without capture date metadata
+            if !undatedPhotos.isEmpty {
+                Section {
+                    undatedSectionView
+                }
+            }
         }
         .padding(.top, 8)
+    }
+
+    // MARK: - Undated Section View
+    private var undatedSectionView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Section header
+            HStack(spacing: 12) {
+                // "Undated" label with icon
+                HStack(spacing: 8) {
+                    Image(systemName: "clock.badge.questionmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                    Text("Undated")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundColor(Color(red: 0.25, green: 0.15, blue: 0.45))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule()
+                        .fill(Color.white)
+                        .shadow(color: Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.12), radius: 4, x: 0, y: 2)
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.15), lineWidth: 1)
+                )
+
+                // Decorative line
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.3),
+                                Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.05)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(height: 1.5)
+
+                // Count badge
+                Text("\(undatedPhotos.count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.08))
+                    )
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 24)
+
+            // Description text
+            Text("Screenshots, downloads, and media without date information")
+                .font(.caption)
+                .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7).opacity(0.7))
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+
+            // Photo grid
+            LazyVGrid(columns: columns, spacing: 8) {
+                ForEach(undatedPhotos, id: \.id) { photo in
+                    let photoId = photo.id ?? ""
+
+                    PhotoGridCell(
+                        photo: photo,
+                        index: 0, // Index no longer used for selection
+                        selectionMode: selectionMode,
+                        isSelected: selectedPhotoIds.contains(photoId),
+                        columnCount: columnCount,
+                        onTap: {
+                            if selectionMode {
+                                if selectedPhotoIds.contains(photoId) {
+                                    selectedPhotoIds.remove(photoId)
+                                } else {
+                                    selectedPhotoIds.insert(photoId)
+                                }
+                            } else {
+                                if let displayIndex = photosInDisplayOrder.firstIndex(where: { $0.id == photo.id }) {
+                                    selectedPhotoIndex = PhotoIndex(value: displayIndex)
+                                }
+                            }
+                        },
+                        onLongPress: {
+                            if !selectionMode {
+                                selectionMode = true
+                                selectedPhotoIds.insert(photoId)
+                            }
+                        }
+                    )
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+        }
     }
 
     private func navigateToFolder(_ folder: FolderViewType) {
@@ -1363,12 +1554,12 @@ struct PhotoGalleryView: View {
                                     .multilineTextAlignment(.center)
                             }
 
-                            // Quick add button in empty state
-                            PhotosPicker(selection: $selectedItems, matching: .images) {
+                            // Quick add button in empty state (photos & videos)
+                            PhotosPicker(selection: $selectedItems, matching: .any(of: [.images, .videos])) {
                                 HStack(spacing: 8) {
                                     Image(systemName: "plus.circle.fill")
                                         .font(.body.weight(.semibold))
-                                    Text("Add Photos")
+                                    Text("Add Photos & Videos")
                                         .font(.body.weight(.semibold))
                                 }
                                 .foregroundColor(.white)
@@ -1402,13 +1593,13 @@ struct PhotoGalleryView: View {
                             Button("Cancel") {
                                 HapticManager.light()
                                 selectionMode = false
-                                selectedPhotoIndices.removeAll()
+                                selectedPhotoIds.removeAll()
                             }
                             .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
                         }
 
                         ToolbarItem(placement: .principal) {
-                            Text("\(selectedPhotoIndices.count) selected")
+                            Text("\(selectedPhotoIds.count) selected")
                                 .font(.headline)
                                 .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
                         }
@@ -1423,7 +1614,7 @@ struct PhotoGalleryView: View {
                                     Image(systemName: "heart.fill")
                                         .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
                                 }
-                                .disabled(selectedPhotoIndices.isEmpty)
+                                .disabled(selectedPhotoIds.isEmpty)
 
                                 // Move to folder button
                                 Button(action: {
@@ -1433,7 +1624,7 @@ struct PhotoGalleryView: View {
                                     Image(systemName: "folder.badge.plus")
                                         .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
                                 }
-                                .disabled(selectedPhotoIndices.isEmpty)
+                                .disabled(selectedPhotoIds.isEmpty)
 
                                 // Add to event button
                                 Button(action: {
@@ -1443,7 +1634,7 @@ struct PhotoGalleryView: View {
                                     Image(systemName: "calendar.badge.plus")
                                         .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
                                 }
-                                .disabled(selectedPhotoIndices.isEmpty)
+                                .disabled(selectedPhotoIds.isEmpty)
 
                                 // Save button
                                 Button(action: {
@@ -1453,7 +1644,7 @@ struct PhotoGalleryView: View {
                                     Image(systemName: "square.and.arrow.down")
                                         .foregroundColor(Color(red: 0.8, green: 0.7, blue: 1.0))
                                 }
-                                .disabled(selectedPhotoIndices.isEmpty)
+                                .disabled(selectedPhotoIds.isEmpty)
 
                                 // Delete button
                                 Button(action: {
@@ -1463,7 +1654,7 @@ struct PhotoGalleryView: View {
                                     Image(systemName: "trash")
                                         .foregroundColor(.red)
                                 }
-                                .disabled(selectedPhotoIndices.isEmpty)
+                                .disabled(selectedPhotoIds.isEmpty)
                             }
                         }
                     }
@@ -1471,7 +1662,7 @@ struct PhotoGalleryView: View {
                 .onChange(of: selectedItems) { oldItems, newItems in
                     guard !newItems.isEmpty else { return }
 
-                    print("📸 [GALLERY UPLOAD] Selected \(newItems.count) photos for upload")
+                    print("📸 [GALLERY UPLOAD] Selected \(newItems.count) items for upload")
 
                     // Immediately update UI on main thread
                     isUploading = true
@@ -1494,7 +1685,7 @@ struct PhotoGalleryView: View {
                         var uploadErrors: [String] = []
                         var successCount = 0
 
-                        // Process and upload one image at a time to avoid memory issues
+                        // Process and upload one item at a time to avoid memory issues
                         for (index, item) in newItems.enumerated() {
                             // Check for task cancellation (app backgrounded)
                             if Task.isCancelled {
@@ -1509,57 +1700,233 @@ struct PhotoGalleryView: View {
                             )
 
                             do {
-                                print("📸 [GALLERY UPLOAD] Processing image \(index + 1)/\(newItems.count)...")
+                                // Check if item is a video
+                                let supportedTypes = item.supportedContentTypes
+                                let isVideo = supportedTypes.contains { $0.conforms(to: .movie) || $0.conforms(to: .video) }
 
-                                // Load image data
-                                guard let data = try await item.loadTransferable(type: Data.self),
-                                      let uiImage = UIImage(data: data) else {
-                                    print("🔴 [GALLERY UPLOAD] Failed to load image \(index + 1)")
-                                    UploadProgressManager.shared.failTask(
+                                if isVideo {
+                                    // MARK: - Video Upload Flow
+                                    print("🎬 [GALLERY UPLOAD] Processing video \(index + 1)/\(newItems.count)...")
+
+                                    // Load video as transferable Movie type
+                                    guard let movie = try await item.loadTransferable(type: VideoTransferable.self) else {
+                                        print("🔴 [GALLERY UPLOAD] Failed to load video \(index + 1)")
+                                        UploadProgressManager.shared.failTask(
+                                            batchId: batchId,
+                                            taskIndex: index,
+                                            error: "Failed to load video"
+                                        )
+                                        uploadErrors.append("Failed to load video \(index + 1)")
+                                        continue
+                                    }
+
+                                    // Store temp URL for cleanup
+                                    let tempVideoURL = movie.url
+                                    defer {
+                                        // Clean up temp video file after processing
+                                        try? FileManager.default.removeItem(at: tempVideoURL)
+                                    }
+
+                                    UploadProgressManager.shared.updateTaskProgress(
                                         batchId: batchId,
                                         taskIndex: index,
-                                        error: "Failed to load image"
+                                        progress: 0.15
                                     )
-                                    uploadErrors.append("Failed to load image \(index + 1)")
-                                    continue
-                                }
 
-                                let capturedAt = extractCaptureDate(from: data)
+                                    // Verify video file exists and is valid
+                                    guard FileManager.default.fileExists(atPath: tempVideoURL.path) else {
+                                        print("🔴 [GALLERY UPLOAD] Video file not found \(index + 1)")
+                                        UploadProgressManager.shared.failTask(
+                                            batchId: batchId,
+                                            taskIndex: index,
+                                            error: "Video file not found"
+                                        )
+                                        uploadErrors.append("Video file not found \(index + 1)")
+                                        continue
+                                    }
 
-                                UploadProgressManager.shared.updateTaskProgress(
-                                    batchId: batchId,
-                                    taskIndex: index,
-                                    progress: 0.3
-                                )
+                                    // Process video, generate thumbnail, and extract metadata in parallel
+                                    print("🎬 [GALLERY UPLOAD] Processing video \(index + 1)...")
 
-                                // Resize and compress
-                                let resized = uiImage.resized(toMaxDimension: 1920)
-                                guard let compressedData = resized.compressed(toMaxBytes: 1_000_000) else {
-                                    print("🔴 [GALLERY UPLOAD] Failed to compress image \(index + 1)")
-                                    UploadProgressManager.shared.failTask(
+                                    // Start all operations concurrently
+                                    async let thumbnailTask = VideoCompressor.shared.generateThumbnail(from: tempVideoURL)
+                                    async let processTask = VideoCompressor.shared.processVideo(from: tempVideoURL)
+                                    async let metadataTask = extractVideoCreationDate(from: tempVideoURL)
+
+                                    // Wait for thumbnail first (faster, validates video)
+                                    let thumbnail: UIImage
+                                    do {
+                                        thumbnail = try await thumbnailTask
+                                    } catch {
+                                        print("🔴 [GALLERY UPLOAD] Failed to generate thumbnail \(index + 1): \(error)")
+                                        UploadProgressManager.shared.failTask(
+                                            batchId: batchId,
+                                            taskIndex: index,
+                                            error: "Invalid video format"
+                                        )
+                                        uploadErrors.append("Invalid video \(index + 1)")
+                                        continue
+                                    }
+
+                                    let thumbnailResized = thumbnail.resized(toMaxDimension: 1920)
+                                    guard let thumbnailData = thumbnailResized.compressed(toMaxBytes: 500_000) else {
+                                        print("🔴 [GALLERY UPLOAD] Failed to compress thumbnail \(index + 1)")
+                                        UploadProgressManager.shared.failTask(
+                                            batchId: batchId,
+                                            taskIndex: index,
+                                            error: "Thumbnail compression failed"
+                                        )
+                                        uploadErrors.append("Failed to create thumbnail \(index + 1)")
+                                        continue
+                                    }
+
+                                    UploadProgressManager.shared.updateTaskProgress(
                                         batchId: batchId,
                                         taskIndex: index,
-                                        error: "Compression failed"
+                                        progress: 0.3
                                     )
-                                    uploadErrors.append("Failed to compress image \(index + 1)")
-                                    continue
+
+                                    // Wait for video processing (may have already completed in parallel)
+                                    let processedVideo: VideoCompressor.ProcessedVideo
+                                    do {
+                                        processedVideo = try await processTask
+                                    } catch {
+                                        print("🔴 [GALLERY UPLOAD] Failed to process video \(index + 1): \(error)")
+                                        UploadProgressManager.shared.failTask(
+                                            batchId: batchId,
+                                            taskIndex: index,
+                                            error: "Video processing failed: \(error.localizedDescription)"
+                                        )
+                                        uploadErrors.append("Failed to process video \(index + 1)")
+                                        continue
+                                    }
+
+                                    // Ensure cleanup of temp file after upload
+                                    defer {
+                                        if processedVideo.needsCleanup {
+                                            try? FileManager.default.removeItem(at: processedVideo.fileURL)
+                                        }
+                                    }
+
+                                    // Get video creation date (already running in parallel)
+                                    let videoCapturedAt = await metadataTask
+                                    if let date = videoCapturedAt {
+                                        print("🎬 [GALLERY UPLOAD] Video \(index + 1) captured at: \(date)")
+                                    } else {
+                                        print("🎬 [GALLERY UPLOAD] Video \(index + 1) has no capture date metadata")
+                                    }
+
+                                    print("🎬 [GALLERY UPLOAD] Video \(index + 1) ready, duration: \(String(format: "%.1f", processedVideo.duration))s")
+
+                                    UploadProgressManager.shared.updateTaskProgress(
+                                        batchId: batchId,
+                                        taskIndex: index,
+                                        progress: 0.5
+                                    )
+
+                                    // Check for task cancellation before upload
+                                    if Task.isCancelled {
+                                        print("⚠️ [GALLERY UPLOAD] Task cancelled, queuing video \(index + 1) for background upload")
+                                        OfflineManager.shared.queueVideoUpload(
+                                            videoURL: processedVideo.fileURL,
+                                            thumbnailData: thumbnailData,
+                                            duration: processedVideo.duration,
+                                            capturedAt: videoCapturedAt,
+                                            eventId: nil,
+                                            folderId: nil
+                                        )
+                                        uploadErrors.append("Video \(index + 1) queued for background")
+                                        continue
+                                    }
+
+                                    // Upload video using file streaming (faster than loading into memory)
+                                    print("🎬 [GALLERY UPLOAD] Uploading video \(index + 1)...")
+                                    do {
+                                        try await viewModel.uploadVideoFromFile(
+                                            videoURL: processedVideo.fileURL,
+                                            thumbnailData: thumbnailData,
+                                            duration: processedVideo.duration,
+                                            capturedAt: videoCapturedAt
+                                        )
+
+                                        UploadProgressManager.shared.completeTask(batchId: batchId, taskIndex: index)
+                                        successCount += 1
+                                        print("🟢 [GALLERY UPLOAD] Uploaded video \(index + 1) successfully")
+                                    } catch {
+                                        print("🔴 [GALLERY UPLOAD] Failed to upload video \(index + 1): \(error)")
+                                        UploadProgressManager.shared.failTask(
+                                            batchId: batchId,
+                                            taskIndex: index,
+                                            error: "Upload failed: \(error.localizedDescription)"
+                                        )
+
+                                        // Queue for background retry
+                                        OfflineManager.shared.queueVideoUpload(
+                                            videoURL: processedVideo.fileURL,
+                                            thumbnailData: thumbnailData,
+                                            duration: processedVideo.duration,
+                                            capturedAt: videoCapturedAt,
+                                            eventId: nil,
+                                            folderId: nil
+                                        )
+                                        print("📹 [GALLERY UPLOAD] Queued video \(index + 1) for background retry")
+                                        uploadErrors.append("Video \(index + 1) queued for retry")
+                                    }
+
+                                } else {
+                                    // MARK: - Photo Upload Flow
+                                    print("📸 [GALLERY UPLOAD] Processing image \(index + 1)/\(newItems.count)...")
+
+                                    // Load image data
+                                    guard let data = try await item.loadTransferable(type: Data.self),
+                                          let uiImage = UIImage(data: data) else {
+                                        print("🔴 [GALLERY UPLOAD] Failed to load image \(index + 1)")
+                                        UploadProgressManager.shared.failTask(
+                                            batchId: batchId,
+                                            taskIndex: index,
+                                            error: "Failed to load image"
+                                        )
+                                        uploadErrors.append("Failed to load image \(index + 1)")
+                                        continue
+                                    }
+
+                                    let capturedAt = extractCaptureDate(from: data)
+
+                                    UploadProgressManager.shared.updateTaskProgress(
+                                        batchId: batchId,
+                                        taskIndex: index,
+                                        progress: 0.3
+                                    )
+
+                                    // Resize and compress
+                                    let resized = uiImage.resized(toMaxDimension: 1920)
+                                    guard let compressedData = resized.compressed(toMaxBytes: 1_000_000) else {
+                                        print("🔴 [GALLERY UPLOAD] Failed to compress image \(index + 1)")
+                                        UploadProgressManager.shared.failTask(
+                                            batchId: batchId,
+                                            taskIndex: index,
+                                            error: "Compression failed"
+                                        )
+                                        uploadErrors.append("Failed to compress image \(index + 1)")
+                                        continue
+                                    }
+
+                                    print("📸 [GALLERY UPLOAD] Compressed image \(index + 1): \(compressedData.count) bytes")
+
+                                    UploadProgressManager.shared.updateTaskProgress(
+                                        batchId: batchId,
+                                        taskIndex: index,
+                                        progress: 0.5
+                                    )
+
+                                    // Upload immediately
+                                    print("📸 [GALLERY UPLOAD] Uploading image \(index + 1)...")
+                                    try await viewModel.uploadPhoto(imageData: compressedData, capturedAt: capturedAt)
+
+                                    UploadProgressManager.shared.completeTask(batchId: batchId, taskIndex: index)
+                                    successCount += 1
+                                    print("🟢 [GALLERY UPLOAD] Uploaded image \(index + 1) successfully")
                                 }
-
-                                print("📸 [GALLERY UPLOAD] Compressed image \(index + 1): \(compressedData.count) bytes")
-
-                                UploadProgressManager.shared.updateTaskProgress(
-                                    batchId: batchId,
-                                    taskIndex: index,
-                                    progress: 0.5
-                                )
-
-                                // Upload immediately
-                                print("📸 [GALLERY UPLOAD] Uploading image \(index + 1)...")
-                                try await viewModel.uploadPhoto(imageData: compressedData, capturedAt: capturedAt)
-
-                                UploadProgressManager.shared.completeTask(batchId: batchId, taskIndex: index)
-                                successCount += 1
-                                print("🟢 [GALLERY UPLOAD] Uploaded image \(index + 1) successfully")
 
                                 // Update UI on main thread
                                 await MainActor.run {
@@ -1568,13 +1935,13 @@ struct PhotoGalleryView: View {
                                 }
 
                             } catch let uploadError {
-                                print("🔴 [GALLERY UPLOAD] Failed image \(index + 1): \(uploadError)")
+                                print("🔴 [GALLERY UPLOAD] Failed item \(index + 1): \(uploadError)")
                                 UploadProgressManager.shared.failTask(
                                     batchId: batchId,
                                     taskIndex: index,
                                     error: uploadError.localizedDescription
                                 )
-                                uploadErrors.append("Image \(index + 1) failed")
+                                uploadErrors.append("Item \(index + 1) failed")
                             }
                         }
 
@@ -1585,11 +1952,11 @@ struct PhotoGalleryView: View {
                         // Update UI on main thread
                         await MainActor.run {
                             if !uploadErrors.isEmpty {
-                                errorMessage = "Uploaded \(successCount) of \(newItems.count) photos.\n\(uploadErrors.count) failed."
+                                errorMessage = "Uploaded \(successCount) of \(newItems.count) items.\n\(uploadErrors.count) failed."
                                 showError = true
                             }
 
-                            // Send push notification for uploaded photos
+                            // Send push notification for uploaded items
                             if successCount > 0 {
                                 NotificationManager.shared.notifyPhotosAdded(count: successCount, location: "gallery", eventId: nil)
                             }
@@ -1618,29 +1985,20 @@ struct PhotoGalleryView: View {
                 Text(saveErrorMessage)
             }
             .fullScreenCover(item: $selectedPhotoIndex) { photoIndex in
-                // Create display positions array: maps each position to 1-based numbering (newest = 1)
-                let displayPositions = (1...photosInDisplayOrder.count).map { $0 }
-
-                FullScreenPhotoViewer(
-                    photoURLs: photosInDisplayOrder.map { $0.imageURL },
-                    initialIndex: photoIndex.value,
-                    onDismiss: { selectedPhotoIndex = nil },
-                    onDelete: { indexToDelete in
-                        if indexToDelete < photosInDisplayOrder.count {
-                            let photoToDelete = photosInDisplayOrder[indexToDelete]
+                // Use unified media viewer for both photos and videos with swipe navigation
+                if photoIndex.value < photosInDisplayOrder.count {
+                    FullScreenMediaViewer(
+                        mediaItems: photosInDisplayOrder,
+                        initialIndex: photoIndex.value,
+                        onDismiss: { selectedPhotoIndex = nil },
+                        onDelete: { mediaToDelete in
                             Task {
-                                try? await viewModel.deletePhoto(photoToDelete)
+                                try? await viewModel.deletePhoto(mediaToDelete)
                             }
-                        }
-                    },
-                    captureDates: photosInDisplayOrder.map { $0.capturedAt ?? $0.createdAt },
-                    chronologicalPositions: displayPositions,
-                    favoriteStates: photosInDisplayOrder.map { $0.isFavorite ?? false },
-                    onToggleFavorite: { indexToToggle in
-                        if indexToToggle < photosInDisplayOrder.count {
-                            let photo = photosInDisplayOrder[indexToToggle]
-                            if let photoId = photo.id {
-                                let newFavoriteState = !(photo.isFavorite ?? false)
+                        },
+                        onToggleFavorite: { mediaToToggle in
+                            if let photoId = mediaToToggle.id {
+                                let newFavoriteState = !(mediaToToggle.isFavorite ?? false)
 
                                 // If we're in the Favorites folder and unfavoriting,
                                 // dismiss the viewer to avoid index out of range crash
@@ -1653,9 +2011,8 @@ struct PhotoGalleryView: View {
                                 }
                             }
                         }
-                    },
-                    uploadedByNames: photosInDisplayOrder.map { $0.uploadedBy }
-                )
+                    )
+                }
             }
             }
         }
@@ -1775,26 +2132,32 @@ struct PhotoGalleryView: View {
             }
         }
         .onChange(of: resetTrigger) { _, _ in
-            // Return to All Photos when same tab is tapped
-            if currentFolderView != .allPhotos {
+            // Smart tab tap behavior:
+            // - If viewing folder overview or folder list, go back to All Photos
+            // - If viewing any photo grid, scroll to top
+            if showingFoldersOverview || currentFolderView == .events || currentFolderView == .specialEvents {
                 withAnimation {
                     currentFolderView = .allPhotos
+                    folderNavStack.removeAll()
+                    showingFoldersOverview = false
                 }
+            } else {
+                // In a photo grid - trigger scroll to top
+                scrollToTopTrigger += 1
             }
         }
     }
 
     private func saveSelectedPhotos() {
-        guard !selectedPhotoIndices.isEmpty else { return }
+        guard !selectedPhotoIds.isEmpty else { return }
 
         Task {
             var savedCount = 0
             var errorOccurred = false
 
-            for index in selectedPhotoIndices.sorted() {
-                guard index < photosInDisplayOrder.count else { continue }
-                let photo = photosInDisplayOrder[index]
+            let selectedPhotos = photosInDisplayOrder.filter { selectedPhotoIds.contains($0.id ?? "") }
 
+            for photo in selectedPhotos {
                 // Load image - try cache first, then async download
                 var imageToSave: UIImage?
 
@@ -1844,37 +2207,33 @@ struct PhotoGalleryView: View {
                     HapticManager.success()
                 }
                 selectionMode = false
-                selectedPhotoIndices.removeAll()
+                selectedPhotoIds.removeAll()
             }
         }
     }
 
     private func deleteSelectedPhotos() {
-        guard !selectedPhotoIndices.isEmpty else { return }
+        guard !selectedPhotoIds.isEmpty else { return }
 
         Task {
-            for index in selectedPhotoIndices.sorted().reversed() {
-                guard index < photosInDisplayOrder.count else { continue }
-                let photo = photosInDisplayOrder[index]
+            let selectedPhotos = photosInDisplayOrder.filter { selectedPhotoIds.contains($0.id ?? "") }
+
+            for photo in selectedPhotos {
                 try? await viewModel.deletePhoto(photo)
             }
 
             await MainActor.run {
                 selectionMode = false
-                selectedPhotoIndices.removeAll()
+                selectedPhotoIds.removeAll()
             }
         }
     }
 
     private func toggleFavoritesForSelected() {
-        guard !selectedPhotoIndices.isEmpty else { return }
+        guard !selectedPhotoIds.isEmpty else { return }
 
         Task {
-            let selectedPhotos = selectedPhotoIndices.sorted().compactMap { index -> Photo? in
-                guard index < photosInDisplayOrder.count else { return nil }
-                return photosInDisplayOrder[index]
-            }
-
+            let selectedPhotos = photosInDisplayOrder.filter { selectedPhotoIds.contains($0.id ?? "") }
             let photoIds = selectedPhotos.compactMap { $0.id }
 
             // Check if all selected photos are already favorited
@@ -1890,19 +2249,17 @@ struct PhotoGalleryView: View {
             await MainActor.run {
                 HapticManager.success()
                 selectionMode = false
-                selectedPhotoIndices.removeAll()
+                selectedPhotoIds.removeAll()
             }
         }
     }
 
     private func moveSelectedPhotosToFolder(_ folderId: String?) {
-        guard !selectedPhotoIndices.isEmpty else { return }
+        guard !selectedPhotoIds.isEmpty else { return }
 
         Task {
-            let photoIds = selectedPhotoIndices.sorted().compactMap { index -> String? in
-                guard index < photosInDisplayOrder.count else { return nil }
-                return photosInDisplayOrder[index].id
-            }
+            let selectedPhotos = photosInDisplayOrder.filter { selectedPhotoIds.contains($0.id ?? "") }
+            let photoIds = selectedPhotos.compactMap { $0.id }
 
             try? await viewModel.movePhotosToFolder(photoIds, folderId: folderId) { current, total in
                 // Could show progress here if needed
@@ -1911,21 +2268,17 @@ struct PhotoGalleryView: View {
             await MainActor.run {
                 HapticManager.success()
                 selectionMode = false
-                selectedPhotoIndices.removeAll()
+                selectedPhotoIds.removeAll()
             }
         }
     }
 
     private func assignSelectedPhotosToEvent(_ eventId: String?) {
-        guard !selectedPhotoIndices.isEmpty else { return }
+        guard !selectedPhotoIds.isEmpty else { return }
 
         Task {
             // Get both photo IDs and URLs for the selected photos
-            let selectedPhotos = selectedPhotoIndices.sorted().compactMap { index -> Photo? in
-                guard index < photosInDisplayOrder.count else { return nil }
-                return photosInDisplayOrder[index]
-            }
-
+            let selectedPhotos = photosInDisplayOrder.filter { selectedPhotoIds.contains($0.id ?? "") }
             let photoIds = selectedPhotos.compactMap { $0.id }
             let photoURLs = selectedPhotos.map { $0.imageURL }
 
@@ -1961,7 +2314,7 @@ struct PhotoGalleryView: View {
             await MainActor.run {
                 HapticManager.success()
                 selectionMode = false
-                selectedPhotoIndices.removeAll()
+                selectedPhotoIds.removeAll()
             }
         }
     }
@@ -2127,6 +2480,13 @@ struct PhotoGridCell: View {
         Double(index % 12) * 0.03
     }
 
+    // Format video duration
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
             CachedAsyncImage(url: URL(string: photo.imageURL), thumbnailSize: cellSize) { image in
@@ -2169,11 +2529,71 @@ struct PhotoGridCell: View {
             .frame(width: cellSize, height: cellSize)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .shadow(color: Color.black.opacity(0.12), radius: columnCount == 2 ? 6 : 3, x: 0, y: 2)
+            // Pre-cache video when cell appears
+            .onAppear {
+                if photo.isVideo, let videoURLString = photo.videoURL, let videoURL = URL(string: videoURLString) {
+                    // Check if not already cached, then start background caching
+                    if VideoCache.shared.getCachedVideoURL(for: videoURLString) == nil {
+                        Task.detached(priority: .background) {
+                            _ = await VideoCache.shared.downloadAndCache(from: videoURL)
+                        }
+                    }
+                }
+            }
+            // Video overlay - play button and gradient
+            .overlay(
+                Group {
+                    if photo.isVideo {
+                        ZStack {
+                            // Bottom gradient for duration visibility
+                            LinearGradient(
+                                colors: [
+                                    Color.clear,
+                                    Color.black.opacity(0.5)
+                                ],
+                                startPoint: .center,
+                                endPoint: .bottom
+                            )
+
+                            // Play button in center
+                            Circle()
+                                .fill(.ultraThinMaterial)
+                                .frame(width: columnCount == 2 ? 48 : 36, height: columnCount == 2 ? 48 : 36)
+                                .overlay(
+                                    Image(systemName: "play.fill")
+                                        .font(columnCount == 2 ? .title3 : .caption)
+                                        .foregroundColor(.white)
+                                        .offset(x: 2) // Optical centering
+                                )
+                                .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
+
+                            // Duration badge (bottom left)
+                            if let duration = photo.duration, duration > 0 {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "video.fill")
+                                        .font(.system(size: columnCount == 2 ? 9 : 7, weight: .semibold))
+                                    Text(formatDuration(duration))
+                                        .font(.system(size: columnCount == 2 ? 11 : 9, weight: .semibold))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, columnCount == 2 ? 8 : 6)
+                                .padding(.vertical, columnCount == 2 ? 4 : 3)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.black.opacity(0.6))
+                                )
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                                .padding(columnCount == 2 ? 8 : 6)
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+                    }
+                }
+            )
             // Selection overlay wash
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(Color(red: 0.6, green: 0.4, blue: 0.85).opacity(selectionMode && isSelected ? 0.15 : 0))
-                    .animation(.easeInOut(duration: 0.2), value: isSelected)
             )
             // Selection border
             .overlay(
@@ -2182,7 +2602,6 @@ struct PhotoGridCell: View {
                         selectionMode && isSelected ? Color(red: 0.7, green: 0.5, blue: 0.95) : Color.clear,
                         lineWidth: 3
                     )
-                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
             )
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
             // Press animation
@@ -2205,8 +2624,8 @@ struct PhotoGridCell: View {
                 onLongPress()
             })
 
-            // Favorite indicator (bottom right) with animation
-            if photo.isFavorite == true && !selectionMode {
+            // Favorite indicator (bottom right) with animation - only for photos or when no duration badge
+            if photo.isFavorite == true && !selectionMode && !photo.isVideo {
                 Image(systemName: "heart.fill")
                     .font(columnCount == 2 ? .body : .caption)
                     .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
@@ -2216,38 +2635,43 @@ struct PhotoGridCell: View {
                     .transition(.scale.combined(with: .opacity))
             }
 
-            // Animated checkmark overlay
-            if selectionMode {
-                ZStack {
-                    // Background circle for unchecked state
-                    Circle()
-                        .fill(Color.black.opacity(0.3))
-                        .frame(width: columnCount == 2 ? 28 : 24, height: columnCount == 2 ? 28 : 24)
-                        .opacity(isSelected ? 0 : 1)
+            // For videos, show favorite heart in top left if favorited
+            if photo.isFavorite == true && !selectionMode && photo.isVideo {
+                Image(systemName: "heart.fill")
+                    .font(columnCount == 2 ? .body : .caption)
+                    .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.5))
+                    .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
+                    .padding(columnCount == 2 ? 10 : 6)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .transition(.scale.combined(with: .opacity))
+            }
 
-                    // Checkmark with spring animation
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(columnCount == 2 ? .title : .title2)
-                        .foregroundStyle(
-                            isSelected ?
-                                AnyShapeStyle(
-                                    LinearGradient(
-                                        colors: [
-                                            Color(red: 0.8, green: 0.6, blue: 1.0),
-                                            Color(red: 0.6, green: 0.4, blue: 0.85)
-                                        ],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-                                ) :
-                                AnyShapeStyle(Color.white.opacity(0.9))
-                        )
-                        .shadow(color: Color.black.opacity(0.3), radius: 3, x: 0, y: 1)
-                        .scaleEffect(isSelected ? 1.0 : 0.9)
-                        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isSelected)
-                }
-                .padding(columnCount == 2 ? 10 : 8)
-                .allowsHitTesting(false)
+            // Checkmark overlay
+            if selectionMode {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(columnCount == 2 ? .title : .title2)
+                    .foregroundStyle(
+                        isSelected ?
+                            AnyShapeStyle(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 0.8, green: 0.6, blue: 1.0),
+                                        Color(red: 0.6, green: 0.4, blue: 0.85)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            ) :
+                            AnyShapeStyle(Color.white.opacity(0.9))
+                    )
+                    .background(
+                        Circle()
+                            .fill(isSelected ? Color.clear : Color.black.opacity(0.3))
+                            .frame(width: columnCount == 2 ? 28 : 24, height: columnCount == 2 ? 28 : 24)
+                    )
+                    .shadow(color: Color.black.opacity(0.3), radius: 3, x: 0, y: 1)
+                    .padding(columnCount == 2 ? 10 : 8)
+                    .allowsHitTesting(false)
             }
         }
         .drawingGroup() // Optimize rendering performance
@@ -2391,6 +2815,9 @@ struct FolderCardButtonStyle: ButtonStyle {
 }
 
 class PhotoGalleryViewModel: ObservableObject {
+    // Use shared data store instead of duplicate listeners
+    private let sharedStore = SharedDataStore.shared
+
     @Published var photos: [Photo] = []
     @Published var folders: [PhotoFolder] = []
     @Published var events: [CalendarEvent] = []
@@ -2398,44 +2825,45 @@ class PhotoGalleryViewModel: ObservableObject {
     private let firebaseManager = FirebaseManager.shared
 
     init() {
-        loadPhotos()
-        loadFolders()
-        loadEvents()
-    }
-
-    func loadPhotos() {
-        Task {
-            for try await photos in firebaseManager.getPhotos() {
-                await MainActor.run {
-                    self.photos = photos
-                }
-            }
-        }
-    }
-
-    func loadFolders() {
-        Task {
-            for try await folders in firebaseManager.getFolders() {
-                await MainActor.run {
-                    self.folders = folders
-                }
-            }
-        }
-    }
-
-    func loadEvents() {
-        Task {
-            for try await events in firebaseManager.getCalendarEvents() {
-                await MainActor.run {
-                    self.events = events
-                }
-            }
-        }
+        // Subscribe to shared store changes - no duplicate Firestore listeners
+        sharedStore.$photos
+            .assign(to: &$photos)
+        sharedStore.$folders
+            .assign(to: &$folders)
+        sharedStore.$events
+            .assign(to: &$events)
     }
 
     func uploadPhoto(imageData: Data, capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws {
         _ = try await firebaseManager.uploadPhoto(
             imageData: imageData,
+            caption: "",
+            uploadedBy: UserIdentityManager.shared.currentUserName,
+            capturedAt: capturedAt,
+            eventId: eventId,
+            folderId: folderId
+        )
+    }
+
+    func uploadVideo(videoData: Data, thumbnailData: Data, duration: TimeInterval, capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws {
+        _ = try await firebaseManager.uploadVideo(
+            videoData: videoData,
+            thumbnailData: thumbnailData,
+            duration: duration,
+            caption: "",
+            uploadedBy: UserIdentityManager.shared.currentUserName,
+            capturedAt: capturedAt,
+            eventId: eventId,
+            folderId: folderId
+        )
+    }
+
+    /// Optimized video upload using file streaming
+    func uploadVideoFromFile(videoURL: URL, thumbnailData: Data, duration: TimeInterval, capturedAt: Date? = nil, eventId: String? = nil, folderId: String? = nil) async throws {
+        _ = try await firebaseManager.uploadVideoFromFile(
+            videoURL: videoURL,
+            thumbnailData: thumbnailData,
+            duration: duration,
             caption: "",
             uploadedBy: UserIdentityManager.shared.currentUserName,
             capturedAt: capturedAt,
@@ -2807,6 +3235,7 @@ struct MoveToFolderSheet: View {
                 }
             }
         }
+        .preferredColorScheme(.light)
     }
 }
 
@@ -2840,8 +3269,9 @@ struct AddToEventSheet: View {
                     HStack {
                         Image(systemName: "magnifyingglass")
                             .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7))
-                        TextField("Search events...", text: $searchText)
+                        TextField("", text: $searchText, prompt: Text("Search events...").foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.7)))
                             .textFieldStyle(.plain)
+                            .foregroundColor(Color(red: 0.3, green: 0.2, blue: 0.5))
                     }
                     .padding(12)
                     .background(
@@ -2973,6 +3403,7 @@ struct AddToEventSheet: View {
                 }
             }
         }
+        .preferredColorScheme(.light)
     }
 }
 

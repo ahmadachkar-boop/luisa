@@ -197,6 +197,7 @@ class OfflineManager: ObservableObject {
     // MARK: - Pending Operations Queue
     enum PendingOperationType: String, Codable {
         case uploadPhoto
+        case uploadVideo
         case uploadVoiceMemo
         case deletePhoto
         case deleteVoiceMemo
@@ -403,6 +404,49 @@ class OfflineManager: ObservableObject {
             // Clean up temporary file after successful upload
             try? FileManager.default.removeItem(at: tempFileURL)
 
+        case .uploadVideo:
+            guard let uploadData = try? JSONDecoder().decode(VideoUploadData.self, from: operation.data) else {
+                throw OfflineError.invalidData
+            }
+
+            // Load video from temporary file
+            let videoFileURL = cacheDirectory.appendingPathComponent(uploadData.videoFilePath)
+            guard FileManager.default.fileExists(atPath: videoFileURL.path) else {
+                print("OfflineManager: Could not find video at - \(uploadData.videoFilePath)")
+                throw OfflineError.invalidData
+            }
+
+            // Load thumbnail from temporary file
+            let thumbnailFileURL = cacheDirectory.appendingPathComponent(uploadData.thumbnailFilePath)
+            guard let thumbnailData = try? Data(contentsOf: thumbnailFileURL) else {
+                print("OfflineManager: Could not load thumbnail from - \(uploadData.thumbnailFilePath)")
+                throw OfflineError.invalidData
+            }
+
+            // Process video (may skip compression if already optimized)
+            let processedVideo = try await VideoCompressor.shared.processVideo(from: videoFileURL)
+            defer {
+                if processedVideo.needsCleanup {
+                    try? FileManager.default.removeItem(at: processedVideo.fileURL)
+                }
+            }
+
+            // Upload using streaming
+            _ = try await firebaseManager.uploadVideoFromFile(
+                videoURL: processedVideo.fileURL,
+                thumbnailData: thumbnailData,
+                duration: uploadData.duration,
+                caption: "",
+                uploadedBy: UserIdentityManager.shared.currentUserName,
+                capturedAt: uploadData.capturedAt,
+                eventId: uploadData.eventId,
+                folderId: uploadData.folderId
+            )
+
+            // Clean up temporary files after successful upload
+            try? FileManager.default.removeItem(at: videoFileURL)
+            try? FileManager.default.removeItem(at: thumbnailFileURL)
+
         case .deletePhoto:
             guard let photo = try? JSONDecoder().decode(Photo.self, from: operation.data) else {
                 throw OfflineError.invalidData
@@ -483,6 +527,15 @@ class OfflineManager: ObservableObject {
         let folderId: String?
     }
 
+    struct VideoUploadData: Codable {
+        let videoFilePath: String // Path to temporary video file
+        let thumbnailFilePath: String // Path to thumbnail image
+        let duration: TimeInterval
+        let capturedAt: Date?
+        let eventId: String?
+        let folderId: String?
+    }
+
     struct FavoriteToggleData: Codable {
         let photoId: String
         let isFavorite: Bool
@@ -534,6 +587,45 @@ class OfflineManager: ObservableObject {
         guard let data = try? JSONEncoder().encode(uploadData) else { return }
         let operation = PendingOperation(type: .uploadPhoto, data: data)
         queueOperation(operation)
+    }
+
+    /// Queue a video upload for background processing
+    func queueVideoUpload(videoURL: URL, thumbnailData: Data, duration: TimeInterval, capturedAt: Date?, eventId: String?, folderId: String?) {
+        // Save video to cache directory
+        let videoFileName = "pending_video_\(UUID().uuidString).mov"
+        let videoDestURL = cacheDirectory.appendingPathComponent(videoFileName)
+
+        // Save thumbnail
+        let thumbnailFileName = "pending_thumb_\(UUID().uuidString).jpg"
+        let thumbnailDestURL = cacheDirectory.appendingPathComponent(thumbnailFileName)
+
+        do {
+            // Copy video file to cache (it might be in a temp location)
+            if FileManager.default.fileExists(atPath: videoDestURL.path) {
+                try FileManager.default.removeItem(at: videoDestURL)
+            }
+            try FileManager.default.copyItem(at: videoURL, to: videoDestURL)
+
+            // Save thumbnail
+            try thumbnailData.write(to: thumbnailDestURL)
+        } catch {
+            print("OfflineManager: Failed to save video for offline upload - \(error)")
+            return
+        }
+
+        let uploadData = VideoUploadData(
+            videoFilePath: videoFileName,
+            thumbnailFilePath: thumbnailFileName,
+            duration: duration,
+            capturedAt: capturedAt,
+            eventId: eventId,
+            folderId: folderId
+        )
+
+        guard let data = try? JSONEncoder().encode(uploadData) else { return }
+        let operation = PendingOperation(type: .uploadVideo, data: data)
+        queueOperation(operation)
+        print("📹 [OFFLINE] Queued video upload for background processing")
     }
 
     func queueEventAdd(_ event: CalendarEvent) {

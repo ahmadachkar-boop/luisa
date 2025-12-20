@@ -788,6 +788,7 @@ struct CalendarView: View {
                         }
                     }
                 })
+                .environmentObject(viewModel)
             }
             .fullScreenCover(item: $recapPhotoData) { photoData in
                 if !photoData.photoURLs.isEmpty {
@@ -1003,9 +1004,7 @@ struct CalendarView: View {
             }
         }
 
-        // Reload local events
-        viewModel.loadEvents()
-
+        // Events are automatically synced via SharedDataStore listener
         // Fetch weather for events
         await viewModel.fetchWeatherForEvents()
     }
@@ -1438,6 +1437,7 @@ struct EventDetailView: View {
     let event: CalendarEvent
     let onDelete: () -> Void
     @Environment(\.dismiss) var dismiss
+    @EnvironmentObject var viewModel: CalendarViewModel
     @ObservedObject private var uploadManager = UploadProgressManager.shared
     @State private var showingDeleteAlert = false
     @State private var showingEditView = false
@@ -1457,6 +1457,13 @@ struct EventDetailView: View {
         self.event = event
         self.onDelete = onDelete
         _currentEvent = State(initialValue: event)
+    }
+
+    // Get Photo objects for the event's media URLs
+    private var eventMediaItems: [Photo] {
+        currentEvent.photoURLs.compactMap { url in
+            viewModel.photos.first { $0.imageURL == url }
+        }
     }
 
     var isPastEvent: Bool {
@@ -1515,18 +1522,17 @@ struct EventDetailView: View {
                 Text(saveErrorMessage)
             }
             .fullScreenCover(item: $selectedPhotoIndex) { photoIndex in
-                FullScreenPhotoViewer(
-                    photoURLs: currentEvent.photoURLs,
-                    initialIndex: photoIndex.value,
-                    onDismiss: { selectedPhotoIndex = nil },
-                    onDelete: { indexToDelete in
-                        if indexToDelete < currentEvent.photoURLs.count {
-                            let photoURLToDelete = currentEvent.photoURLs[indexToDelete]
+                if !eventMediaItems.isEmpty {
+                    FullScreenMediaViewer(
+                        mediaItems: eventMediaItems,
+                        initialIndex: min(photoIndex.value, eventMediaItems.count - 1),
+                        onDismiss: { selectedPhotoIndex = nil },
+                        onDelete: { mediaToDelete in
+                            let photoURLToDelete = mediaToDelete.imageURL
                             var updatedPhotoURLs = currentEvent.photoURLs
-                            updatedPhotoURLs.remove(at: indexToDelete)
+                            updatedPhotoURLs.removeAll { $0 == photoURLToDelete }
                             Task {
-                                // Delete the photo document from Firestore and Storage
-                                // This ensures proper cross-tab synchronization
+                                // Delete the photo/video document from Firestore and Storage
                                 try? await FirebaseManager.shared.deletePhotoByURL(photoURLToDelete)
 
                                 // Update the event with the new photoURLs array
@@ -1537,9 +1543,37 @@ struct EventDetailView: View {
                                     currentEvent.photoURLs = updatedPhotoURLs
                                 }
                             }
+                        },
+                        onToggleFavorite: { mediaToToggle in
+                            Task {
+                                try? await viewModel.toggleFavorite(for: mediaToToggle)
+                            }
                         }
-                    }
-                )
+                    )
+                } else {
+                    // Fallback to FullScreenPhotoViewer if no Photo objects found (backwards compatibility)
+                    FullScreenPhotoViewer(
+                        photoURLs: currentEvent.photoURLs,
+                        initialIndex: photoIndex.value,
+                        onDismiss: { selectedPhotoIndex = nil },
+                        onDelete: { indexToDelete in
+                            if indexToDelete < currentEvent.photoURLs.count {
+                                let photoURLToDelete = currentEvent.photoURLs[indexToDelete]
+                                var updatedPhotoURLs = currentEvent.photoURLs
+                                updatedPhotoURLs.remove(at: indexToDelete)
+                                Task {
+                                    try? await FirebaseManager.shared.deletePhotoByURL(photoURLToDelete)
+                                    var updatedEvent = currentEvent
+                                    updatedEvent.photoURLs = updatedPhotoURLs
+                                    try? await FirebaseManager.shared.updateCalendarEvent(updatedEvent)
+                                    await MainActor.run {
+                                        currentEvent.photoURLs = updatedPhotoURLs
+                                    }
+                                }
+                            }
+                        }
+                    )
+                }
             }
             .sheet(isPresented: $showingEditView) {
                 EditEventView(event: currentEvent) { updatedEvent in
@@ -1663,6 +1697,8 @@ struct EventDetailView: View {
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack(spacing: 12) {
                                         ForEach(Array(currentEvent.photoURLs.enumerated()), id: \.offset) { index, photoURL in
+                                            let isVideo = viewModel.photos.first { $0.imageURL == photoURL }?.isVideo ?? false
+
                                             ZStack(alignment: .topTrailing) {
                                                 CachedAsyncImage(url: URL(string: photoURL), thumbnailSize: 500) { image in
                                                     image
@@ -1676,6 +1712,22 @@ struct EventDetailView: View {
                                                         .overlay(ProgressView())
                                                 }
                                                 .clipShape(RoundedRectangle(cornerRadius: 15))
+                                                // Video play indicator
+                                                .overlay(
+                                                    Group {
+                                                        if isVideo {
+                                                            ZStack {
+                                                                Circle()
+                                                                    .fill(.ultraThinMaterial)
+                                                                    .frame(width: 50, height: 50)
+                                                                Image(systemName: "play.fill")
+                                                                    .font(.title3)
+                                                                    .foregroundColor(.white)
+                                                            }
+                                                            .shadow(radius: 4)
+                                                        }
+                                                    }
+                                                )
                                                 .overlay(
                                                     selectionMode ?
                                                         RoundedRectangle(cornerRadius: 15)
@@ -2832,6 +2884,10 @@ struct EditEventView: View {
 
 // MARK: - View Models
 class CalendarViewModel: ObservableObject {
+    // Use shared data store instead of duplicate listeners
+    private let sharedStore = SharedDataStore.shared
+    private var cancellables = Set<AnyCancellable>()
+
     @Published var events: [CalendarEvent] = []
     @Published var photos: [Photo] = []
 
@@ -2855,32 +2911,11 @@ class CalendarViewModel: ObservableObject {
     }
 
     init() {
-        loadEvents()
-        loadPhotos()
-    }
-
-    func loadEvents() {
-        Task {
-            for try await events in firebaseManager.getCalendarEvents() {
-                await MainActor.run {
-                    self.events = events
-                    // Sync to widget
-                    WidgetDataManager.shared.syncEvents(events)
-                    // Schedule local notifications for all future events
-                    NotificationManager.shared.scheduleRemindersForAllEvents(events)
-                }
-            }
-        }
-    }
-
-    func loadPhotos() {
-        Task {
-            for try await photos in firebaseManager.getPhotos() {
-                await MainActor.run {
-                    self.photos = photos
-                }
-            }
-        }
+        // Subscribe to shared store changes - no duplicate Firestore listeners
+        sharedStore.$events
+            .assign(to: &$events)
+        sharedStore.$photos
+            .assign(to: &$photos)
     }
 
     func addEvent(_ event: CalendarEvent) async throws {
@@ -2905,6 +2940,12 @@ class CalendarViewModel: ObservableObject {
 
     func deleteEvent(_ event: CalendarEvent) async throws {
         try await firebaseManager.deleteCalendarEvent(event)
+    }
+
+    func toggleFavorite(for photo: Photo) async throws {
+        guard let photoId = photo.id else { return }
+        let newFavoriteState = !(photo.isFavorite ?? false)
+        try await firebaseManager.togglePhotoFavorite(photoId, isFavorite: newFavoriteState)
     }
 
     func fetchWeatherForEvents() async {
